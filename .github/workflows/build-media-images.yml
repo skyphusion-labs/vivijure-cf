@@ -1,8 +1,15 @@
 name: build-media-images
 
 # The five always-on CPU finishing containers (containers/*) -> GHCR as
-# ghcr.io/skyphusion-labs/vivijure-cf-<svc>, for the fleet swarm `vivijure-media` stack
-# (fleet-chezmoi system/swarm/stacks/vivijure-media.stack.yml).
+# ghcr.io/skyphusion-labs/vivijure-cf-<svc>, for an operator running the media stack with
+# containers/compose.yaml (containers/README.md:8-12 publishes these GHCR names as the pinnable
+# artifacts, reached over the VIDEO_FINISH_URL / AUDIO_*_URL door vars).
+#
+# The fleet swarm `vivijure-media` stack these were originally built for is decommissioned
+# (cf#837/cf#838). These images are NOT dead output: the self-host path is documented and live, and
+# video-finish additionally has a hosted consumer built from ./containers/video-finish/Dockerfile
+# rather than from the GHCR image (wrangler.toml.example [[containers]]). What died is the hosted
+# consumer OF THE PUSHED IMAGES, so treat a change here as operator-facing, not internal.
 #
 # Package naming reflects the repo (vivijure-cf-*) so these are unambiguous vs the
 # vivijure-local-* variants built by the vivijure-local repo. Pushing with the built-in
@@ -45,14 +52,14 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        svc: [video-finish, image-prep, audio-beat-sync, audio-mix, audio-master]
+        svc: [video-finish, image-prep, audio-beat-sync, audio-mix, audio-master, cpu]
     steps:
       - uses: actions/checkout@v7
 
-      - uses: docker/setup-buildx-action@v4
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4
 
       - name: Log in to GHCR
-        uses: docker/login-action@v4
+        uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
@@ -76,9 +83,10 @@ jobs:
           } >> "$GITHUB_OUTPUT"
 
       - name: Build + push
-        uses: docker/build-push-action@v7
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7
         with:
-          context: containers/${{ matrix.svc }}
+          context: ${{ matrix.svc == 'cpu' && 'containers' || format('containers/{0}', matrix.svc) }}
+          file: ${{ matrix.svc == 'cpu' && 'containers/cpu/Dockerfile' || format('containers/{0}/Dockerfile', matrix.svc) }}
           push: true
           tags: ${{ steps.tags.outputs.tags }}
           labels: |

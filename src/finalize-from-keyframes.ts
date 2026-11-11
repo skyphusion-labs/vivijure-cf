@@ -8,6 +8,7 @@ import {
 } from "@skyphusion-labs/vivijure-core";
 import { readBundleScenes } from "@skyphusion-labs/vivijure-core/bundle-storyboard";
 import { dialogueLinesFromBundleScenes, resolveExplicitLineVoices } from "@skyphusion-labs/vivijure-core/dialogue-lines";
+import { bundleScenesForRender, dialogueUndeterminedMessage } from "./dialogue-derivation";
 import { resolveCastLoras } from "@skyphusion-labs/vivijure-core/cast-loras";
 import { voiceRefKeysFromScenes } from "./cast-voice-sample";
 import type { DialogueLine } from "@skyphusion-labs/vivijure-core/modules/types";
@@ -18,6 +19,7 @@ import {
 } from "@skyphusion-labs/vivijure-core/film-orchestrator";
 import { filmJobToPollView } from "@skyphusion-labs/vivijure-core/film-render-bridge";
 import { mapRenderOverridesToModuleConfigs } from "./film-render-bridge";
+import { moduleLabel } from "./module-catalog";
 import type { OrchestratorEnv } from "@skyphusion-labs/vivijure-core/platform";
 import {
   insertRender,
@@ -31,6 +33,16 @@ import type { RunpodJobView } from "@skyphusion-labs/vivijure-core/runpod-types"
 import { normalizePerShotModels } from "@skyphusion-labs/vivijure-core/storyboard-validate";
 import type { ClipJob } from "@skyphusion-labs/vivijure-core/render-orchestrator";
 import { readIdempotencyKey } from "./film-idempotency";
+import { songStartRefusal } from "./film-join-gate";
+import type { RegisteredModule } from "@skyphusion-labs/vivijure-core";
+import {
+  bundleScenesHaveLines,
+  hostedMotionFallback,
+  isDrivingOnlyDoor,
+  prepareSpokenClip,
+  spokenLinesPresent,
+  withMotionBackend,
+} from "./motion-scatter";
 
 export interface AnimateFromPreviewArgs {
   parent: RenderRow;
@@ -45,6 +57,8 @@ export interface AnimateFromPreviewArgs {
   castLoras?: Record<string, string>;
   /** cf#528: panel-supplied submit key. Forwarded into startFilmFromKeyframes. */
   idempotency_key?: string;
+  /** cf#1166: keep lines, clips and finish steps whose inputs are proven identical. Retry only. */
+  reuse_finished?: boolean;
 }
 
 function resolveCloudModel(requested: string | undefined, allowed: string[]): string | undefined {
@@ -75,14 +89,22 @@ function normalizeFilmScenesFromOutput(output: unknown): FilmScene[] {
   return out;
 }
 
+/** One preview still as the film start takes it. Its plate count report rides along (cf#1282) so the
+ *  animated film can still say which stills may show an extra person; the core reads it strictly. */
+function previewRef(k: { shot_id: string; key: string }): FilmKeyframeRef {
+  const plate = (k as { plate_count?: unknown }).plate_count;
+  const carried = plate && typeof plate === "object" && !Array.isArray(plate) ? { plate_count: plate } : {};
+  return { shot_id: k.shot_id, keyframe_key: k.key, ...carried } as FilmKeyframeRef;
+}
+
 export function selectPreviewKeyframes(parent: RenderRow): FilmKeyframeRef[] {
   const kfs = parent.keyframes ?? [];
   const locked = parent.locked_shots;
   if (Array.isArray(locked) && locked.length > 0) {
     const allow = new Set(locked);
-    return kfs.filter((k) => allow.has(k.shot_id)).map((k) => ({ shot_id: k.shot_id, keyframe_key: k.key }));
+    return kfs.filter((k) => allow.has(k.shot_id)).map(previewRef);
   }
-  return kfs.map((k) => ({ shot_id: k.shot_id, keyframe_key: k.key }));
+  return kfs.map(previewRef);
 }
 
 function scenesForKeyframes(allScenes: FilmScene[], keyframes: FilmKeyframeRef[]): FilmScene[] {
@@ -127,6 +149,54 @@ function perShotMotionFromCloud(
   return out;
 }
 
+/**
+ * vivijure-core#442: the spoken-clip prep for a per-shot door map, door by door.
+ *
+ * Core keeps the map on the film doc and decides each shot's audio from its own door, so a map that mixes
+ * a door driven by a line's audio with a silent door now runs. Every door that holds a spoken shot goes
+ * through prepareSpokenClip, the same test the single-door path applies:
+ *
+ * - A door driven only by audio (isDrivingOnlyDoor) gets native audio off when its schema has the switch,
+ *   sent as its own entry in `motion_configs`, and its shots carry no voice-sample clip.
+ * - A native-audio door keeps its config and its voice samples, and is refused when talking audio is off.
+ * - A door that can neither speak nor take driving audio is refused (cf#1299). Measured on a hybrid film,
+ *   a line on such a shot was bought and then dropped from the film with no degrade mark. The refusal
+ *   names the shot and its door, and the remedy lists the installed doors that can say a line.
+ *
+ * A door with no spoken shot, and every shot on it, is left exactly as before.
+ */
+export function prepareSpokenClipsPerDoor(
+  modules: RegisteredModule[],
+  perShot: Record<string, string>,
+  config: Record<string, unknown> | undefined,
+  voiceRefs: Record<string, string> | undefined,
+  lines: DialogueLine[] | undefined,
+):
+  | { ok: true; motionConfigs: Record<string, Record<string, unknown>> | undefined; voiceRefs: Record<string, string> | undefined }
+  | { ok: false; error: string } {
+  const shotsByDoor = new Map<string, string[]>();
+  for (const [shot, door] of Object.entries(perShot)) shotsByDoor.set(door, [...(shotsByDoor.get(door) ?? []), shot]);
+  const motionConfigs: Record<string, Record<string, unknown>> = {};
+  let refs = voiceRefs ? { ...voiceRefs } : undefined;
+  for (const [door, shots] of shotsByDoor) {
+    const mod = modules.find((m) => m.name === door);
+    const spokenShots = shots.filter((shot) => spokenLinesPresent((lines ?? []).filter((l) => l.shot_id === shot)));
+    if (!spokenShots.length) continue;
+    const clip = prepareSpokenClip(modules, mod, config, undefined, true);
+    if (!clip.ok) {
+      const named = spokenShots.map((shot) => `"${shot}"`).join(", ");
+      const label = mod ? moduleLabel(mod) : door;
+      const what = spokenShots.length === 1 ? `Shot ${named} has a spoken line` : `Shots ${named} have spoken lines`;
+      return { ok: false, error: `${what} on ${label}. ${clip.error}` };
+    }
+    if (!isDrivingOnlyDoor(mod)) continue;
+    if (clip.config) motionConfigs[door] = clip.config;
+    if (refs) for (const shot of shots) delete refs[shot];
+  }
+  if (refs && !Object.keys(refs).length) refs = undefined;
+  return { ok: true, motionConfigs: Object.keys(motionConfigs).length ? motionConfigs : undefined, voiceRefs: refs };
+}
+
 export function validatePreviewParent(parent: RenderRow): string | null {
   if (parent.mode !== "keyframes-only") return "parent render is not a keyframes-only preview";
   if (parent.status !== "COMPLETED") return "parent preview is not completed";
@@ -154,9 +224,18 @@ export async function animateFromPreview(
 
   const tier = coerceQualityTier(args.parent.quality_tier) ?? "final";
   const modules = await discoverModules(env);
-  const mapped = mapRenderOverridesToModuleConfigs(args.parent.render_overrides ?? undefined, tier, modules);
+  let mapped = mapRenderOverridesToModuleConfigs(args.parent.render_overrides ?? undefined, tier, modules);
   const cloudAllowed = cloudMotionModules(modules).map((m) => m.name);
   const gpuDoor = defaultGpuDoorModule(modules)?.name;
+  let previewBundleScenes: Awaited<ReturnType<typeof readBundleScenes>> = [];
+  try {
+    previewBundleScenes = await readBundleScenes(env, args.parent.bundle_key);
+  } catch (e) {
+    return { ok: false, error: dialogueUndeterminedMessage(e), status: 503 };
+  }
+  // cf#1056: only the shots this finalize makes decide whether it must speak.
+  const renderedBundleScenes = bundleScenesForRender(previewBundleScenes, scenes.map((s) => s.shot_id));
+  const previewSpoken = bundleScenesHaveLines(renderedBundleScenes);
 
   let motionBackend: string | undefined;
   let perShotMotion: Record<string, string> | undefined;
@@ -185,9 +264,24 @@ export async function animateFromPreview(
   } else {
     // cf#347: honour a caller-supplied motion backend (panel sends motion_backend on finalize).
     // Parent-row mapped override remains the fallback when the body omits one.
-    motionBackend = args.motionBackend ?? mapped.motion_backend ?? gpuDoor;
-    if (!motionBackend) {
-      return { ok: false, error: 'no gpu-door motion.backend module (ui.locality "byo"/"local") is installed', status: 400 };
+    // The last resort is the hosted door for this board: InfiniteTalk (or another driving-only
+    // cloud door) when a line is present, otherwise one silent catalog door. own-gpu is the
+    // hybrid "gpu" shot above, not this default.
+    // mapped.motion_backend is the pipeline default (often the byo door). That is not a
+    // caller choice. Only the request body or the stored overrides bag counts as one.
+    const rawExplicit = (args.motionBackend && args.motionBackend.trim())
+      || parseModuleRenderOverrides(args.parent.render_overrides).motion_backend;
+    const picked = hostedMotionFallback(modules, rawExplicit, previewSpoken);
+    if (!("name" in picked)) {
+      return { ok: false, error: picked.error, status: 400 };
+    }
+    motionBackend = picked.name;
+    if (!rawExplicit) {
+      mapped = mapRenderOverridesToModuleConfigs(
+        withMotionBackend(args.parent.render_overrides, motionBackend),
+        tier,
+        modules,
+      );
     }
   }
 
@@ -199,7 +293,6 @@ export async function animateFromPreview(
       return { ok: false, error: `motion.backend module "${n}" is not installed`, status: 400 };
     }
   }
-
   // cf#334: the shared pre-flight, for the ONE guard of the three that applies here.
   //
   // #577 is new coverage on this family. The motion config comes off the PARENT ROW's stored
@@ -241,16 +334,51 @@ export async function animateFromPreview(
   let dialogue_lines: DialogueLine[] | undefined;
   let voice_ref_keys: Record<string, string> | undefined;
   try {
-    const bundleScenes = await readBundleScenes(env, args.parent.bundle_key);
     const resolved = await resolveCastLoras(env, args.castLoras ?? {});
-    let lines = dialogueLinesFromBundleScenes(bundleScenes, resolved.voices);
+    let lines = dialogueLinesFromBundleScenes(renderedBundleScenes, resolved.voices);
     if (lines.length) {
-      lines = resolveExplicitLineVoices(lines, bundleScenes, resolved.voices);
+      lines = resolveExplicitLineVoices(lines, previewBundleScenes, resolved.voices);
       dialogue_lines = lines;
     }
-    voice_ref_keys = voiceRefKeysFromScenes(bundleScenes, resolved.voiceRefs);
-  } catch {
-    // best-effort: missing bundle dialogue must not block finalize
+    voice_ref_keys = voiceRefKeysFromScenes(previewBundleScenes, resolved.voiceRefs);
+  } catch (e) {
+    // fc#2250: the original intent here ("missing bundle dialogue must not block finalize") is
+    // PRESERVED and did not need the blanket catch to hold -- readBundleScenes returns [] for a
+    // missing bundle or a bundle with no storyboard.yaml, so the missing case never reaches here
+    // and still finalizes silent. Reaching this catch means a real failure (R2 error, corrupt
+    // gzip, unparseable YAML, or cast resolution), so whether this film has spoken lines is
+    // UNDETERMINED. Swallowing it finalized a voiced film silent and called it success.
+    return { ok: false, error: dialogueUndeterminedMessage(e), status: 503 };
+  }
+
+  // A staged song starts this film only after beat-sync has stored its read.
+  const songRefusal = await songStartRefusal(
+    (key) => env.R2_RENDERS.head(key),
+    args.audioKey,
+    dialogue_lines,
+  );
+  if (songRefusal) return { ok: false, error: songRefusal, status: 400 };
+
+  // One door for the whole film (the finalized path). Hybrid and cloud-per-shot keep their
+  // own door map, and are prepared door by door (vivijure-core#442).
+  let motionConfig = mapped.motion_config;
+  let motionConfigs: Record<string, Record<string, unknown>> | undefined;
+  if (perShotMotion) {
+    const clips = prepareSpokenClipsPerDoor(modules, perShotMotion, mapped.motion_config, voice_ref_keys, dialogue_lines);
+    if (!clips.ok) return { ok: false, error: clips.error, status: 400 };
+    motionConfigs = clips.motionConfigs;
+    voice_ref_keys = clips.voiceRefs;
+  } else {
+    const clip = prepareSpokenClip(
+      modules,
+      modules.find((m) => m.name === motionBackend),
+      mapped.motion_config,
+      voice_ref_keys,
+      spokenLinesPresent(dialogue_lines),
+    );
+    if (!clip.ok) return { ok: false, error: clip.error, status: 400 };
+    motionConfig = clip.config ?? mapped.motion_config;
+    voice_ref_keys = clip.voiceRefs;
   }
 
   // dialogue_lines is runtime-supported on startFilmFromKeyframes (core >=1.6.0); published
@@ -264,8 +392,13 @@ export async function animateFromPreview(
       keyframes,
       motion_backend: motionBackend,
       per_shot_motion: perShotMotion,
-      motion_config: mapped.motion_config,
+      motion_config: motionConfig,
+      motion_configs: motionConfigs,
       finish_config: mapped.finish_config,
+      // vivijure-cf#1379 (core#339): the caller's dialogue module and its config, resolved from the same
+      // overrides bag. Absent when the caller chose none, which keeps the first dialogue module by ui.order.
+      dialogue_backend: mapped.dialogue_backend,
+      dialogue_config: mapped.dialogue_config,
       // cf#537: inherited from the PARENT render's stored overrides bag, so a derived render keeps
       // the selection the original was submitted with. Dropping it here would silently re-enable
       // every default module on every finalize, which is the original defect wearing a new hat.
@@ -279,6 +412,7 @@ export async function animateFromPreview(
       dialogue_lines,
       voice_ref_keys,
       idempotency_key: readIdempotencyKey({ idempotency_key: args.idempotency_key }),
+      reuse_finished: args.reuse_finished === true,
     } as Parameters<typeof startFilmFromKeyframes>[1] & { dialogue_lines?: DialogueLine[] },
     modules,
   );

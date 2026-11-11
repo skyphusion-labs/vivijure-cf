@@ -12,6 +12,7 @@
 //
 // Failures are DATA (ok:false), never thrown across the wire.
 
+import { withRetryingR2 } from "../../_shared/r2-retry";
 import {
   MODULE_API,
   type ModuleManifest,
@@ -23,9 +24,7 @@ import {
   type MotionBackendOutput,
 } from "./contract";
 import {
-  MODEL,
   OUT_FPS,
-  buildParams,
   parseVideoUrl,
   clampDuration,
   encodePoll,
@@ -33,70 +32,41 @@ import {
   stateKey,
   clipKey,
   normalizeConfig,
-  type RunState,
-  type ModuleConfig,
-} from "./params";
+  type RunState, resolutionDurationError } from "./params";
+import { requireVideoUrl, runPaidGeneration } from "../../_shared/paid-generation";
+import { failOnRefusal } from "../../_shared/gateway-log";
+import { type Env, type WorkflowParams, generateClip, secretValue } from "./generate";
 import { WorkflowEntrypoint, type WorkflowEvent, type WorkflowStep, type WorkflowStepConfig } from "cloudflare:workers";
-
-interface R2Bucket {
-  put(key: string, value: ArrayBuffer | string, opts?: { httpMetadata?: { contentType?: string } }): Promise<unknown>;
-  get(key: string): Promise<{ text(): Promise<string>; arrayBuffer(): Promise<ArrayBuffer> } | null>;
-}
-
-interface AiRun {
-  run(model: string, params: unknown, opts?: { gateway?: { id: string } }): Promise<unknown>;
-}
-
-interface WorkflowInstance {
-  id: string;
-  status(): Promise<{ status: string }>;
-}
-interface WorkflowBinding {
-  create(options?: { id?: string; params?: WorkflowParams }): Promise<WorkflowInstance>;
-  get(id: string): Promise<WorkflowInstance>;
-}
-
-interface Env {
-  AI: AiRun;
-  GATEWAY_ID: SecretsStoreSecret;
-  R2_RENDERS: R2Bucket;
-  I2V_WORKFLOW: WorkflowBinding;
-}
-
-export interface WorkflowParams {
-  job_id: string;
-  project: string;
-  shot_id: string;
-  seconds: number;
-  input: MotionBackendInput;
-  config: ModuleConfig;
-}
 
 const MANIFEST: ModuleManifest = {
   name: "cf-veo",
-  version: "0.1.1",
+  version: "0.1.4",
   api: MODULE_API,
   hooks: ["motion.backend"],
   provides: [{ id: "i2v-cloud", label: "Talking clips (Veo 3.1)" }],
   config_schema: {
     generate_audio: { type: "bool", default: true, label: "keep the model's talking audio (off: silent clip)" },
     aspect_ratio: { type: "enum", values: ["16:9", "9:16", "1:1"], default: "16:9", label: "aspect ratio" },
-    resolution: { type: "enum", values: ["720p", "1080p"], default: "720p", label: "resolution" },
+    // cf#932: the label is the one place the schema can say it; resolutionDurationError enforces it.
+    resolution: { type: "enum", values: ["720p", "1080p"], default: "720p", label: "resolution (1080p: 8 second shots only)" },
   },
   ui: {
     section: "motion",
     order: 55,
     locality: "cloud",
-    cost: "Pay per render",
+    // cf#1246: provider cost, no markup. Source and date: docs/motion-door-prices.md.
+    cost: "$0.10/s at 720p, $0.12/s at 1080p with its audio (silent: $0.08/s and $0.10/s)",
+    cost_as_of: "2026-11-05",
+    cost_usd_per_second: [0.10, 0.12],
     blurb: "Photoreal talking on Cloudflare. Only 4, 6, or 8 seconds.",
     limits: [
       "4, 6, or 8 second clips",
       "Same voice lock on every shot",
-      "One film, no scatter",
       "Cannot lock the Cast voice sample. Same description, not the same take.",
     ],
   },
   usage: {
+    face_hold: "one",
     native_audio: true,
     voice: "prompt_lock",
     scatter_native_audio: false,
@@ -108,17 +78,6 @@ const MANIFEST: ModuleManifest = {
 
 function json(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
-}
-
-async function secretValue(s: SecretsStoreSecret | string | undefined): Promise<string> {
-  if (typeof s === "string") return s;
-  if (!s) return "";
-  try {
-    return await s.get();
-  } catch (e) {
-    console.warn("secrets-store get failed: " + (e as Error).message);
-    return "";
-  }
 }
 
 async function writeState(env: Env, jobId: string, state: RunState): Promise<void> {
@@ -137,14 +96,8 @@ async function readState(env: Env, jobId: string): Promise<RunState | null> {
   }
 }
 
-/** Blocking env.AI.run -> download video -> R2 clip + done state. Runs inside a Workflow step. */
-async function runGeneration(env: Env, params: WorkflowParams): Promise<void> {
-  const gatewayId = await secretValue(env.GATEWAY_ID);
-  if (!gatewayId) throw new Error("GATEWAY_ID not configured");
-  const modelParams = buildParams(params.input, params.config);
-  const result = await env.AI.run(MODEL, modelParams, { gateway: { id: gatewayId } });
-  const url = parseVideoUrl(result);
-  if (!url) throw new Error("model completed but returned no video URL");
+/** Download and write. Retries on its own step, and never reaches the provider. */
+async function storeClip(env: Env, params: WorkflowParams, url: string): Promise<void> {
   const vresp = await fetch(url);
   if (!vresp.ok) throw new Error("video fetch " + vresp.status);
   const bytes = await vresp.arrayBuffer();
@@ -166,10 +119,16 @@ const GENERATE_STEP_CONFIG: WorkflowStepConfig = {
 
 export class CfVeoWorkflow extends WorkflowEntrypoint<Env, WorkflowParams> {
   async run(event: WorkflowEvent<WorkflowParams>, step: WorkflowStep): Promise<void> {
+    withRetryingR2(this.env);
     const p = event.payload;
     try {
-      await step.do("generate", GENERATE_STEP_CONFIG, async () => {
-        await runGeneration(this.env, p);
+      await runPaidGeneration(step, GENERATE_STEP_CONFIG, {
+        generate: () => generateClip(this.env, p),
+        parse: (raw) => {
+          failOnRefusal(raw);
+          return requireVideoUrl(parseVideoUrl(raw));
+        },
+        store: (url) => storeClip(this.env, p, url),
       });
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
@@ -187,13 +146,16 @@ async function submit(
 ): Promise<InvokeResponse<MotionBackendOutput>> {
   const input = req.input;
   if (!input || !input.keyframe_url || !input.prompt || !input.shot_id) {
-    return { ok: false, error: "motion.backend: input needs shot_id, keyframe_url, and prompt" };
+    return { ok: false, error: "motion.backend: input needs shot_id, keyframe_url, and prompt", reason: "bad-input" };
   }
   const gatewayId = await secretValue(env.GATEWAY_ID);
-  if (!gatewayId) return { ok: false, error: "cf-veo: GATEWAY_ID not configured" };
+  if (!gatewayId) return { ok: false, error: "cf-veo: GATEWAY_ID not configured", reason: "not-configured" };
 
   const config = normalizeConfig(req.config ?? {});
   const seconds = clampDuration(input.seconds);
+  // cf#932: refuse 1080p on a shot that is not 8 seconds, before any provider call.
+  const comboError = resolutionDurationError(config, seconds);
+  if (comboError) return { ok: false, error: comboError, reason: "bad-input" };
   const project = req.context?.project || "project";
   const jobId = (req.context?.job_id || crypto.randomUUID()) + "-" + input.shot_id;
 
@@ -267,6 +229,7 @@ async function poll(env: Env, body: PollRequest): Promise<PollResponse<MotionBac
 
 export default {
   async fetch(request: Request, env: Env, _ctx: ExecutionContext): Promise<Response> {
+    withRetryingR2(env);
     const url = new URL(request.url);
     if (request.method === "GET" && url.pathname === "/module.json") return json(MANIFEST);
 
@@ -284,10 +247,10 @@ export default {
       try {
         req = (await request.json()) as InvokeRequest<MotionBackendInput>;
       } catch {
-        return json({ ok: false, error: "invalid JSON body" } as InvokeResponse);
+        return json({ ok: false, error: "invalid JSON body", reason: "bad-input" } as InvokeResponse);
       }
       if (req.hook !== "motion.backend") {
-        return json({ ok: false, error: "unsupported hook " + String(req.hook) } as InvokeResponse);
+        return json({ ok: false, error: "unsupported hook " + String(req.hook), reason: "unsupported" } as InvokeResponse);
       }
       return json(await submit(env, req));
     }

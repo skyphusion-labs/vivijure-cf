@@ -1,3 +1,4 @@
+import { retryingBucket } from "../modules/_shared/r2-retry";
 import {
   orchestratorContextFromPlatform,
   type OrchestratorEnv,
@@ -6,6 +7,10 @@ import {
 } from "@skyphusion-labs/vivijure-core/platform";
 import { meteredR2Bucket } from "@skyphusion-labs/vivijure-core/storage-quota";
 import { cfPlatformFromEnv } from "./platform/cf-platform.js";
+import { videoFinishDoor, type VideoFinishDoorHost } from "./video-finish-binding.js";
+import { RESERVED_JOB_INSTANCES } from "./video-finish-binding";
+import { declaredUnprovisionable, usableVideoFinishUrl } from "./video-finish-availability.js";
+import { finishQueueSlots, sqlFinishQueue, type FinishQueue } from "@skyphusion-labs/vivijure-core/finish-queue";
 import type { Env } from "./env.js";
 
 /** Platform ICD env for orchestration (PRESIGNER + wrapped R2). */
@@ -13,8 +18,13 @@ export function orchestratorEnv(env: Env): OrchestratorEnv {
   return orchestratorContextFromPlatform(cfPlatformFromEnv(env));
 }
 
-/** Workers Env merged with orchestration fields for route handlers. */
-export type StudioEnv = Env & OrchestratorEnv;
+/** Workers Env merged with orchestration fields for route handlers.
+ *
+ *  MEDIA_DOOR_FETCHERS is NOT a wrangler binding and deliberately does not appear in env.ts,
+ *  which mirrors wrangler and nothing else. It is SYNTHESISED here from the FINISH_CONTAINER
+ *  binding (cf#810) and handed to core in place of a public origin. Core declares the same field
+ *  on its own env type from 1.23.0, so tsc catches drift between the two halves. */
+export type StudioEnv = Env & OrchestratorEnv & VideoFinishDoorHost;
 
 /** The ONE place this Worker meters object writes (core#52).
  *
@@ -39,9 +49,66 @@ function meterStudioWrites(raw: Env): void {
 }
 
 export function studioEnv(raw: Env): StudioEnv {
+  // Retry inside the meter, so the meter's own head on a stream put is retried too. Both wraps are idempotent.
+  if (raw.R2_RENDERS) raw.R2_RENDERS = retryingBucket(raw.R2_RENDERS);
   if (raw.R2_RENDERS && raw.DB) meterStudioWrites(raw);
+  // cf#964: a VIDEO_FINISH_URL that names no origin (an unrendered placeholder, a bare word) is the
+  // same as no URL. Core treats any non-empty string as an installed tier, so clear it here and core
+  // takes the documented degrade path instead of failing a paid-for film at its finish step.
+  if (raw.VIDEO_FINISH_URL !== undefined && !usableVideoFinishUrl(raw.VIDEO_FINISH_URL)) {
+    raw.VIDEO_FINISH_URL = undefined;
+  }
+  // cf#871: a studio declared unprovisionable has no tier, whatever URL is typed, unless the
+  // container is BOUND (the door is an observation and wins, as in videoFinishState). Clearing the
+  // URL here makes core take the same degrade path the panel reports, instead of the panel greying
+  // the controls while the film path still tries the URL.
+  if (raw.VIDEO_FINISH_URL !== undefined && !raw.FINISH_CONTAINER && declaredUnprovisionable(raw)) {
+    raw.VIDEO_FINISH_URL = undefined;
+  }
   const { PRESIGNER } = orchestratorEnv(raw);
-  return Object.assign(raw, { PRESIGNER }) as StudioEnv;
+  return Object.assign(raw, { PRESIGNER, ...mediaDoorFetchersField(raw), ...finishQueueField(raw) }) as StudioEnv;
+}
+
+/** FIFO admission to the finish tier. Every deploy has a database, so every deploy gets the queue, and
+ *  a database that has not had the migration fails each call, which core reads as "no queue": it logs
+ *  `finish_queue.unavailable` and uses retry with backoff. Reused like the door, since studioEnv runs
+ *  on every request against the same env object. */
+function finishQueueField(raw: Env): { FINISH_QUEUE?: FinishQueue } {
+  const existing = (raw as Env & { FINISH_QUEUE?: FinishQueue }).FINISH_QUEUE;
+  if (existing) return { FINISH_QUEUE: existing };
+  if (!raw.DB) return {};
+  const cap = Number(raw.FINISH_QUEUE_PER_KEY_CAP);
+  return {
+    FINISH_QUEUE: sqlFinishQueue(raw.DB as unknown as CoreDatabase, {
+      slots: raw.FINISH_QUEUE_SLOTS ? finishQueueSlots(raw.FINISH_QUEUE_SLOTS) : RESERVED_JOB_INSTANCES,
+      ...(Number.isInteger(cap) && cap > 0 ? { perKeyCap: cap } : {}),
+    }),
+  };
+}
+
+/** The bound media doors, when this deploy has the container bound (cf#810).
+ *
+ *  KEYED BY THE DOOR'S URL VAR, which is core's vocabulary (`MEDIA_DOOR_FETCHERS`), so there is one
+ *  door naming scheme across the two repos rather than two. Requires core >= 1.23.0; below that
+ *  core does not read the field and the door is constructed, ignored, and harmless.
+ *
+ *  OPTIONAL BY CONSTRUCTION. A self-host with no FINISH_CONTAINER binding gets no door and falls
+ *  through to the VIDEO_FINISH_URL path in core exactly as before, which is what keeps this change
+ *  invisible to every deploy that is not ours.
+ *
+ *  Reused rather than rebuilt, for the same reason meterStudioWrites is idempotent: studioEnv runs
+ *  on EVERY request against the same isolate-level env object, so minting a fresh closure per
+ *  request would be pure garbage for no behaviour change. */
+function mediaDoorFetchersField(raw: Env): VideoFinishDoorHost {
+  const existing = (raw as Env & VideoFinishDoorHost).MEDIA_DOOR_FETCHERS;
+  if (existing?.VIDEO_FINISH_URL) return { MEDIA_DOOR_FETCHERS: existing };
+  if (!raw.FINISH_CONTAINER) return {};
+  return {
+    MEDIA_DOOR_FETCHERS: {
+      ...(existing ?? {}),
+      VIDEO_FINISH_URL: videoFinishDoor(raw.FINISH_CONTAINER),
+    },
+  };
 }
 
 /** Test helper: attach a mock presigner without wrapping R2 (keeps mem mocks intact). */

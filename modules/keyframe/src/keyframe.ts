@@ -2,15 +2,38 @@
 // keyframes-only pass), parse the keyframes out of the result, and encode/decode the async poll
 // token. No I/O here, so it unit-tests without the runtime, the GPU, or spend.
 
-import type { KeyframeInput, KeyframeShot } from "./contract";
+import type { KeyframeInput, KeyframeShot, PlateCount } from "./contract";
 import { resolveProjectForBundle } from "../../_shared/bundle-project";
 
 const TIERS = ["draft", "standard", "final"] as const;
 type Tier = (typeof TIERS)[number];
 
+export const KEYFRAME_STYLES = ["photoreal", "anime"] as const;
+export type KeyframeStyle = (typeof KEYFRAME_STYLES)[number];
+export const KEYFRAME_BASES: Record<KeyframeStyle, string> = {
+  photoreal: "SG161222/RealVisXL_V5.0",
+  anime: "cagliostrolab/animagine-xl-4.0",
+};
+
 /** Clamp a quality tier to one the backend accepts (default "final"). */
 export function clampTier(v: unknown): Tier {
   return (TIERS as readonly string[]).includes(v as string) ? (v as Tier) : "final";
+}
+
+/** Clamp still look. Unknown values keep the photoreal default. */
+export function clampStyle(v: unknown): KeyframeStyle {
+  return v === "anime" ? "anime" : "photoreal";
+}
+
+/** cf#1384: this door refuses `style: anime`, by name, before any RunPod call. The anime checkpoint is not
+ *  on the GPU image (vivijure-backend#557: anime keyframes run on cloud-keyframe), so the job could only
+ *  fail late, on a worker. The value stays in the manifest enum on purpose: core clamps an undeclared enum
+ *  value to the field default, so dropping it would draw photoreal for an anime request with no word to
+ *  the caller. Returns the refusal text, or null when the style is allowed. */
+export function styleRefusal(cfg: Record<string, unknown>): string | null {
+  if (clampStyle(cfg.style) !== "anime") return null;
+  return "style anime is not available on the GPU keyframe door: the anime checkpoint is not on the GPU " +
+    "image. Use the cloud-keyframe door for anime stills (vivijure-backend#557).";
 }
 
 /** The render_overrides.keyframe block, built from the module config -- only fields the user set,
@@ -34,6 +57,23 @@ function keyframeOverrides(cfg: Record<string, unknown>): Record<string, unknown
   // wire. Old backend images ignore these; new ones default scene_lock true / 0.70.
   if (typeof cfg.scene_lock === "boolean") o.scene_lock = cfg.scene_lock;
   num("canny_scale", "canny_scale");
+  // cf#1143: the Pass B identity crop padding. The backend clamps it to 0..2.
+  num("face_crop_pad", "face_crop_pad");
+  // cf#1143 option b: the two-person plate takes each portrait at this scale. 0 is off.
+  num("plate_ip_adapter_scale", "plate_ip_adapter_scale");
+  // cf#1143 option a: per-region descriptions in the two-person plate. Only a real boolean is forwarded.
+  if (typeof cfg.plate_regional_text === "boolean") o.plate_regional_text = cfg.plate_regional_text;
+  // cf#1143 option c: a people-free band between the two people (meaningful with plate_regional_text).
+  if (typeof cfg.plate_people_free_background === "boolean") o.plate_people_free_background = cfg.plate_people_free_background;
+  // cf#1143 option d and cf#1281: the backend reads both under multi_char, not at the top of the keyframe block.
+  const mc: Record<string, unknown> = {};
+  if (typeof cfg.pose_scale === "number" && Number.isFinite(cfg.pose_scale)) mc.controlnet_pose_scale = cfg.pose_scale;
+  // "auto" (or anything else) sends nothing, so the backend per-path default stands (backend#596).
+  if (cfg.pose_conditioning === "on") mc.pose_conditioning = true;
+  else if (cfg.pose_conditioning === "off") mc.pose_conditioning = false;
+  if (Object.keys(mc).length) o.multi_char = mc;
+  // Anime stills swap the SDXL checkpoint. Photoreal keeps the backend default.
+  if (clampStyle(cfg.style) === "anime") o.base_model = KEYFRAME_BASES.anime;
   return o;
 }
 
@@ -51,10 +91,21 @@ export function buildPreviewBody(input: KeyframeInput, cfg: Record<string, unkno
   const kf = keyframeOverrides(cfg);
   if (Object.keys(kf).length) body.render_overrides = { keyframe: kf };
   if (input.shot_ids && input.shot_ids.length) body.process_shot_ids = input.shot_ids;
-  if (input.pretrained_loras && Object.keys(input.pretrained_loras).length) {
+  // A photoreal UNet adapter on Animagine is a silent degrade. Drop reused LoRAs on anime.
+  if (
+    clampStyle(cfg.style) !== "anime"
+    && input.pretrained_loras
+    && Object.keys(input.pretrained_loras).length
+  ) {
     body.pretrained_loras = { ...input.pretrained_loras };
   }
   return { input: body };
+}
+
+/** The backend plate count report when it is a plain object, else undefined. The core owns the strict
+ *  read; this only refuses what cannot possibly be one, so a junk value is never forwarded. */
+export function plateCountOf(raw: unknown): PlateCount | undefined {
+  return raw && typeof raw === "object" && !Array.isArray(raw) ? (raw as PlateCount) : undefined;
 }
 
 /** Extract the generated keyframes from the backend result. The handler returns
@@ -71,7 +122,18 @@ export function parseKeyframes(result: unknown): KeyframeShot[] {
     const o = e as Record<string, unknown>;
     const shot_id = typeof o.shot_id === "string" ? o.shot_id : null;
     const key = typeof o.key === "string" ? o.key : typeof o.keyframe_key === "string" ? o.keyframe_key : null;
-    if (shot_id && key) out.push({ shot_id, keyframe_key: key });
+    // reused: this job drew nothing, so the core must not stamp its config provenance on the still.
+    // plate_count: the backend plate count guard report (vivijure-cf#1282). Passed through for the
+    // core to read strictly; dropping it here was one of the three places the warning died.
+    const plate = plateCountOf(o.plate_count);
+    if (shot_id && key) {
+      out.push({
+        shot_id,
+        keyframe_key: key,
+        ...(o.reused === true ? { reused: true } : {}),
+        ...(plate ? { plate_count: plate } : {}),
+      });
+    }
   }
   return out;
 }

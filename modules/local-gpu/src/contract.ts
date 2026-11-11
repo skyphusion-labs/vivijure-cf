@@ -18,7 +18,21 @@ export interface Provides {
   id: string;
   label: string;
 }
-export interface ModuleUi { section?: string; icon?: string; order?: number; locality?: "local" | "byo" | "cloud"; cost?: string; blurb?: string; limits?: string[]; }
+export interface ModuleUi {
+  section?: string;
+  icon?: string;
+  order?: number;
+  locality?: "local" | "byo" | "cloud";
+  cost?: string;
+  blurb?: string;
+  limits?: string[];
+  /** Lowest and highest clip rate in USD per second, at provider cost with no markup (cf#1246). */
+  cost_usd_per_second?: [number, number];
+  /** Price points for a door billed per clip, at provider cost (cf#1246). An absent key matches any value. */
+  cost_usd_per_clip?: ClipPrice[];
+  /** The day the cost above was read, YYYY-MM-DD (cf#1246). Required with either cost field. */
+  cost_as_of?: string;
+}
 
 /** How we actually call this motion door (same shape as core MotionUsageDecl). */
 export type MotionVoiceMode = "prompt_lock" | "seed_and_prompt" | "cast_tts" | "prev_clip";
@@ -31,6 +45,8 @@ export interface MotionUsageDecl {
   duration_steps?: number[];
   first_last?: boolean;
   seed?: boolean;
+  /** cf#1246: the face grade the panel reads instead of naming doors. */
+  face_hold?: FaceHold;
 }
 
 export interface ModuleManifest {
@@ -71,6 +87,27 @@ export interface InvokeRequest<I = unknown> {
   context: InvokeContext;
 }
 
+/** VENDORED from core's `InvokeFailureReason` (vivijure-module/2, core#291). CLOSED set.
+ *
+ *  DO NOT HAND-EDIT. `tests/invoke-failure-reason-vendored.test.ts` derives this block from core's
+ *  `INVOKE_FAILURE_REASONS` and fails if any of the 34 vendored copies drifts from it. Copied rather
+ *  than imported because this file is deliberately import-free (a module must build without the core
+ *  package); the test is what makes 34 copies safe.
+ *
+ *  ABSENT means the module has not adopted the field. It is never defaulted to a class. */
+export type InvokeFailureReason =
+  | "bad-input"
+  | "unsupported"
+  | "not-configured"
+  | "unauthorized"
+  | "quota-exceeded"
+  | "rate-limited"
+  | "upstream-unavailable"
+  | "backend-error"
+  | "cancelled"
+  | "timeout"
+  | "internal";
+
 // A module may answer synchronously (output) or, for a long-running job, asynchronously: return
 // pending + a poll token, and the caller drives /poll until it is done. jobId (optional/additive) is
 // the backend job id, surfaced so the core can read sub-phase progress; omitted here (the local
@@ -78,7 +115,7 @@ export interface InvokeRequest<I = unknown> {
 export type InvokeResponse<O = unknown> =
   | { ok: true; output: O }
   | { ok: true; pending: true; poll: string; jobId?: string }
-  | { ok: false; error: string };
+  | { ok: false; error: string; reason?: InvokeFailureReason };
 
 export interface PollRequest {
   poll: string;
@@ -127,9 +164,30 @@ export interface KeyframeInput {
 export interface KeyframeShot {
   shot_id: string;
   keyframe_key: string;
+  /** The plate count guard report, when the backend ran it on this still. */
+  plate_count?: PlateCount;
 }
+/** The backend plate count guard report on one still (vivijure-backend docs/contract.md, the
+ *  `keyframes` row). `clean: false`: the still was made from a plate that may show an extra person.
+ *  Passed through untouched; the core reads it strictly (parsePlateCount). */
+export interface PlateCount {
+  expected: number;
+  faces: number[];
+  chosen: number;
+  clean: boolean;
+  retries: number;
+}
+
 export interface KeyframeOutput {
   project: string;
   keyframes: KeyframeShot[];
   trained_loras?: Record<string, string>;
 }
+
+/** One per-clip price point (cf#1246). `resolution` is a value of the door's resolution enum and `seconds` one of
+ *  its duration steps; an absent key matches any value. */
+export interface ClipPrice { usd: number; resolution?: string; seconds?: number; }
+
+/** How well the door holds a face across a film (cf#1246): hold = the same face throughout, two = pinned by the
+ *  first and last stills, one = pinned by the start still only, drift = faces drift. */
+export type FaceHold = "hold" | "two" | "one" | "drift";

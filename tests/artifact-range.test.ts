@@ -254,8 +254,8 @@ describe("#416 /api/artifact byte-range serving", () => {
   });
 });
 
-// --- #646: no render bucket bound (the zero-spend public demo) -> clean 404, never a 500 ------------
-// A demo deploy binds no R2 (spend-impossible by construction) and its seeded rows carry absolute
+// --- #646: no render bucket bound -> clean 404, never a 500 -----------------------------------
+// A deploy can bind no R2 (spend-impossible by construction) and carry rows whose keys are absolute
 // showcase URLs, so the frontend never hits this route. A manually-poked key still must get the honest
 // answer -- there is no store, so there is no such artifact -- as a clean 404, not a thrown 500.
 function makeEnvNoR2() {
@@ -298,5 +298,39 @@ describe("#646 no-R2 deploy: /api/artifact serves an honest 404, not a 500", () 
     expect(res.headers.get("content-length")).toBe("1000");
     expect(res.headers.get("content-type")).toBe("video/mp4");
     expect(res.headers.get("accept-ranges")).toBe("bytes");
+  });
+});
+
+// Resume of a large download: a validator on every response, and If-Range honoured.
+describe("artifact validators", () => {
+  const ETAG = '"v1"';
+  function etagEnv() {
+    const { env, r2 } = makeEnv();
+    seed1000(r2);
+    const bucket = env.R2_RENDERS as unknown as { head: (k: string) => Promise<object | null>; get: (k: string, o?: unknown) => Promise<object | null> };
+    const { head, get } = bucket;
+    bucket.head = async (k) => { const m = await head(k); return m && { ...m, httpEtag: ETAG }; };
+    bucket.get = async (k, o) => { const m = await get(k, o); return m && { ...m, httpEtag: ETAG }; };
+    return env;
+  }
+  const fetchWith = (headers: Record<string, string>, method = "GET") =>
+    worker.fetch(new Request(url("/api/artifact/renders/film.mp4"), { method, headers }), etagEnv(), ctx);
+
+  it("sends an ETag on plain, ranged and HEAD responses", async () => {
+    expect((await fetchWith({})).headers.get("etag")).toBe(ETAG);
+    expect((await fetchWith({ range: "bytes=0-9" })).headers.get("etag")).toBe(ETAG);
+    expect((await fetchWith({}, "HEAD")).headers.get("etag")).toBe(ETAG);
+  });
+
+  it("answers 304 when the validator matches, and the body when it does not", async () => {
+    expect((await fetchWith({ "if-none-match": ETAG })).status).toBe(304);
+    expect((await fetchWith({ "if-none-match": '"old"' })).status).toBe(200);
+  });
+
+  it("If-Range: same object gets the part, a changed object gets the whole file", async () => {
+    expect((await fetchWith({ range: "bytes=0-9", "if-range": ETAG })).status).toBe(206);
+    const changed = await fetchWith({ range: "bytes=0-9", "if-range": '"old"' });
+    expect(changed.status).toBe(200);
+    expect(changed.headers.get("content-length")).toBe("1000");
   });
 });

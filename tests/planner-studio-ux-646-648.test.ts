@@ -47,8 +47,8 @@ describe("cf#646 render is three choices then spend", () => {
     // cf#780: no per-module control id belongs in this markup. One checkbox per installed
     // `finish` module declaring participation "opt_in" is built at render time by
     // planner-render-config.js renderFinishPicks(), and each label is that module's own
-    // provides[0].label. A default-participation module (finish-upscale, finish-rife) still gets
-    // no control, but that is now DERIVED from its manifest rather than asserted by absence here.
+    // provides[0].label. After cf#1038 rife and upscale are opt_in too. Those checkboxes
+    // are built at render time, so this static html still must not hardcode their ids.
     expect(html).not.toMatch(/id="planner-finish-lipsync"/);
     // cf#783: MuseTalk is ruled out permanently, so the panel must not offer it in COPY either.
     // The id assertion above cannot see a sentence; this is what keeps the offer from creeping

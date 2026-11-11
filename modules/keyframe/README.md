@@ -42,11 +42,14 @@ Config options (the planner-projected `config_schema`; the core clamps each agai
 | Option | Type | Default | What it does |
 | --- | --- | --- | --- |
 | `quality_tier` | enum `draft` / `standard` / `final` | `final` | render quality tier |
-| `width` | int (512..1536) | `1344` | keyframe width (16:9 so the whole chain stays 16:9) |
+| `width` | int (512..1536) | `1344` | keyframe width. 1344x768 is 1.75 (7:4), NOT 16:9 (1.7778); i2v doors conform the clip to the keyframe, so the chain runs at 1.75. See cf#945. |
 | `height` | int (512..1536) | `768` | keyframe height |
 | `steps` | int (1..60) | `30` | diffusion steps |
 | `guidance_scale` | float (0..20) | `6.5` | prompt adherence |
 | `seed` | int (>= -1) | `-1` | seed (`-1` = random) |
+| `style` | enum `photoreal` / `anime` | `photoreal` | still look. Photoreal uses RealVisXL. Anime uses Animagine XL 4.0. |
+| `plate_regional_text` | bool | `false` | two-person scene-lock plate: each person's description reaches only their own region (cf#1143). |
+| `pose_conditioning` | enum `auto` / `on` / `off` | `auto` | two-person pose skeleton. `auto` sends nothing, so the backend default per path stands; `on` / `off` set both paths (cf#1281). |
 
 To self-host (service `vivijure-module-keyframe`, bound into the core as `MODULE_KEYFRAME`):
 

@@ -7,6 +7,10 @@ export {
   sanitizeKeySegment,
 } from "@skyphusion-labs/vivijure-core/key-safety";
 
+// Imported as well as re-exported: the re-export above does not bring the name into THIS module scope,
+// and isServedArtifactKey below needs it.
+import { isSafeRelKey } from "@skyphusion-labs/vivijure-core/key-safety";
+
 /** Defense-in-depth check for a key about to be SIGNED. Narrower than isSafeRelKey: it blocks only
  *  the shapes that can steer a signed request off its intended object -- empty/oversized, absolute
  *  ("/..."), a "://" scheme, a ".." traversal segment, or any non-printable / non-ASCII byte -- while
@@ -90,3 +94,42 @@ export const ARTIFACT_PREFIXES = [
   "audio/", "bundles/", "cast/", "cast-clean/", "cast-gen/", "character-refs/",
   "characters/", "clips/", "loras/", "out/", "renders/", "uploads/",
 ];
+
+// --- served artifact space ----------------------------------------------------------------------
+// A HELD object lives at `quarantine/<stamp>/<hold>/<its original key>` (src/abuse-report.ts). That
+// prefix is deliberately OUTSIDE ARTIFACT_PREFIXES, and because the allowlist is tested against the
+// WHOLE key, a held key matches no allowed prefix however ordinary the rest of it looks. So "outside
+// served space" is a property of the key space itself, not of a check somewhere remembering to run.
+
+const QUARANTINE_PREFIX = "quarantine/";
+
+/** True when this key names a HELD object. */
+export function isQuarantineKey(key: string): boolean {
+  return key.startsWith(QUARANTINE_PREFIX);
+}
+
+/** THE definition of "inside served artifact space". Used by the serve route, by the report door, and
+ *  by every path that reads an object in order to copy it INTO served space.
+ *
+ *  One definition on purpose. This rule was stated separately in each place that needed it, which is
+ *  why the paths that read an object in order to re-publish it could hold a different opinion from the
+ *  paths that serve one. A rule written down more than once is a rule that drifts.
+ *  Ref: GHSA-5fj8-6pc2-x9p5. */
+export function isServedArtifactKey(key: unknown): key is string {
+  if (typeof key !== "string" || key.length === 0) return false;
+  if (!isSafeRelKey(key)) return false;
+  if (isQuarantineKey(key)) return false;
+  return ARTIFACT_PREFIXES.some((pre) => key.startsWith(pre));
+}
+
+/** Read an object from SERVED ARTIFACT SPACE, or nothing.
+ *
+ *  The source constraint lives HERE, at the read, rather than at each caller: a path that copies an
+ *  artifact into served space gets the constraint by reading through this, and a path added later
+ *  inherits it instead of restating it. A key outside served space reads as ABSENT rather than as a
+ *  distinct refusal, which is the same answer the serve route gives for such a key, so this cannot be
+ *  used to probe what exists outside the caller's reach. Ref: GHSA-5fj8-6pc2-x9p5. */
+export async function getServedArtifact(bucket: R2Bucket, key: string): Promise<R2ObjectBody | null> {
+  if (!isServedArtifactKey(key)) return null;
+  return bucket.get(key);
+}

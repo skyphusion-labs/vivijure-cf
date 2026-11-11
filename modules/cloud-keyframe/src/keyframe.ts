@@ -9,15 +9,18 @@ import type { KeyframeShot } from "./contract";
 // are GPU keyframe (own-gpu); this door is the optional CF stills path.
 export const MODELS = [
   "google/nano-banana-2",
+  "google/nano-banana-2.1",
+  "pruna/p-image-edit",
 ] as const;
 export type Model = (typeof MODELS)[number];
 
 export const MIN_DIM = 512;
 export const MAX_DIM = 1536;
 
-/** Clamp a model id to one this module drives (Cloudflare Nano Banana 2). */
-export function clampModel(_v: unknown): Model {
-  return MODELS[0];
+/** Clamp a model id to one this module drives. Unknown ids stay on the default, MODELS[0]. */
+export function clampModel(v: unknown): Model {
+  const id = typeof v === "string" ? v : "";
+  return (MODELS as readonly string[]).includes(id) ? (id as Model) : MODELS[0];
 }
 
 /** Clamp a keyframe dimension to the model-safe range, default `fallback`. */
@@ -33,6 +36,20 @@ export function clampRefsPerSlot(v: unknown): number {
   return Math.max(1, Math.min(4, n));
 }
 
+export const KEYFRAME_STYLES = ["photoreal", "anime"] as const;
+export type KeyframeStyle = (typeof KEYFRAME_STYLES)[number];
+
+/** Clamp still look. Unknown values keep the photoreal default. */
+export function clampStyle(v: unknown): KeyframeStyle {
+  return v === "anime" ? "anime" : "photoreal";
+}
+
+const ANIME_LEAD = "anime illustration, cel-shaded, clean linework. ";
+
+/** Neither model path has a negative prompt, and a still of someone speaking invites a caption or a speech
+ *  bubble. A still's text stays on screen for the whole clip, beside the film's own captions (cf#1155). */
+export const NO_TEXT_CLAUSE = "No written words, captions, subtitles or speech bubbles in the image.";
+
 /** Compose one shot's gen prompt: the project style_prefix (when set) + the scene prompt + the
  *  identity text of each character in the shot (name + bible, capped). The reference PORTRAIT carries
  *  identity; this text reinforces it, the way cast-image folds the character bible into its prompts. */
@@ -41,7 +58,9 @@ export function composePrompt(
   scenePrompt: string,
   shotSlots: string[],
   registry: Record<string, RegistryCharacter>,
+  style?: unknown,
 ): string {
+  const lookLead = clampStyle(style) === "anime" ? ANIME_LEAD : "";
   const lead = stylePrefix.trim() ? `${stylePrefix.trim()}. ` : "";
   const ids: string[] = [];
   for (const slot of shotSlots) {
@@ -54,19 +73,36 @@ export function composePrompt(
     if (piece) ids.push(piece);
   }
   const idText = ids.length ? ` Featuring ${ids.join("; ")}.` : "";
-  return `${lead}${scenePrompt.trim()}${idText}`;
+  return `${lookLead}${lead}${scenePrompt.trim()}${idText} ${NO_TEXT_CLAUSE}`;
+}
+
+/** vivijure-cf#1145: the shot prompt with the film's setting said after it, when the shot and the style prefix
+ *  do not already say it (case-insensitive). A shot that names its own place keeps its own place, and no
+ *  setting leaves the prompt untouched. */
+export function sceneWithSetting(scenePrompt: string, setting: string, stylePrefix = ""): string {
+  const scene = scenePrompt.trim();
+  const place = setting.trim();
+  const low = place.toLowerCase();
+  // An empty setting is contained in any text, so this is also the no-setting case.
+  if (scene.toLowerCase().includes(low) || stylePrefix.toLowerCase().includes(low)) return scene;
+  const sep = /[.!?]$/.test(scene) ? " " : scene ? ". " : "";
+  return `${scene}${sep}Setting: ${place}.`;
 }
 
 /** Edit pass for Workers AI nano-banana-2: the first image is the scene plate, later
  *  images are faces. Do not retouch a portrait into a new still. */
-export function composeEditPrompt(scenePrompt: string): string {
+export function composeEditPrompt(scenePrompt: string, style?: unknown): string {
   const scene = scenePrompt.trim();
+  const kind = clampStyle(style) === "anime"
+    ? "anime illustration still"
+    : "cinematic film still";
   return (
-    "Create a new cinematic film still from this description. "
+    `Create a new ${kind} from this description. `
     + "This is a new film still. The people stand in the location in the first image. "
     + "Keep their faces, hair, skin, and wardrobe. "
     + "Do not move them onto a studio backdrop or grey paper. "
     + "Do not copy the reference framing. "
+    + NO_TEXT_CLAUSE + " "
     + scene
   );
 }
@@ -139,9 +175,14 @@ export function planShotRefs(
 
 // --- R2 key conventions ------------------------------------------------------------------------
 
-/** The R2 key a generated keyframe lands under (the contract: renders/<project>/keyframes/<shot>.png). */
-export function keyframeKey(project: string, shotId: string): string {
-  return `renders/${project}/keyframes/${shotId}.png`;
+/** The R2 key a generated keyframe lands under: renders/<project>/keyframes/<job>/<shot>.png.
+ *
+ *  The job segment is load-bearing (cf#1059). Every film off one bundle has the same project, so a flat
+ *  key let a concurrent render replace this film's still after the film had recorded the key. The door and
+ *  the content gate then read a frame from another render. This door generates on every job and never
+ *  reuses a prior still, so the shared key bought nothing here. */
+export function keyframeKey(project: string, jobId: string, shotId: string): string {
+  return `renders/${project}/keyframes/${jobId}/${shotId}.png`;
 }
 
 /** A staged (downscaled) reference portrait for one slot of one job. */
@@ -186,6 +227,10 @@ export interface CloudKeyframeState {
   total: number;          // how many were requested (for progress)
   /** cp#32: the film-wide reference plan; absent on pre-cp#32 state docs -> treated as {mode:none}. */
   film_ref?: FilmRefPlan;
+  /** Still look. Absent on older state docs; treat as photoreal. */
+  style?: KeyframeStyle;
+  /** Set when the drawing workflow stopped on a hard failure. /poll reports it. */
+  workflow_error?: string;
 }
 
 /** Select the scenes to render: the requested subset (`shot_ids`) or every scene in the bundle. */
@@ -207,6 +252,8 @@ export function usedSlots(scenes: BundleScene[]): string[] {
 export interface PollToken {
   project: string;
   job_id: string;
+  /** Set when a workflow draws the shots. /poll then only reads state. */
+  workflow_id?: string;
 }
 
 export function encodePoll(t: PollToken): string {
@@ -217,7 +264,9 @@ export function decodePoll(token: string): PollToken | null {
   try {
     const o = JSON.parse(atob(token)) as PollToken;
     if (o && typeof o.project === "string" && typeof o.job_id === "string") {
-      return { project: o.project, job_id: o.job_id };
+      const t: PollToken = { project: o.project, job_id: o.job_id };
+      if (typeof o.workflow_id === "string" && o.workflow_id) t.workflow_id = o.workflow_id;
+      return t;
     }
   } catch {
     /* fall through */

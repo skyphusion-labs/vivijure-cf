@@ -1,8 +1,6 @@
 import { describe, it, expect } from "vitest";
 import {
   TRAINING_PROMPTS,
-  FLAG_FALLBACK_MODEL,
-  isFlaggedError,
   composeTrainingPrompt,
   clampNumImages,
   buildState,
@@ -43,7 +41,6 @@ describe("cast-image pure logic", () => {
     expect(s.prompts[0]).toContain("anime art style");
     expect(s.ref_urls).toEqual(["https://r2/p.png", "https://r2/s1.png"]);
     expect(s.done).toEqual([]);
-    expect(s.fallback_used).toBe(false);
   });
 
   it("refKey sanitizes ext + zero-pads the index", () => {
@@ -60,13 +57,6 @@ describe("cast-image pure logic", () => {
     const t = { cast_id: 7, job_id: "abc-123" };
     expect(decodePoll(encodePoll(t))).toEqual(t);
     expect(decodePoll("not-a-valid-token")).toBeNull();
-  });
-
-  it("isFlaggedError catches safety flags, not real errors", () => {
-    expect(isFlaggedError("error 3030: has been flagged")).toBe(true);
-    expect(isFlaggedError("please choose another prompt")).toBe(true);
-    expect(isFlaggedError("connection reset")).toBe(false);
-    expect(FLAG_FALLBACK_MODEL).toBe("google/nano-banana-pro");
   });
 
   it("readOutput maps state -> hook output + applied tags", () => {

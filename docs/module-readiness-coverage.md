@@ -12,12 +12,12 @@ the modules, that test fails.
 
 | # | Population | Size | Where it is defined |
 |---|---|---|---|
-| 1 | Modules in this repo | **36** | `modules/*/src/index.ts` (excluding `_shared`) |
-| 2 | Modules that WRITE `runpod_job_log` rows | **17** | `recordRunpodJob` + `TELEMETRY_DB` in the module source |
-| 3 | Modules PUBLISHED as tenant bundles by a studio release | **24** | `scripts/tenant-release-modules.txt`, resolved by `.github/workflows/studio-release.yml` |
-| 4 | Modules PROVISIONED to a tenant, and therefore the only ones `module-readiness` reports on | **18** | `TENANT_MODULE_CATALOG` in `vivijure-control-plane/src/tenant-modules.ts`, mirrored at `scripts/tenant-module-catalog.txt` |
+| 1 | Modules in this repo | **33** | `modules/*/src/index.ts` (excluding `_shared`) |
+| 2 | Modules that WRITE `runpod_job_log` rows | **10** | `recordRunpodJob` + `TELEMETRY_DB` in the module source |
+| 3 | Modules PUBLISHED as tenant bundles by a studio release | **19** | `scripts/tenant-release-modules.txt`, resolved by `.github/workflows/studio-release.yml` |
+| 4 | Modules PROVISIONED to a tenant, and therefore the only ones `module-readiness` reports on | **13** | `TENANT_MODULE_CATALOG` in `vivijure-control-plane/src/tenant-modules.ts`, mirrored at `scripts/tenant-module-catalog.txt` |
 
-Population 4 is the one an operator actually sees, and it is **17 of 34**.
+Population 4 is the one an operator actually sees, and it is **13 of 33**.
 
 **Population 4 is the number this page has been wrong about twice (cf#470).** It is defined in
 another repo, so this repo mirrors it at `scripts/tenant-module-catalog.txt`. The mirror is checked
@@ -27,18 +27,32 @@ existed the copy lived as a literal inside the test that asserted its length, so
 compared the copy against itself: the catalog went 6 to 7 to 15 and nothing ever failed. **If you
 are correcting this page, correct the mirror in the same commit; the test asserts they agree.**
 
-**Populations 3 and 4 are five modules apart, and the gap is the point.** They were briefly equal
+**Populations 3 and 4 are no longer a nested pair.** cf#1075 removed `seedance`, `google-veo`, and `vidu-q3` from this tree and from the publish list. cp#569 removed them from the plane catalog and from the mirror, taking 4 to 13. They were briefly equal
 -- 7 and 7 -- once `finish-rife` was catalogued (cp#284), which meant the plane could not add a
 single further module without a studio release first. cf#394 published nine more (the eight
 cost-door modules and `image-generate`), taking 3 to 16; cp#317 then catalogued eight of those nine,
 taking 4 to 15. cf#396 published four more, taking 3 to 20. **A published bundle with no catalog row
 uploads nothing to anybody**; it exists so the plane can add a row when it is ready, instead of the
-two repos taking turns.
+two repos taking turns. cp#524 published `dialogue-gen`, taking 3 to 23; cp#538 removed the `kling` ROW, taking 4 to 16.
 
-The five in the gap are published-not-catalogued **for two different reasons, and neither is drift.**
+The seven in the gap are published-not-catalogued **for four different reasons, and none is drift.**
 
 - **`image-generate`** reads `OPENAI_API_KEY`, an operator-scoped credential, and is gated on #401.
   A live product decision.
+- **`dialogue-gen`** is the same trade one binding over (cp#524 / cp#526). It declares a Workflows
+  binding, `DIALOGUE_WORKFLOW`, and the plane cannot emit one yet. cp#526 grew the `workflow`
+  variant in the plane's `WorkerBinding` union and live-proved that Workers for Platforms accepts it
+  and reads it back; what does not exist is an EMITTER, and the same run measured that a successful
+  bound upload does NOT create the account-scoped Workflow either. Catalogue it before both exist
+  and the door provisions, passes `/ready` (which reports `gateway_id` and nothing else) and throws
+  at the first invoke. Published first so the bundle exists and the row can land in one repo.
+- **`kling`** is the one entry here that is not waiting on anything: its RunPod slug
+  `kling-v2-1-i2v-pro` returns 404 endpoint-not-found (it answered 401-exists on 2026-08-05, so it
+  was retired upstream between those dates; cf#921, cf#941). The plane dropped the row in cp#538
+  because a catalogued door with no endpoint behind it fails 100% of submits, which is worse than
+  absent -- and `wrangler.toml.example:387` had already said Kling 2.1 is NOT bound on hosted while
+  the catalog shipped it anyway. The BUNDLE keeps publishing, inert, until cf#921 decides the
+  module's own fate; that is a decision for this repo, not for the plane's catalog.
 - **`audio-master`, `beat-sync`, `film-titles`, `subtitle`** each reach the finishing swarm over a
   Workers VPC service binding, and the plane's `uploadTenantModules` binds no `vpc_service` at all
   (measured 2026-08-07: zero occurrences of `vpc` across the 1295 lines of the plane's
@@ -63,22 +77,23 @@ The five in the gap are published-not-catalogued **for two different reasons, an
 | cf-flux-3-video | yes | no | no | **yes** | **yes** |
 | cf-grok-video | yes | no | no | **yes** | **yes** |
 | cf-hailuo | yes | no | no | no | no |
+| cf-p-video-avatar | yes | no | no | no | no |
 | cf-hh1-r2v | yes | no | no | **yes** | **yes** |
+| cf-kling-v4 | yes | no | no | no | no |
+| cf-minimax-h3 | yes | no | no | no | no |
 | cf-seedance | yes | no | no | **yes** | **yes** |
 | cf-veo | yes | no | no | no | no |
+| cf-vidu-q3-turbo | yes | no | no | no | no |
 | chatterbox | yes | no | no | no | no |
 | cloud-keyframe | yes | no | no | no | no |
-| dialogue-gen | yes | no | no | no | no |
+| dialogue-gen | yes | no | no | **yes** | no |
 | film-titles | yes | no | no | **yes** | no |
 | finish-blender | yes | yes | yes | no | no |
 | finish-rife | yes | yes | yes | yes | yes |
 | finish-upscale | yes | yes | yes | yes | yes |
-| google-veo | yes | yes | yes | **yes** | **yes** |
 | image-generate | yes | no | no | **yes** | no |
 | infinitetalk | yes | yes | yes | no | no |
 | keyframe | yes | yes | yes | yes | yes |
-| kling | yes | yes | yes | **yes** | **yes** |
-| kling-o1-r2v | yes | yes | yes | no | no |
 | local-gpu | yes | no | no | no | no |
 | minimax-hailuo | yes | yes | yes | **yes** | **yes** |
 | music-gen | yes | no | no | no | no |
@@ -86,9 +101,7 @@ The five in the gap are published-not-catalogued **for two different reasons, an
 | notify-email | yes | no | no | no | no |
 | own-gpu | yes | yes | yes | yes | yes |
 | plan-enhance | yes | **no** | **no** | yes | **yes** |
-| seedance | yes | yes | yes | **yes** | **yes** |
 | subtitle | yes | no | no | **yes** | no |
-| vidu-q3 | yes | yes | yes | **yes** | **yes** |
 
 ## The two asymmetries, and why each is fine
 
@@ -111,14 +124,14 @@ result, not a fault.** It is excluded from `records_unproven` because its catalo
 ## What cf#295 found, and what changed
 
 cf#295 measured 6 of 26 modules implementing `/ready`, so a sweep could not tell "not ready" from
-"no endpoint exists". **That is fixed: all 31 now implement it** (the invariant is every
-module, not a frozen count; the tree grew with the four CF AI i2v modules on top of main's own
-cf#470 growth), and `tests/module-ready-coverage-291.test.ts`
+"no endpoint exists". **That is fixed: all 33 now implement it** (the invariant is every
+module, not a frozen count; cf#1075 retired three RunPod doors and added
+`cf-vidu-q3-turbo`), and `tests/module-ready-coverage-291.test.ts`
 holds the invariant in CI.
 
 **The coverage gap did not go away; it moved, and it got harder to see.** Before, an unimplemented
 sweep 404'd and the hole was visible in the result. Now every provisioned module answers 200 and
-`module-readiness` looks complete while speaking for population 4, fifteen of thirty-one. A route
+`module-readiness` looks complete while speaking for population 4, 13 of 33. A route
 that reports a subset without saying so is the same defect one layer up, which is why the
 denominator is published here rather than left to be re-derived.
 
@@ -130,13 +143,22 @@ maintained by hand here.
 
 ## What a green `module-readiness` does NOT tell you
 
-- **Anything about the other 16 modules** (31 minus the 15 in population 4). They are not
+- **Anything about the other 20 modules** (the modules in this repo that are not in population 4). They are not
   provisioned to tenants, so a tenant provision does not reach them. **This does not include the
-  GPUless cost door**: all eight cost-door modules were catalogued by cp#317 and a tenant reaches
-  them through the plane-side proxy. The 16 are `audio-master`, `beat-sync`, `cast-image`,
-  `cf-flux-3-video`, `cf-grok-video`, `cf-hh1-r2v`, `cf-seedance`, `cloud-keyframe`, `dialogue-gen`,
-  `film-titles`, `finish-blender`, `image-generate`, `local-gpu`, `music-gen`, `notify-email`,
-  `subtitle`.
+  GPUless cost door**: every cost-door module catalogued by cp#317 is still there and a tenant
+  reaches them through the plane-side proxy, except the three RunPod doors retired in cf#1075
+  (seedance, google-veo, vidu-q3).
+  The 20
+  are `audio-master`, `beat-sync`, `cast-image`,
+  `cf-hailuo`, `cf-kling-v4`, `cf-minimax-h3`, `cf-p-video-avatar`, `cf-veo`, `cf-vidu-q3-turbo`, `chatterbox`, `cloud-keyframe`, `dialogue-gen`, `film-titles`,
+  `finish-blender`, `image-generate`, `infinitetalk`, `local-gpu`,
+  `music-gen`, `notify-email`, `subtitle`.
+> The door that used to sit in this list and no longer does is the retired Kling 2.1 i2v module
+> (cf#921). It lost its catalog row in cp#538 because its provider slug 404s, which briefly made it
+> the only member here that was not simply waiting on a capability. Retiring the module removed it
+> from every population rather than leaving it published-but-uncatalogued, so this list is once again
+> exactly "doors a tenant provision does not reach yet".
+
 - **That any module WORKS.** `/ready` is a credential- and binding-visibility probe. It proves a
   module can see its key and its job-log binding; it runs no job. A module can answer `ok: true` and
   fail every invocation.

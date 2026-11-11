@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import worker from "../src/index";
-import { clampArtifactUrlTtl } from "../src/index";
+import { clampArtifactUrlTtl } from "../src/studio";
 import type { Env } from "../src/env";
 
 // cf#317: GET /api/artifact-url/<key> -- turn an artifact KEY into a SHORT-LIVED presigned GET so a

@@ -1,5 +1,5 @@
 # syntax=docker/dockerfile:1
-FROM python:3.14-slim-bookworm
+FROM python:3.15-slim-bookworm
 
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
@@ -18,7 +18,7 @@ WORKDIR /app
 COPY requirements.txt .
 RUN pip install -r requirements.txt
 
-COPY master_core.py url_guard.py app.py .
+COPY master_core.py url_guard.py bearer.py app.py .
 
 # Build-time sanity-encode: prove the exact filter chain the master relies on links and runs in this
 # slim ffmpeg -- the soxr resampler + high-shelf "air" lift + two-pass-capable loudnorm + libmp3lame.

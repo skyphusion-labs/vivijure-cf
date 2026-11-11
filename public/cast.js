@@ -22,6 +22,11 @@
     // user can uncheck individual sources to skip them on one
     // generate without removing them from the row.
     sourceSelection: new Set(),
+    // The Wan LoRA pane shows only when BOTH are true: the alibaba-wan-lora door is installed
+    // (module registry) AND this host can train a Wan LoRA (GET /api/cast wan_lora_trainable).
+    // Both start false so a missing signal or a failed request keeps the pane hidden.
+    wanDoorInstalled: false,
+    wanLoraTrainable: false,
   };
 
   // The ref key path-segment can contain "/" (cast/<id>/refs/<uuid>.<ext>);
@@ -34,10 +39,12 @@
 
   function artifactUrl(key) {
     if (!key) return "";
-    // #625/demo: a portrait_key (or ref/source key) can be an ABSOLUTE showcase URL -- the public demo
-    // studio seeds cast portraits from assets.skyphusion.net and binds NO R2. Return such a URL verbatim;
-    // a normal relative R2 key still flows through the studio /api/artifact/ presign route as before, so
-    // prod behavior is byte-identical. Same passthrough as planner-history-row.js artifactUrl.
+    // A portrait_key (or ref/source key) can be an ABSOLUTE URL rather than an R2 key, so return such
+    // a value verbatim; a normal relative key still flows through the studio /api/artifact/ presign
+    // route. Same passthrough as planner-history-row.js artifactUrl, and `isForeignRef`
+    // (src/record-reclaim.ts) is the server-side half: a value this accepts must never be handed to
+    // an R2 delete. The shape came from the public demo seed (#625), which was removed with that door
+    // in pr1019; the passthrough is kept because any writer can still store an absolute value.
     return /^https?:\/\//i.test(key) ? key : "/api/artifact/" + key;
   }
 
@@ -165,6 +172,8 @@
     try {
       const data = await api("/api/cast");
       state.cast = Array.isArray(data.cast) ? data.cast : [];
+      state.wanLoraTrainable = data.wan_lora_trainable === true;
+      applyWanLoraPaneVisibility();
       renderCastList();
       setListStatus(
         state.cast.length === 0
@@ -182,8 +191,15 @@
         if (pick != null) selectCast(pick);
       }
     } catch (e) {
+      state.wanLoraTrainable = false;
+      applyWanLoraPaneVisibility();
       setListStatus("could not load cast: " + e.message, true);
     }
+  }
+
+  function applyWanLoraPaneVisibility() {
+    const pane = $("#cast-wan-lora-pane");
+    if (pane) pane.hidden = !(state.wanDoorInstalled && state.wanLoraTrainable);
   }
 
   // Fill the dialogue-voice picker from the catalog (GET /api/voices). One source of truth on the
@@ -200,24 +216,9 @@
         opt.textContent = v.label;
         sel.appendChild(opt);
       }
-      renderVoiceHonor(data.talking_doors);
     } catch (e) {
       // Non-fatal: the picker just stays at "no voice (silent)" if the catalog cannot load.
       console.warn("could not load voices:", e.message);
-    }
-  }
-
-  function renderVoiceHonor(doors) {
-    const ul = $("#cast-voice-honor");
-    if (!ul) return;
-    ul.innerHTML = "";
-    if (!Array.isArray(doors) || !doors.length) return;
-    for (const d of doors) {
-      if (!d || !d.name || !d.label) continue;
-      const li = document.createElement("li");
-      const exact = d.honor === "exact";
-      li.textContent = d.name + (exact ? " (exact lock): " : ": ") + d.label;
-      ul.appendChild(li);
     }
   }
 
@@ -253,7 +254,7 @@
       const sub = document.createElement("div");
       sub.className = "cast-list-sub";
       const parts = [];
-      if (c.ref_keys.length > 0) parts.push(c.ref_keys.length + " refs");
+      if (c.ref_keys.length > 0) parts.push(c.ref_keys.length + (c.ref_keys.length === 1 ? " photo" : " photos"));
       if (!c.portrait_key) parts.push("no portrait");
       sub.textContent = parts.join(" · ") || "ready";
       meta.appendChild(sub);
@@ -274,12 +275,17 @@
   }
 
   function populateEditor(c) {
-    stopVoiceSamplePoll();
     setEditorStatus("");
     $("#cast-name").value = c.name;
     $("#cast-bible").value = c.bible || "";
     $("#cast-voice").value = c.voice_id || "";
-    refreshVoiceSampleUi(c);
+    const heard = $("#cast-voice-player");
+    if (heard) {
+      heard.removeAttribute("src");
+      heard.hidden = true;
+    }
+    const heardStatus = $("#cast-voice-line-status");
+    if (heardStatus) heardStatus.textContent = "";
     $("#cast-slug").textContent = "/" + c.slug;
     updateExportLink(c); // #324: point the .vvcast download at this cast
     restoreTrainingStyle(c.id); // v0.135.13: per-character training art-style
@@ -310,7 +316,7 @@
       a.rel = "noopener";
       const img2 = document.createElement("img");
       img2.src = artifactUrl(r.key);
-      img2.alt = "ref";
+      img2.alt = "photo";
       img2.loading = "lazy";
       a.appendChild(img2);
       li.appendChild(a);
@@ -428,165 +434,38 @@
     }
   }
 
-  function setVoiceSampleStatus(text, isErr) {
-    const el = $("#cast-voice-sample-status");
+  function setVoiceLineStatus(text, isErr) {
+    const el = $("#cast-voice-line-status");
     if (!el) return;
     el.textContent = text || "";
     el.className = "cast-list-status" + (isErr ? " is-error" : "");
   }
 
-  function refreshVoiceSampleUi(c) {
-    const player = $("#cast-voice-player");
-    const keep = $("#cast-voice-keep");
-    if (!player) return;
-    if (c && c.voice_ref_key) {
-      player.src = artifactUrl(c.voice_ref_key);
-      player.hidden = false;
-      setVoiceSampleStatus("Saved sample. Cloudflare Seedance will use this voice. Veo will not.");
-    } else {
-      player.removeAttribute("src");
-      player.hidden = true;
-    }
-    if (keep) keep.disabled = true;
-  }
-
-  const VOICE_SAMPLE_POLL_MS = 2500;
-  let voiceSampleLoop = null;
-  let voiceSampleId = null;
-  let voiceSampleInflight = false;
-
-  function voiceSampleLoopObj() {
-    if (!voiceSampleLoop) {
-      voiceSampleLoop = pollPolicy().createLoop({
-        baseMs: VOICE_SAMPLE_POLL_MS,
-        run: function () {
-          if (voiceSampleId !== null) pollVoiceSample(voiceSampleId);
-        },
-        isActive: function () {
-          return voiceSampleId !== null && state.selectedId === voiceSampleId;
-        },
-      });
-    }
-    return voiceSampleLoop;
-  }
-
-  function schedulePollVoiceSample(id) {
-    voiceSampleId = id;
-    voiceSampleLoopObj().arm();
-  }
-
-  function stopVoiceSamplePoll() {
-    voiceSampleId = null;
-    if (voiceSampleLoop) voiceSampleLoop.stop();
-  }
-
-  async function pollVoiceSample(id) {
-    if (voiceSampleInflight) {
-      schedulePollVoiceSample(id);
-      return;
-    }
-    if (state.selectedId !== id) {
-      stopVoiceSamplePoll();
-      return;
-    }
-    voiceSampleInflight = true;
-    try {
-      const data = await api("/api/cast/" + id + "/voice-sample");
-      if (data.status === "pending") {
-        voiceSampleId = id;
-        voiceSampleLoopObj().armAfterSuccess();
-        return;
-      }
-      stopVoiceSamplePoll();
-      if (data.status === "failed") {
-        setVoiceSampleStatus(data.error || "Sample failed.", true);
-        return;
-      }
-      const player = $("#cast-voice-player");
-      if (player && data.clip_key) {
-        player.src = artifactUrl(data.clip_key);
-        player.hidden = false;
-      }
-      const keep = $("#cast-voice-keep");
-      if (keep) keep.disabled = false;
-      const honor = data.module_name === "cf-seedance"
-        ? "Listen. If you keep it, Seedance will use this exact take."
-        : "Listen. " + (data.module_name || "This door") + " cannot lock this take. Seedance can.";
-      setVoiceSampleStatus(honor);
-    } catch (e) {
-      setVoiceSampleStatus((e.message || "poll error") + " (retrying)", true);
-      voiceSampleId = id;
-      voiceSampleLoopObj().armAfterError();
-    } finally {
-      voiceSampleInflight = false;
-    }
-  }
-
-  async function generateVoiceSample(seconds) {
+  async function hearVoiceLine() {
     const id = state.selectedId;
     if (!id) return;
-    const line = ($("#cast-voice-line") && $("#cast-voice-line").value) || "";
-    setVoiceSampleStatus("Generating " + seconds + "s sample...");
-    const keep = $("#cast-voice-keep");
-    if (keep) keep.disabled = true;
+    const voice_id = $("#cast-voice").value;
+    const text = ($("#cast-voice-line") && $("#cast-voice-line").value) || "";
+    setVoiceLineStatus("Speaking one line...");
     try {
-      await api("/api/cast/" + id + "/voice-sample", {
+      const data = await api("/api/cast/" + id + "/voice-line", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ seconds, line }),
+        body: JSON.stringify({ voice_id, text }),
       });
-      schedulePollVoiceSample(id);
+      const player = $("#cast-voice-player");
+      if (player && data.url) {
+        player.src = data.url;
+        player.hidden = false;
+      }
+      if (data.voice_id) {
+        const c = findCast(id);
+        if (c) c.voice_id = data.voice_id;
+        $("#cast-voice").value = data.voice_id;
+      }
+      setVoiceLineStatus("That is this voice. It is saved on the character.");
     } catch (e) {
-      stopVoiceSamplePoll();
-      setVoiceSampleStatus(e.message || "Could not start the sample.", true);
-    }
-  }
-
-  async function keepVoiceSample() {
-    const id = state.selectedId;
-    if (!id) return;
-    try {
-      const data = await api("/api/cast/" + id + "/voice-sample/keep", { method: "POST" });
-      const c = findCast(id);
-      if (c) c.voice_ref_key = data.voice_ref_key;
-      setVoiceSampleStatus("Saved. Cloudflare Seedance will use this voice on every shot. Veo will not match it exactly.");
-      const keep = $("#cast-voice-keep");
-      if (keep) keep.disabled = true;
-    } catch (e) {
-      setVoiceSampleStatus(e.message || "Could not keep the sample.", true);
-    }
-  }
-
-  async function clearVoiceSample() {
-    const id = state.selectedId;
-    if (!id) return;
-    try {
-      await api("/api/cast/" + id + "/voice-sample", { method: "DELETE" });
-      const c = findCast(id);
-      if (c) c.voice_ref_key = null;
-      refreshVoiceSampleUi(c);
-      setVoiceSampleStatus("Cleared. Talking doors will invent a voice again.");
-    } catch (e) {
-      setVoiceSampleStatus(e.message || "Could not clear the sample.", true);
-    }
-  }
-
-  async function attachVoiceSample(file) {
-    const id = state.selectedId;
-    if (!id || !file) return;
-    setVoiceSampleStatus("Attaching " + file.name + "...");
-    try {
-      const data = await api("/api/cast/" + id + "/voice-sample/attach", {
-        method: "POST",
-        headers: { "content-type": file.type || "application/octet-stream" },
-        body: file,
-      });
-      const c = findCast(id);
-      if (c) c.voice_ref_key = data.voice_ref_key;
-      refreshVoiceSampleUi(c);
-      setVoiceSampleStatus("Saved. Cloudflare Seedance will use this clip as the voice. Veo will not match it exactly.");
-    } catch (e) {
-      setVoiceSampleStatus(e.message || "Could not attach the clip.", true);
+      setVoiceLineStatus(e.message || "Could not speak the line.", true);
     }
   }
 
@@ -1415,22 +1294,8 @@
     $("#cast-name").addEventListener("input", () => markDirty(true));
     $("#cast-bible").addEventListener("input", () => markDirty(true));
     $("#cast-voice").addEventListener("change", () => markDirty(true));
-    const v5 = $("#cast-voice-5");
-    const v10 = $("#cast-voice-10");
-    const vKeep = $("#cast-voice-keep");
-    const vClear = $("#cast-voice-clear");
-    if (v5) v5.addEventListener("click", () => generateVoiceSample(5));
-    if (v10) v10.addEventListener("click", () => generateVoiceSample(10));
-    if (vKeep) vKeep.addEventListener("click", keepVoiceSample);
-    if (vClear) vClear.addEventListener("click", clearVoiceSample);
-    const vAttach = $("#cast-voice-attach");
-    if (vAttach) {
-      vAttach.addEventListener("change", (e) => {
-        const f = e.target.files && e.target.files[0];
-        if (f) attachVoiceSample(f);
-        e.target.value = "";
-      });
-    }
+    const hear = $("#cast-voice-hear");
+    if (hear) hear.addEventListener("click", hearVoiceLine);
     $("#cast-training-style").addEventListener("input", persistTrainingStyle); // v0.135.13
 
     $("#cast-portrait-file").addEventListener("change", (e) => {
@@ -1466,6 +1331,18 @@
     // v0.57.0: standalone LoRA training.
     const loraBtn = $("#cast-lora-train-btn");
     if (loraBtn) loraBtn.addEventListener("click", trainLora);
+    // Wan training only has a use where a door can take its result AND this host can train it
+    // (applyWanLoraPaneVisibility). A registry that fails to load keeps the pane hidden.
+    if (window.moduleRegistry) {
+      window.moduleRegistry.load().then((reg) => {
+        state.wanDoorInstalled = !!(reg && Array.isArray(reg.modules)
+          && reg.modules.some((m) => m && m.name === "alibaba-wan-lora"));
+        applyWanLoraPaneVisibility();
+      }, () => {
+        state.wanDoorInstalled = false;
+        applyWanLoraPaneVisibility();
+      });
+    }
     const wanLoraBtn = $("#cast-wan-lora-train-btn");
     if (wanLoraBtn) wanLoraBtn.addEventListener("click", trainWanLora);
 

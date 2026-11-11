@@ -1,3 +1,4 @@
+import { extractProxiedImageUrl } from "../modules/image-generate/src/image-gen";
 // The image-generate module: conformance + dispatch behaviour (cf#129 phase 2).
 //
 // The binding acceptance criterion, same as plan-enhance's: the module must honor the typed hook
@@ -6,7 +7,8 @@
 // a payload the core would hand downstream as garbage.
 
 import { describe, it, expect, vi } from "vitest";
-import worker, { MANIFEST, MODELS } from "../modules/image-generate/src/index";
+import worker from "../modules/image-generate/src/index";
+import { MANIFEST, MODELS } from "../modules/image-generate/src/manifest";
 import { checkHookOutput } from "@skyphusion-labs/vivijure-core/modules/conformance";
 import { validateManifest } from "@skyphusion-labs/vivijure-core/modules/manifest-validate";
 import { base64ToBytes, sniffImageMime } from "../modules/image-generate/src/image-gen";
@@ -185,15 +187,35 @@ describe("image.generate invoke", () => {
     expect(body.error).toContain("@cf/lykon/dreamshaper-8-lcm");
   });
 
-  it("FAILS LOUD when the provider flags/refuses the generation", async () => {
-    const res = await invoke(envWith(async () => ({ error: "content policy" })), {
+  it("FAILS LOUD when the provider flags/refuses, WITHOUT relaying the provider prose", async () => {
+    // cf#223. THIS TEST USED TO ASSERT `toContain("content policy")` -- that is, it asserted that
+    // the provider's own error prose reached the `error` string this module returns. That prose is a
+    // provider response body, and on a real moderation refusal it QUOTES THE USER PROMPT back
+    // ("Your prompt ... may contain content that is not allowed"). So the assertion was not merely
+    // failing to catch the leak, it was PINNING it in place as the expected behaviour, which is why
+    // fixing the leak turned this test red.
+    //
+    // The INTENT is kept exactly: image generation has no honest passthrough, so a provider refusal
+    // must fail loud and name the model. Only the means changes, and it is now inverted -- the
+    // prose must be ABSENT.
+    //
+    // The fixture is a distinctive marker rather than a plausible phrase like "content policy",
+    // because a negative assertion against a generic string passes for boring reasons.
+    const PROSE = "PROVIDERPROSE4b1e9a refused the prompt";
+    const res = await invoke(envWith(async () => ({ error: PROSE })), {
       hook: "image.generate",
       input: { prompt: "x" },
       config: { model: "google/nano-banana-pro" },
     });
     const body = (await res.json()) as { ok: boolean; error?: string };
+    // POSITIVE: still loud, still diagnosable -- the caller learns WHICH model refused and that the
+    // refusal came from the provider rather than from us.
     expect(body.ok).toBe(false);
-    expect(body.error).toContain("content policy");
+    expect(body.error).toContain("google/nano-banana-pro");
+    expect(body.error).toContain("failed");
+    // NEGATIVE: and none of the provider's text, whole or in part.
+    expect(body.error, "provider prose relayed into the returned error").not.toContain(PROSE);
+    expect(body.error, "a fragment of the provider prose survived").not.toContain("refused the prompt");
   });
 
   it("rejects an empty prompt rather than generating something arbitrary", async () => {
@@ -227,5 +249,25 @@ describe("image.generate invoke", () => {
     expect(calls[0].steps).toBeUndefined();
     expect(calls[1].steps).toBe(4);
     expect(calls[1].negative_prompt).toBeUndefined();
+  });
+});
+
+describe("extractProxiedImageUrl reads every published output shape (cf#1141)", () => {
+  it("reads image, bare and wrapped (google, xai, recraft, openai)", () => {
+    expect(extractProxiedImageUrl({ image: "https://cdn/a.png" })).toBe("https://cdn/a.png");
+    expect(extractProxiedImageUrl({ state: "Completed", result: { image: "https://cdn/b.png" } })).toBe("https://cdn/b.png");
+  });
+  it("reads images, bare and wrapped (seedream)", () => {
+    expect(extractProxiedImageUrl({ images: ["https://cdn/c.png"] })).toBe("https://cdn/c.png");
+    expect(extractProxiedImageUrl({ result: { images: ["https://cdn/d.png"] } })).toBe("https://cdn/d.png");
+  });
+  it("still reads the older shapes", () => {
+    expect(extractProxiedImageUrl({ url: "https://cdn/e.png" })).toBe("https://cdn/e.png");
+    expect(extractProxiedImageUrl({ data: [{ url: "https://cdn/f.png" }] })).toBe("https://cdn/f.png");
+  });
+  it("returns null with nothing to read, so the caller fails loud", () => {
+    expect(extractProxiedImageUrl({ result: {} })).toBeNull();
+    expect(extractProxiedImageUrl({ image: "" })).toBeNull();
+    expect(extractProxiedImageUrl(null)).toBeNull();
   });
 });

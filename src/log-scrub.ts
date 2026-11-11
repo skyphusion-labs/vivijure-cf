@@ -32,7 +32,7 @@ export function shortId(input: string): string {
  * An R2 key as a log label: its top-level PREFIX, plus a stable id for everything after it.
  *
  * The prefix is the only part of a key that is structural rather than user-derived (`bundles/`,
- * `renders/`, `cast/`, `out/` -- see the allow-list in index.ts), and keeping it is what makes a
+ * `renders/`, `cast/`, `out/` -- see the allow-list in studio.ts), and keeping it is what makes a
  * line diagnosable at all: "an object under renders/ went missing" is actionable, "an object went
  * missing" is not. Everything after it can carry a project name (`bundles/<projectName>-<hash>
  * .tar.gz`, `renders/<project>/clips/...`), so it is replaced wholesale.

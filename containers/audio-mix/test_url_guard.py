@@ -83,6 +83,16 @@ def main():
         else:
             print("[PASS] guarded_get/put are sync async-context-manager factories")
 
+    # Same fetch settings from every call site, including one that asks for something else.
+    for name, verb in (("guarded_get", "get"), ("guarded_put", "put")):
+        session = MagicMock()
+        getattr(url_guard, name)(session, "https://a.r2.cloudflarestorage.com/k", allow_redirects=True, timeout=5)
+        kw = getattr(session, verb).call_args.kwargs
+        if kw.get("allow_redirects") is not False or kw.get("timeout") != 5:
+            failures.append(name + " must set allow_redirects=False and keep other kwargs")
+        else:
+            print("[PASS] " + name + " sets allow_redirects=False")
+
     if failures:
         print("\nFAILED:")
         for f in failures:

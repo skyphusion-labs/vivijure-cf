@@ -16,10 +16,17 @@ Read **`@skyphusion-labs/vivijure-core` module types** first (package path `modu
 Version: see root `package.json` / latest `v*` tag / `CHANGELOG.md` (do not freeze a number here).
 
 GPU render backend: `vivijure-backend` (RunPod serverless). Production panel UI:
-**vivijure.skyphusion.org**. Local-GPU is opt-in and on-box; the fleet named tunnel
-(`door-fatmike` / `door-propagandhi`) was deleted (fleet-chezmoi #2042). Demo:
-**demo.vivijure.com** (`AUTH_MODE=demo`; `DEMO_RENDER_ENABLED=false` is intentional
-zero-spend).
+**vivijure.skyphusion.org** (measured 2026-10-14). Decided the same day and not cut
+over: the main studio moves to **app.studio.vivijure.com**, the same Worker, the same
+D1, and the same R2. `studio.vivijure.com` stays the control-plane door. `vivijure.com`
+stays the site. The old host redirects only after the new one is proven. Local-GPU is
+opt-in and on-box; the fleet named tunnel
+(`door-fatmike` / `door-propagandhi`) was deleted (fleet-chezmoi #2042). The public
+demo is REMOVED ENTIRELY (Conrad's ruling), not deprecated, and it went in TWO
+steps whose dates are distinct: the `demo.vivijure.com` custom domain was removed
+**2026-10-08**, and the DEPLOYMENT was deleted **2026-10-19** (the `vivijure-demo`
+and `vivijure-demo-local-gpu` Worker scripts, the D1, the R2 bucket and the AI
+Gateway). `AUTH_MODE=demo` is no longer a mode this panel accepts. Do not re-add it.
 
 ## TWO panels (honesty)
 
@@ -70,8 +77,9 @@ of these areas, update the matching doc.
 - `docs/CAST-BUNDLE.md` -- the `.vvcast` cast bundle ICD (export/import tar), referenced from `CONTRACT.md`.
 - `docs/mcp.md` -- MCP deploy pointer; package + canon in **vivijure-mcp** / core docs.
 - `docs/observability.md` -- the structured event/tail channel for tracing a render.
+- `docs/finish-capacity.md` -- the FIFO finish queue, step failures, `finish_incomplete` and retry.
+- `docs/make-a-video.md` -- the one-screen Make a video page (cf#1242): its face-consistency default-style rule, shapes, price, and `PANEL_HOME`.
 - `docs/DEPLOYMENT.md` + `docs/deploy-runbook.md` + `docs/deploy-config-injection.md` -- deploy, env, `account_id` injection.
-- `docs/demo-studio.md` -- public demo (`demo.vivijure.com`, `AUTH_MODE=demo`, `DEMO_RENDER_ENABLED=false` intentional).
 - `docs/dev-modbound.md` -- run host + every module worker as one local dev so `/api/modules` returns the REAL catalog.
 - Hosted tier: [vivijure-control-plane](https://github.com/skyphusion-labs/vivijure-control-plane) (own repo). This repo is the self-hostable studio panel.
 - `docs/SECURITY.md` + `docs/legal/` -- security posture and public legal/AUP framing.
@@ -191,9 +199,10 @@ bumps root `package.json` `version` and adds a top-of-file `CHANGELOG.md` entry 
 `v*` tag. A bare merge to `main` runs CI only and does **not** redeploy production.
 
 `studio-release.yml` is a reusable workflow (`workflow_call`), not a separate trigger: the same `v*`
-CI run calls it from the `studio-release` job in `ci.yml` (gated on `ci`, `container-tests`,
-`migrations-gate`, `assert-on-main`). It builds the studio release asset, asserts `vX.Y.Z` ==
-`package.json` version, and advances the hosted studio pin.
+CI run calls it from the `studio-release` job in `ci.yml` (needs `ci`, `container-tests`,
+`container-smoke`, `migrations-gate`, `assert-on-main`, `assert-tag-version`, and `deploy`). It builds
+the studio release asset, asserts `vX.Y.Z` == `package.json` version, and advances the hosted studio
+pin only after that deploy.
 
 ### Dependency order
 

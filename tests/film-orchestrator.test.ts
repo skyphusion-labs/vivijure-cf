@@ -1,9 +1,9 @@
 import { describe, it, expect, vi } from "vitest";
-import { joinKeyframesToScenes, applyFinishOutput, applySpeechOutput, orderFinalClips, summarizeFilm, filmProgressMarker, resolveFinishConfigs, coerceSceneIds, coerceDialogueLineIds, callVideoFinish, classifyAssembleTransport, advanceFilmJob, clipKeysFromFilmJob, filmJobDocKey, clipJobDocKey, phaseAgeSeconds, ceilingAgeSeconds, listProjectKeyframes, keyframeSetCompleteInR2, listProjectClips, clipFileMatchesShot, finishShotAdoptableFromR2, reclaimFinishShotsFromR2, adoptFinishStepOutput, finishShotLedgerReconciles, classifyFinishFailure, classifyFinishRetry, FINISH_STEP_MAX_ATTEMPTS, FILM_FINISH_INFLIGHT_WINDOW_SECONDS, finishStepOutputKey, finishStepAppliedTag, KEYFRAME_STALL_SECONDS, PHASE_HARD_DEADLINE_SECONDS, applyMasterOutput, degradeMasterStep, masterChainDone, filmSeconds, masteredBedKey, MASTER_STEP_MAX_ATTEMPTS, MASTER_STALL_SECONDS, type FilmScene, type FinishShot, type SpeechShot, type FilmJob, type MasterState } from "@skyphusion-labs/vivijure-core/film-orchestrator";
+import { joinKeyframesToScenes, applyFinishOutput, applySpeechOutput, orderFinalClips, summarizeFilm, filmProgressMarker, resolveFinishConfigs, coerceSceneIds, coerceDialogueLineIds, callVideoFinish, classifyAssembleTransport, advanceFilmJob, clipKeysFromFilmJob, filmJobDocKey, clipJobDocKey, phaseAgeSeconds, ceilingAgeSeconds, listProjectKeyframes, keyframeSetCompleteInR2, listProjectClips, clipFileMatchesShot, finishShotAdoptableFromR2, finishShotRecoverable, reclaimFinishShotsFromR2, adoptFinishStepOutput, finishShotLedgerReconciles, classifyFinishFailure, classifyFinishRetry, FINISH_STEP_MAX_ATTEMPTS, FILM_FINISH_INFLIGHT_WINDOW_SECONDS, finishStepOutputKey, finishStepAppliedTag, KEYFRAME_STALL_SECONDS, PHASE_HARD_DEADLINE_SECONDS, applyMasterOutput, degradeMasterStep, masterChainDone, filmSeconds, masteredBedKey, MASTER_STEP_MAX_ATTEMPTS, MASTER_STALL_SECONDS, type FilmScene, type FinishShot, type SpeechShot, type FilmJob, type MasterState } from "@skyphusion-labs/vivijure-core/film-orchestrator";
 import type { ConfigSchema } from "@skyphusion-labs/vivijure-core/modules/types";
 import type { Env } from "../src/env";
 import { orch } from "./orchestrator-env";
-import { vfAsyncFinish, vfAsyncDoor } from "./install-vf-fetch.js";
+import { vfAsyncFinish, vfAsyncDoor, vfHead, recordContainerWrite } from "./install-vf-fetch.js";
 import { filmJobToPollView } from "../src/film-render-bridge";
 import { _resetModuleDiscoveryCache } from "@skyphusion-labs/vivijure-core/modules/registry";
 import { finishStepInputHash } from "@skyphusion-labs/vivijure-core/finish-hash";
@@ -12,6 +12,19 @@ const finishShot = (over: Partial<FinishShot> = {}): FinishShot => ({
   shot_id: "shot_01", clip_key: "renders/p/clips/shot_01.mp4", chain: ["MODULE_FINISH_RIFE"], idx: 0,
   status: "pending", applied: [], ...over,
 });
+
+/**
+ * Record a module response's output film_key as WRITTEN, and hand the response straight back.
+ *
+ * Wrapped around the return of an /invoke or /poll mock rather than applied to the response object
+ * where it is declared. Reaching the mock is what proves the module ran: cf#833 heads the film
+ * before calling it deliverable, and #600's in-flight guard supplies a response precisely to assert
+ * the module was NOT dispatched. Declaration is intent; the call is the write.
+ */
+function recOut<T>(r: T): T {
+  recordContainerWrite((r as { output?: { film_key?: unknown } } | null)?.output?.film_key);
+  return r;
+}
 
 describe("applyFinishOutput (chain fold)", () => {
   it("single-module chain: folds the output and marks done", () => {
@@ -154,6 +167,11 @@ describe("finish shot ledger reconciles 1:1 to its chain (#662, adopted-shot boo
       configs: [{ interpolation_factor: 2 }, {}, { scale: 2 }, {}],
     });
     // idx0 RIFE: its RunPod job GC'd after writing _finished.mp4 -> adopted from R2 (tag reconstructed).
+    // core 1.23.0 BRANDS the recoverable states (GHSA-hcr9-8jc2-9q4c): adoptFinishStepOutput takes
+    // RecoverableFinishShot, and the only way to obtain one is this guard. The fixture narrows
+    // through it rather than casting past it -- a cast here would be the test quietly opting out of
+    // the very guarantee the brand exists to give, and would keep passing if the guard broke.
+    if (!finishShotRecoverable(fs)) throw new Error("fixture must be recoverable before adoption");
     adoptFinishStepOutput(fs, "clips/shot_03_finished.mp4", finishStepAppliedTag(fs));
     // idx1..3 run: no-dialogue lip-sync no-ops, upscale, no-overlays text.
     applyFinishOutput(fs, finishOut("renders/p/clips/shot_03_finished.mp4", ["noop:no-dialogue"]), "p");
@@ -176,6 +194,8 @@ describe("finish shot ledger reconciles 1:1 to its chain (#662, adopted-shot boo
       configs: [{ version: "v15" }, { interpolation_factor: 2 }, { scale: 2 }, {}],
     });
     // idx0 LIPSYNC: reused from R2 (its _ls artifact + matching #583 provenance sidecar) -> mouth IS synced.
+    // Narrowed through the core 1.23.0 brand guard, same reason as the RIFE case above.
+    if (!finishShotRecoverable(fs)) throw new Error("fixture must be recoverable before adoption");
     adoptFinishStepOutput(fs, "clips/shot_02_ls.mp4", finishStepAppliedTag(fs));
     applyFinishOutput(fs, finishOut("renders/p/clips/shot_02_ls_rife.mp4", ["interpolate:2x"]), "p");
     applyFinishOutput(fs, finishOut("renders/p/clips/shot_02_ls_rife_up.mp4", ["upscale:2x"]), "p");
@@ -307,6 +327,16 @@ describe("finish-step transient retry (the silent-render trigger: a lip-sync inv
   it("fails LOUD after the cap on a persistent transient (no infinite spin)", async () => {
     const { env, read } = retryEnv(lipsyncFilm(), [503]); // 503 forever
     for (let i = 0; i < FINISH_STEP_MAX_ATTEMPTS; i++) await advanceFilmJob(orch(env), "film-finish-retry");
+    // core#377: past the retry cap it holds, for the transport bound, and then fails by name.
+    expect(read().finish_shots![0].status).toBe("pending");
+    expect(read().finish_shots![0].wait).toBeTruthy();
+    const later = Date.now() + 16 * 60 * 1000;
+    const clock = vi.spyOn(Date, "now").mockReturnValue(later);
+    try {
+      for (let i = 0; i < FINISH_STEP_MAX_ATTEMPTS; i++) await advanceFilmJob(orch(env), "film-finish-retry");
+    } finally {
+      clock.mockRestore();
+    }
     expect(read().finish_shots![0].status).toBe("failed");
   });
 
@@ -758,8 +788,14 @@ function assembleEnv(opts: { jobInR2: object; filmOutputExists: boolean }) {
         key === filmJobDocKey((opts.jobInR2 as { film_id: string }).film_id)
           ? { text: async () => JSON.stringify(opts.jobInR2) }
           : null,
+      // cf#833 / core 1.25.0: deliverability is presence AND a 2048-byte floor, so a present film
+      // must carry a realistic SIZE. `{}` modelled an object with no size, which the gate reads as
+      // undeliverable -- correctly. `filmOutputExists: false` still answers null, so the absent arm
+      // of the gate stays observable.
       head: async (key: string) =>
-        opts.filmOutputExists && key === `renders/${(opts.jobInR2 as { film_id: string }).film_id}/film.mp4` ? {} : null,
+        opts.filmOutputExists && key === `renders/${(opts.jobInR2 as { film_id: string }).film_id}/film.mp4`
+          ? ({ size: 4_194_304 } as unknown)
+          : null,
       put: async (key: string) => { puts.push(key); },
     },
     VIDEO_FINISH_URL: "https://video-finish.test", MEDIA_DOOR_FETCH: { fetch: async (input: Request | string) => { doorCalls.push(typeof input === "string" ? input : input.url); return vfAsyncFinish({ ok: true, key: "renders/film-selfheal-1/film.mp4" })(input); } },
@@ -1287,7 +1323,8 @@ function clipsRecoveryEnv(job: FilmJob, clipJob: ClipJobLike, clipKeys: string[]
         else if (key === clipDoc) clipStored = body;
       },
       list: async ({ prefix }: { prefix: string }) => ({
-        objects: clipKeys.filter((k) => k.startsWith(prefix)).map((k) => ({ key: k, uploaded: new Date() })),
+        // Settled and from this run: older than core's 5 minute UNSTAMPED_SETTLE_MS, newer than created_at.
+        objects: clipKeys.filter((k) => k.startsWith(prefix)).map((k) => ({ key: k, uploaded: new Date(Date.now() - 6 * 60_000) })),
         truncated: false,
       }),
     },
@@ -1324,7 +1361,7 @@ describe("advanceFilmJob clips stall recovery (#139)", () => {
       { shot_id: "shot_02", status: "done", clip_key: "renders/neon/clips/shot_02_i2v.mp4" },
       { shot_id: "shot_03", status: "pending", poll: "phantom-3" },
     ],
-    created_at: Date.now(),
+    created_at: Date.now() - 7 * 60_000,
   });
   // clips_only so the recovered completion shortcuts to done (no finish modules bound in the test env).
   const stalledFilm = (over: Partial<FilmJob> = {}): FilmJob => ({
@@ -1392,7 +1429,7 @@ describe("advanceFilmJob clips stall recovery (#139)", () => {
         { shot_id: "shot_02", status: "done", clip_key: "renders/neon/clips/shot_02_i2v.mp4" },
         { shot_id: "shot_03", status: "failed", error: "own-gpu job not found on RunPod (#141)" },
       ],
-      created_at: Date.now(),
+      created_at: Date.now() - 7 * 60_000,
     };
     const { env, readClip } = clipsRecoveryEnv(stalledFilm(), failedJob, [
       "renders/neon/clips/shot_01_i2v.mp4",
@@ -1448,7 +1485,7 @@ describe("advanceFilmJob clips stall recovery (#139)", () => {
         { shot_id: "shot_02", status: "pending", poll: "phantom-2" },
         { shot_id: "shot_03", status: "pending", poll: "phantom-3" },
       ],
-      created_at: Date.now(),
+      created_at: Date.now() - 7 * 60_000,
     };
     // module FAST-FAILS every poll (#142), but every clip is in R2.
     const { env, readClip, readFilm } = clipsRecoveryEnv(fresh, allPending, [
@@ -1533,8 +1570,16 @@ describe("ceilingAgeSeconds (#704)", () => {
     expect(ceilingAgeSeconds(job, now)).toBe(60);
   });
 
-  it("the batch keyframe phase ignores last_progress_at (phase-age semantics unchanged)", () => {
+  // vivijure-core 1.35.0 (core#453): keyframe joined the progress clock. A split keyframe pass lands one
+  // job's stills at a time and each re-stamps last_progress_at, so a long pass that keeps finishing jobs
+  // is not killed at 90 min from its start. This case used to assert the opposite.
+  it("the keyframe phase measures from last_progress_at when it is newer (core#453)", () => {
     const job = { ...base, phase: "keyframe", last_progress_at: now - 60 * 1000 } as FilmJob;
+    expect(ceilingAgeSeconds(job, now)).toBe(60);
+  });
+
+  it("a phase with no per-shot fan-out still ignores last_progress_at (phase-age semantics unchanged)", () => {
+    const job = { ...base, phase: "assemble", last_progress_at: now - 60 * 1000 } as FilmJob;
     expect(ceilingAgeSeconds(job, now)).toBe(100 * 60);
   });
 });
@@ -1685,7 +1730,25 @@ describe("applyFilmFinish observability (#207: degraded film.finish must not shi
     const env: Record<string, unknown> = {
       R2_RENDERS: {
         get: async (key: string) => (key === filmJobDocKey(filmId) ? { text: async () => stored } : null),
-        head: async (key: string) => (opts.presentKeys?.includes(key) ? ({ size: 1 } as unknown) : null),
+        // size above cf#833's 2048-byte floor: a 1-byte stub trips the TRUNCATED arm of the
+        // deliverability gate while looking like a presence failure, which are different refusals.
+        // Three sources of truth about what is in R2, unioned, because there are three writers:
+        //   presentKeys            -- artifacts that existed BEFORE this test ran
+        //   vfHead's registry      -- what the CONTAINER wrote via presigned PUT (cf#833)
+        //   invokeResponse film_key -- what the MODULE wrote. The fixture's own comment says it:
+        //                             "a real module writes to the presigned outKey and echoes it".
+        // Modelling only the first is what made cf#833's deliverability gate fail these fixtures.
+        // TWO sources only, and the exclusions are the load-bearing part:
+        //   presentKeys       artifacts that existed BEFORE this test, declared per fixture
+        //   vfHead's registry what the CONTAINER wrote DURING it, recorded when the door reports
+        //                     completion, so the key is absent before assemble and present after
+        //
+        // Deliberately NOT the job's declared output keys, and NOT the module invoke response's
+        // echoed film_key. Both look like write records and neither is one: an invoke response in a
+        // fixture says what the module WOULD return, and #600's in-flight guard asserts the module
+        // was never dispatched while still supplying one. Counting either as a write asserts
+        // presence for the whole test and breaks exactly the fixtures whose premise is absence.
+        head: vfHead(opts.presentKeys ?? []),
         put: async (key: string, val: string) => { if (key === filmJobDocKey(filmId)) stored = val; },
       },
       // mux container (callVideoFinish) -- returns the muxed film key
@@ -1698,6 +1761,12 @@ describe("applyFilmFinish observability (#207: degraded film.finish must not shi
         fetch: async (input: Request | string) => {
           const url = typeof input === "string" ? input : input.url;
           if (url.endsWith("/module.json")) return jsonResp(FILM_TITLES_MANIFEST);
+          // The module writes to its presigned outKey and echoes it, so reaching THIS line is the
+          // moment its output exists in R2 -- which cf#833 now heads before calling a film
+          // deliverable. Recorded here rather than from `invokeResponse` up front, because a
+          // fixture supplying a response is not the same as the module having run: #600's
+          // in-flight guard supplies one precisely to assert the module was NOT dispatched.
+          recordContainerWrite((invokeResponse as { output?: { film_key?: unknown } } | null)?.output?.film_key);
           return jsonResp(invokeResponse); // /invoke
         },
       };
@@ -1711,7 +1780,7 @@ describe("applyFilmFinish observability (#207: degraded film.finish must not shi
     scenes: [{ shot_id: "shot_01", prompt: "x", seconds: 3 }],
     phase: "mux" as const,
     silent_film_key: "renders/film-finish-obs/film-silent.mp4",
-    audio_key: "renders/film-finish-obs/audio.mp4",
+    audio_key: "renders/film-finish-obs/audio.mp4", beats_read: true,
     mux_output_key: "renders/film-finish-obs/film-audio.mp4",
     film_titles: { title: { text: "NEON HALFLIFE" } },
     created_at: 0,
@@ -1798,7 +1867,7 @@ describe("applyFilmFinish observability (#207: degraded film.finish must not shi
     const job = {
       film_id: filmId, project: "p", scenes: [{ shot_id: "s1", prompt: "x", seconds: 3 }],
       phase: "mux" as const, silent_film_key: "renders/" + filmId + "/film-silent.mp4",
-      audio_key: "renders/" + filmId + "/audio.mp4", mux_output_key: assembled,
+      audio_key: "renders/" + filmId + "/audio.mp4", beats_read: true, mux_output_key: assembled,
       film_titles: { title: { text: "NEON" } }, created_at: 0,
     };
     let stored = JSON.stringify(job);
@@ -1809,12 +1878,12 @@ describe("applyFilmFinish observability (#207: degraded film.finish must not shi
       if (url.endsWith("/module.json")) return jsonResp(m.name === "subtitle" ? manifest("subtitle", 5) : manifest("film-titles", 10));
       const body = JSON.parse((init?.body as string) ?? "{}") as { input?: { film_key?: string } };
       if (body.input?.film_key) received[m.name] = body.input.film_key; // capture what each step read
-      return jsonResp(response);
+      return jsonResp(recOut(response));
     };
     const env = {
       R2_RENDERS: {
         get: async (key: string) => (key === filmJobDocKey(filmId) ? { text: async () => stored } : null),
-        head: async () => null, // no pre-existing artifacts
+        head: vfHead(), // no pre-existing artifacts
         put: async (key: string, val: string) => { if (key === filmJobDocKey(filmId)) stored = val; },
       },
       VIDEO_FINISH_URL: "https://video-finish.test", MEDIA_DOOR_FETCH: vfAsyncDoor({ ok: true, key: assembled }),
@@ -1834,9 +1903,20 @@ describe("applyFilmFinish observability (#207: degraded film.finish must not shi
   it("records a chain error (no film_finish drop) when the module invoke fails", async () => {
     const failed = { ok: false, error: "module /invoke -> 500" };
     const { env } = filmFinishEnv(muxJob(), failed);
-    const r = await advanceFilmJob(orch(env), "film-finish-obs");
+    // core#377: "-> 500" is transient, so the film holds for the transport bound before it moves on.
+    const held = await advanceFilmJob(orch(env), "film-finish-obs");
+    expect(held?.job.phase).toBe("mux");
+    expect(held?.job.film_finish?.errors ?? []).toEqual([]);
+    const clock = vi.spyOn(Date, "now").mockReturnValue(Date.now() + 16 * 60 * 1000);
+    let r: Awaited<ReturnType<typeof advanceFilmJob>>;
+    try {
+      r = await advanceFilmJob(orch(env), "film-finish-obs");
+    } finally {
+      clock.mockRestore();
+    }
     expect(r?.job.phase).toBe("done");
     expect(r?.job.film_finish?.errors?.some((e) => e.includes("film-titles"))).toBe(true);
+    expect(r?.job.finish_incomplete?.[0]).toMatchObject({ stage: "film.finish", step: "film-titles" });
     expect(r?.job.film_key).toBe("renders/film-finish-obs/film-audio.mp4"); // film survives
   });
 
@@ -1864,7 +1944,7 @@ describe("applyFilmFinish observability (#207: degraded film.finish must not shi
       scenes: [{ shot_id: "s1", prompt: "x", seconds: 3 }, { shot_id: "s2", prompt: "y", seconds: 2 }],
       dialogue_lines: [{ shot_id: "s1", text: "Hello there" }, { shot_id: "s2", text: "Goodbye" }],
       phase: "mux" as const, silent_film_key: `renders/${filmId}/film-silent.mp4`,
-      audio_key: `renders/${filmId}/audio.mp4`, mux_output_key: assembled,
+      audio_key: `renders/${filmId}/audio.mp4`, beats_read: true, mux_output_key: assembled,
       film_titles: { title: { text: "NEON HALFLIFE" } }, created_at: 0,
     };
     let stored = JSON.stringify(job);
@@ -1873,7 +1953,7 @@ describe("applyFilmFinish observability (#207: degraded film.finish must not shi
     const moduleFetch = (name: string, response: unknown) => async (input: Request | string) => {
       const url = typeof input === "string" ? input : input.url;
       if (url.endsWith("/module.json")) return jsonResp(manifest(name, name === "subtitle" ? 5 : 10));
-      return jsonResp(response); // /invoke
+      return jsonResp(recOut(response)); // /invoke
     };
     const env = {
       R2_RENDERS: {
@@ -1883,7 +1963,10 @@ describe("applyFilmFinish observability (#207: degraded film.finish must not shi
           if (key in puts) return { text: async () => puts[key] };
           return null;
         },
-        head: async (key: string) => (key === rawSidecar ? ({ size: rawSrt.length } as unknown) : null),
+        // The raw sidecar is a PRE-EXISTING artifact; vfHead adds what the container wrote during
+        // this test, which cf#833 now requires to be present for the film to be deliverable.
+        head: async (key: string) =>
+          key === rawSidecar ? ({ size: rawSrt.length } as unknown) : vfHead()(key),
         put: async (key: string, val: string) => { puts[key] = val; if (key === filmJobDocKey(filmId)) stored = val; },
       },
       VIDEO_FINISH_URL: "https://video-finish.test", MEDIA_DOOR_FETCH: vfAsyncDoor({ ok: true, key: assembled }),
@@ -1929,7 +2012,7 @@ describe("applyFilmFinish observability (#207: degraded film.finish must not shi
       scenes: [{ shot_id: "s1", prompt: "x", seconds: 3 }],
       dialogue_lines: [{ shot_id: "s1", text: "Hello there" }],
       phase: "mux" as const, silent_film_key: `renders/${filmId}/film-silent.mp4`,
-      audio_key: `renders/${filmId}/audio.mp4`, mux_output_key: assembled,
+      audio_key: `renders/${filmId}/audio.mp4`, beats_read: true, mux_output_key: assembled,
       film_titles: { credits: { lines: ["directed by you"] } }, created_at: 0,
     };
     let stored = JSON.stringify(job);
@@ -1938,7 +2021,7 @@ describe("applyFilmFinish observability (#207: degraded film.finish must not shi
     const moduleFetch = (name: string, response: unknown) => async (input: Request | string) => {
       const url = typeof input === "string" ? input : input.url;
       if (url.endsWith("/module.json")) return jsonResp(manifest(name, name === "subtitle" ? 5 : 10));
-      return jsonResp(response);
+      return jsonResp(recOut(response));
     };
     const env = {
       R2_RENDERS: {
@@ -1948,7 +2031,10 @@ describe("applyFilmFinish observability (#207: degraded film.finish must not shi
           if (key in puts) return { text: async () => puts[key] };
           return null;
         },
-        head: async (key: string) => (key === rawSidecar ? ({ size: rawSrt.length } as unknown) : null),
+        // The raw sidecar is a PRE-EXISTING artifact; vfHead adds what the container wrote during
+        // this test, which cf#833 now requires to be present for the film to be deliverable.
+        head: async (key: string) =>
+          key === rawSidecar ? ({ size: rawSrt.length } as unknown) : vfHead()(key),
         put: async (key: string, val: string) => { puts[key] = val; if (key === filmJobDocKey(filmId)) stored = val; },
       },
       VIDEO_FINISH_URL: "https://video-finish.test", MEDIA_DOOR_FETCH: vfAsyncDoor({ ok: true, key: assembled }),
@@ -1989,7 +2075,7 @@ function moduleFetcher(
       const j = (o: object) => new Response(JSON.stringify(o), { status: 200, headers: { "content-type": "application/json" } });
       if (url.endsWith("/module.json")) return j(manifest);
       const body = init?.body ? JSON.parse(init.body as string) : {};
-      if (url.endsWith("/invoke") && handlers.invoke) return j(handlers.invoke(body));
+      if (url.endsWith("/invoke") && handlers.invoke) return j(recOut(handlers.invoke(body)));
       if (url.endsWith("/poll") && handlers.poll) return j(handlers.poll(body));
       return new Response("{}", { status: 404 });
     },
@@ -2017,7 +2103,7 @@ describe("applyFilmFinish async submit+poll across ticks (#602)", () => {
     const job = {
       film_id: FILM_ID, project: "p", scenes: [{ shot_id: "shot_01", prompt: "x", seconds: 3 }],
       phase: "mux" as const, silent_film_key: `renders/${FILM_ID}/film-silent.mp4`,
-      audio_key: `renders/${FILM_ID}/audio.mp4`, mux_output_key: MUX_KEY,
+      audio_key: `renders/${FILM_ID}/audio.mp4`, beats_read: true, mux_output_key: MUX_KEY,
       film_titles: { title: { text: "NEON HALFLIFE" } }, created_at: 0,
     };
     let stored = JSON.stringify(job);
@@ -2026,7 +2112,7 @@ describe("applyFilmFinish async submit+poll across ticks (#602)", () => {
     const env: Record<string, unknown> = {
       R2_RENDERS: {
         get: async (key: string) => (key === filmJobDocKey(FILM_ID) ? { text: async () => stored } : null),
-        head: async () => null, // FF0 never appears in R2: completion is driven by the POLL, not adoption
+        head: vfHead(), // FF0 never appears in R2: completion is driven by the POLL, not adoption
         put: async (key: string, val: string) => { if (key === filmJobDocKey(FILM_ID)) stored = val; },
       },
       VIDEO_FINISH_URL: "https://video-finish.test", MEDIA_DOOR_FETCH: vfAsyncDoor({ ok: true, key: MUX_KEY }), // mux container
@@ -2037,7 +2123,7 @@ describe("applyFilmFinish async submit+poll across ticks (#602)", () => {
           if (url.endsWith("/poll")) {
             polls += 1;
             return polls >= completeAfter
-              ? j({ ok: true, output: { film_key: FF0_KEY, applied: ["film-titles"] } })
+              ? j(recOut({ ok: true, output: { film_key: FF0_KEY, applied: ["film-titles"] } }))
               : j({ ok: true, pending: true });
           }
           return j({ ok: true, pending: true, poll: "tok-ff0" }); // /invoke -> accepted async
@@ -2080,7 +2166,7 @@ describe("applyFilmFinish async submit+poll across ticks (#602)", () => {
     const job = {
       film_id: FILM_ID, project: "p", scenes: [{ shot_id: "shot_01", prompt: "x", seconds: 3 }],
       phase: "mux" as const, silent_film_key: `renders/${FILM_ID}/film-silent.mp4`,
-      audio_key: `renders/${FILM_ID}/audio.mp4`, mux_output_key: MUX_KEY,
+      audio_key: `renders/${FILM_ID}/audio.mp4`, beats_read: true, mux_output_key: MUX_KEY,
       film_titles: { title: { text: "NEON HALFLIFE" } }, created_at: 0,
     };
     let stored = JSON.stringify(job);
@@ -2088,7 +2174,7 @@ describe("applyFilmFinish async submit+poll across ticks (#602)", () => {
     const env = {
       R2_RENDERS: {
         get: async (key: string) => (key === filmJobDocKey(FILM_ID) ? { text: async () => stored } : null),
-        head: async () => null,
+        head: vfHead(),
         put: async (key: string, val: string) => { if (key === filmJobDocKey(FILM_ID)) stored = val; },
       },
       VIDEO_FINISH_URL: "https://video-finish.test", MEDIA_DOOR_FETCH: vfAsyncDoor({ ok: true, key: MUX_KEY }),
@@ -2130,7 +2216,7 @@ describe("advanceFilmJob dialogue phase injects audio_key into finish (talking c
       DB: { prepare: () => ({ bind: () => ({ run: async () => ({}), first: async () => null, all: async () => ({ results: [] }) }) }) },
       R2_RENDERS: {
         get: async (key: string) => (key === filmJobDocKey("film-dlg-1") ? { text: async () => JSON.stringify(job) } : null),
-        head: async () => null,
+        head: vfHead(),
         put: async () => {},
         list: async () => ({ objects: [] }),
       },
@@ -2278,7 +2364,17 @@ function masterEnv(
     R2_RENDERS: {
       get: async (k: string) => (k === filmDoc ? { text: async () => stored } : null),
       put: async (k: string, b: string) => { if (k === filmDoc) stored = b; },
-      head: async () => null,
+      // PER-FIXTURE DECISION (cf#833). Every case in this block models a mux that SUCCEEDED and
+      // then asserts the film reaches `done`, so the muxed film must exist -- core now heads it
+      // before it will call a film deliverable. The key cannot be named here: core CONTENT-HASHES
+      // the mux output (renders/film-master/film-audio-<hash>.mp4), so it changes with the bed.
+      // The fixture therefore declares the SHAPE it expects the mux to have written, which is the
+      // honest statement of what this scenario is. A key outside that shape still answers null, so
+      // the gate stays able to refuse.
+      head: async (key: string) =>
+        /^renders\/film-master\/film-audio-[0-9a-f]+\.mp4$/.test(key)
+          ? ({ size: 4_194_304 } as unknown)
+          : vfHead()(key),
       list: async () => ({ objects: [], truncated: false }),
     },
     // The master module: 404 on /module.json (so the film.finish/notify discovery in transitionToDone
@@ -2311,7 +2407,7 @@ const masterJob = (): FilmJob => ({
   motion_backend: "own-gpu", motion_config: {}, finish_config: {},
   keyframe_binding: null, phase: "master",
   silent_film_key: "renders/film-master/film.mp4",
-  audio_key: "renders/neon/audio/bed.wav",
+  audio_key: "renders/neon/audio/bed.wav", beats_read: true,
   master: { chain: ["MODULE_AUDIO_MASTER"], idx: 0, applied: [], degraded: [] },
   created_at: Date.now(),
 });
@@ -2394,7 +2490,7 @@ describe("advanceFilmJob speech phase: dialogue -> speech (clean audio) -> finis
       DB: { prepare: () => ({ bind: () => ({ run: async () => ({}), first: async () => null, all: async () => ({ results: [] }) }) }) },
       R2_RENDERS: {
         get: async (key: string) => (key === filmJobDocKey("film-speech-1") ? { text: async () => JSON.stringify(job) } : null),
-        head: async () => null,
+        head: vfHead(),
         put: async () => {},
         list: async () => ({ objects: [] }),
       },
@@ -2467,7 +2563,7 @@ describe("advanceFilmJob film.finish chain: step 2 reads step 1's OUTPUT, not th
       R2_RENDERS: {
         get: async (k: string) => (k === filmDoc ? { text: async () => stored } : null),
         put: async (k: string, b: string) => { if (k === filmDoc) stored = b; },
-        head: async () => null,
+        head: vfHead(),
         list: async () => ({ objects: [], truncated: false }),
       },
       MODULE_SUBTITLE: ffModule("subtitle", 5, subtitleInputs, "subtitle:burned"),
@@ -2787,7 +2883,15 @@ describe("#519 video-finish UNAVAILABLE -> complete-with-clips degrade (vs #245/
       DB: { prepare: () => ({ bind: () => ({ run: async () => ({}), first: async () => null, all: async () => ({ results: [] }) }) }) },
       R2_RENDERS: {
         get: async (key: string) => (key === filmJobDocKey(filmId) ? { text: async () => stored } : null),
-        head: async () => null,
+        // PER-FIXTURE DECISION (cf#833). These cases run with the mux tier UNAVAILABLE, so the
+        // film that ships is the SILENT cut -- already assembled in an earlier phase, therefore
+        // already in R2. Declaring it present is what the scenario actually is; leaving it absent
+        // would model a studio that assembled nothing and then tried to deliver it, which is not
+        // the degrade being tested. The mux OUTPUT stays absent, so the gate can still refuse.
+        head: async (key: string) =>
+          key === (job as { silent_film_key?: string }).silent_film_key
+            ? ({ size: 4_194_304 } as unknown)
+            : vfHead()(key),
         put: async (key: string, val: string) => { if (key === filmJobDocKey(filmId)) stored = val; },
       },
       R2_S3_ACCESS_KEY_ID: "test", R2_S3_SECRET_ACCESS_KEY: "test",
@@ -2803,7 +2907,8 @@ describe("#519 video-finish UNAVAILABLE -> complete-with-clips degrade (vs #245/
     return { env: orch(env as unknown as Env), read: () => JSON.parse(stored) as FilmJob };
   }
 
-  const asmJob = (over: object = {}) => ({
+  // Partial<FilmJob>, not object, so a field core removes is a compile error at the next repin (cf#1027).
+  const asmJob = (over: Partial<FilmJob> = {}) => ({
     film_id: "film-519-asm",
     project: "p",
     scenes: [{ shot_id: "shot_01", prompt: "x", seconds: 3 }, { shot_id: "shot_02", prompt: "y", seconds: 3 }],
@@ -2822,7 +2927,7 @@ describe("#519 video-finish UNAVAILABLE -> complete-with-clips degrade (vs #245/
     scenes: [{ shot_id: "shot_01", prompt: "x", seconds: 3 }],
     phase: "mux" as const,
     silent_film_key: "renders/film-519-mux/film-silent.mp4",
-    audio_key: "renders/film-519-mux/audio.mp4",
+    audio_key: "renders/film-519-mux/audio.mp4", beats_read: true,
     created_at: 0,
     ...over,
   });
@@ -2845,29 +2950,32 @@ describe("#519 video-finish UNAVAILABLE -> complete-with-clips degrade (vs #245/
     }).catch((e) => { spy.mockRestore(); throw e; });
   }
 
-  it("assemble + VIDEO_FINISH_URL unset -> COMPLETED delivering the per-shot clips, loud status + event", async () => {
+  it("assemble + VIDEO_FINISH_URL unset -> FAILED, per-shot clips retained, loud status + event", async () => {
     const { env, read } = degradeEnv(asmJob()); // no VIDEO_FINISH_URL
     const { result: r, event } = await captureEvent(() => advanceFilmJob(orch(env), "film-519-asm"));
-    expect(r?.job.phase).toBe("done"); // NOT failed -- the clips are delivered
+    expect(r?.job.phase).toBe("failed"); // core 1.26.0: the join did not run, so this is not a film
     expect(r?.job.finish_unavailable?.at).toBe("assemble");
-    expect(r?.job.finish_unavailable?.delivered).toBe("clips");
+    expect(r?.job.finish_unavailable?.retained).toBe("clips");
+    expect(r?.job.finish_unavailable?.delivered).toBeUndefined();
     expect(r?.job.finish_unavailable?.clips?.map((c) => c.shot_id)).toEqual(["shot_01", "shot_02"]);
     expect(r?.job.film_key).toBeUndefined(); // there is no single assembled film
     // the degrade is a persisted, observable state (not a silent green)
     expect(read().finish_unavailable?.at).toBe("assemble");
     // and a loud structured event on the observability channel
     expect(event?.at).toBe("assemble");
-    expect(event?.delivered).toBe("clips");
+    expect(event?.retained).toBe("clips");
     expect(event?.clips).toBe(2);
   });
 
-  it("assemble + container UNREACHABLE after the bounded retry -> same complete-with-clips degrade", async () => {
-    // assemble_attempts at the cap-1 so this tick exhausts (502 is a transient gateway status, no backoff).
-    const { env } = degradeEnv(asmJob({ assemble_attempts: 5 }), { door: { status: 502 } });
+  it("assemble + a refused submit -> FAILED on the first tick, with no attempt counter", async () => {
+    // core 1.26.0 removed the attempt counters, so there is no cap to sit below. vfAsyncDoor answers
+    // this fixture's submit with a 500 carrying the text "502", so this is the refusal path. The
+    // gateway path, with clips retained, is tested in core.
+    const { env } = degradeEnv(asmJob(), { door: { status: 502 } });
     const r = await advanceFilmJob(orch(env), "film-519-asm");
-    // Async submit that never returns a jobId is a failed assemble in core 1.21.2.
     expect(r?.job.phase).toBe("failed");
     expect(r?.job.error).toMatch(/async submit|502/);
+    expect(r?.job.finish_unavailable).toBeUndefined();
   });
 
   it("assemble + the container RAN and returned a real error (500) -> STILL FAILS LOUD (#245/#249)", async () => {
@@ -2878,25 +2986,35 @@ describe("#519 video-finish UNAVAILABLE -> complete-with-clips degrade (vs #245/
     expect(r?.job.finish_unavailable).toBeUndefined();
   });
 
-  it("mux + VIDEO_FINISH_URL unset -> COMPLETED shipping the SILENT film, loud status + event", async () => {
+  it("mux + VIDEO_FINISH_URL unset + a staged song -> FAILED, silent cut retained, loud status + event", async () => {
     const { env, read } = degradeEnv(muxJob()); // no VIDEO_FINISH_URL, no film.finish/notify modules
     const { result: r, event } = await captureEvent(() => advanceFilmJob(orch(env), "film-519-mux"));
-    expect(r?.job.phase).toBe("done"); // NOT failed -- the silent film ships
+    expect(r?.job.phase).toBe("failed"); // core 1.26.0: the song was not attached, so this is not done
     expect(r?.job.finish_unavailable?.at).toBe("mux");
-    expect(r?.job.finish_unavailable?.delivered).toBe("silent_film");
-    expect(r?.job.film_key).toBe("renders/film-519-mux/film-silent.mp4"); // the delivered (silent) film
+    expect(r?.job.finish_unavailable?.retained).toBe("silent_film");
+    expect(r?.job.finish_unavailable?.delivered).toBeUndefined();
+    expect(r?.job.film_key).toBeUndefined();
+    expect(read().silent_film_key).toBe("renders/film-519-mux/film-silent.mp4");
     expect(read().finish_unavailable?.at).toBe("mux");
     expect(event?.at).toBe("mux");
-    expect(event?.delivered).toBe("silent_film");
+    expect(event?.retained).toBe("silent_film");
   });
 
   it("mux + the container RAN and returned a real error (500) -> STILL FAILS LOUD (#245/#249)", async () => {
     const { env } = degradeEnv(muxJob(), { door: { status: 500, body: { ok: false, error: "remux boom" } } });
     const r = await advanceFilmJob(orch(env), "film-519-mux");
-    // core 1.21.2: mux failure degrades to the silent film rather than failing the render.
-    expect(r?.job.phase).toBe("done");
-    expect(r?.job.finish_unavailable?.at).toBe("mux");
-    expect(r?.job.film_key).toBe("renders/film-519-mux/film-silent.mp4");
+    // core 1.23.0 "fix(mux): a transport failure is a failure, not a silent film shipped as
+    // COMPLETED" (refs cf#746). enterMuxPhase used to degrade to `done` on tick.kind === "failed"
+    // while enterAssemblePhase failed on the identical condition -- ten lines apart, opposite
+    // outcomes, and the mux one was TERMINAL: the job read COMPLETED and the audio was never
+    // coming. submitAsync gives up on the first attempt with no retry, so one transient blip
+    // permanently turned a film-with-audio into a silent film reported as complete.
+    //
+    // This assertion now MATCHES THIS TEST'S OWN TITLE and its assemble sibling twenty lines up.
+    // The rule the two legs share: degrade when a retry cannot help, fail when it can.
+    expect(r?.job.phase).toBe("failed");
+    expect(r?.job.error).toContain("500");
+    expect(r?.job.finish_unavailable).toBeUndefined();
   });
 
   it("summarizeFilm + filmJobToPollView surface the degrade + clip keys for the UI", () => {
@@ -2940,7 +3058,7 @@ describe("#521 discovery threaded once per tick (no per-leg module.json fan-out)
     const env = {
       R2_RENDERS: {
         get: async (k: string) => (k === filmJobDocKey(filmId) ? { text: async () => stored } : null),
-        head: async () => null,
+        head: vfHead(),
         put: async (k: string, v: string) => { if (k === filmJobDocKey(filmId)) stored = v; },
       },
       VIDEO_FINISH_URL: "https://video-finish.test", MEDIA_DOOR_FETCH: vfAsyncDoor({ ok: true, key: `renders/${filmId}/film-audio.mp4` }),
@@ -2963,7 +3081,7 @@ describe("#521 discovery threaded once per tick (no per-leg module.json fan-out)
       scenes: [{ shot_id: "shot_01", prompt: "x", seconds: 3 }],
       phase: "mux" as const,
       silent_film_key: "renders/film-521-tick/silent.mp4",
-      audio_key: "renders/film-521-tick/audio.mp4",
+      audio_key: "renders/film-521-tick/audio.mp4", beats_read: true,
       film_titles: { title: { text: "NEON" } },
       created_at: 0,
     };
@@ -2990,7 +3108,7 @@ function durationGateEnv(job: object, clipDurations: number[] | undefined) {
       // The job doc reads back; the bundle_key (and everything else) is absent, so
       // readShotDurationsFromBundle returns {} and the plan falls back to scene.seconds.
       get: async (key: string) => key === filmJobDocKey(filmId) ? { text: async () => JSON.stringify(job) } : null,
-      head: async () => null, // film.mp4 not yet in R2 -> no self-heal short-circuit, real assemble runs
+      head: vfHead(), // film.mp4 not yet in R2 -> no self-heal short-circuit, real assemble runs
       put: async (key: string) => { putCalls.push(key); },
     },
     VIDEO_FINISH_URL: "https://video-finish.test",

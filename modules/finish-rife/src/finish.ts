@@ -27,29 +27,53 @@ export function passthroughOutput(
   return out;
 }
 
+export const FINISH_STYLES = ["photoreal", "anime"] as const;
+export type FinishStyle = (typeof FINISH_STYLES)[number];
+
+export function clampStyle(v: unknown): FinishStyle {
+  return v === "anime" ? "anime" : "photoreal";
+}
+
 export interface FinishConfig {
   interpolate: boolean;
   interpolation_factor: number;
   face_restore: string;   // "none" | "gfpgan" | "codeformer"
   face_fidelity: number;
   only_faces: boolean;
+  style: FinishStyle;
 }
 
+const RESTORERS = ["none", "gfpgan", "codeformer"] as const;
+
 export function defaultConfig(): FinishConfig {
-  return { interpolate: true, interpolation_factor: 2, face_restore: "none", face_fidelity: 0.7, only_faces: true };
+  return {
+    interpolate: true,
+    interpolation_factor: 2,
+    face_restore: "none",
+    face_fidelity: 0.7,
+    only_faces: true,
+    style: "photoreal",
+  };
 }
 
 export function coerceConfig(cfg: Record<string, unknown>): FinishConfig {
   const base = defaultConfig();
+  const style = clampStyle(cfg.style);
   const factor = Number(cfg.interpolation_factor ?? base.interpolation_factor);
   // floor to the largest power-of-two <= factor (matches the backend int() truncation)
   const snapped = [8, 4, 2, 1].find(v => v <= factor) ?? 1;
+  const restoreExplicit = (RESTORERS as readonly string[]).includes(String(cfg.face_restore));
+  // Anime + no restorer pick: GFPGAN stays off. An explicit restorer still wins.
+  const face_restore = restoreExplicit
+    ? String(cfg.face_restore)
+    : (style === "anime" ? "none" : base.face_restore);
   return {
     interpolate: typeof cfg.interpolate === "boolean" ? cfg.interpolate : base.interpolate,
     interpolation_factor: snapped,
-    face_restore: ["none", "gfpgan", "codeformer"].includes(String(cfg.face_restore)) ? String(cfg.face_restore) : base.face_restore,
+    face_restore,
     face_fidelity: Math.min(1, Math.max(0, Number(cfg.face_fidelity ?? base.face_fidelity))),
     only_faces: typeof cfg.only_faces === "boolean" ? cfg.only_faces : base.only_faces,
+    style,
   };
 }
 

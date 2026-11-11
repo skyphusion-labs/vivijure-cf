@@ -27,6 +27,7 @@ describe("isSpendRoute -- the GPU/spend surface", () => {
       "/api/cast/7/generate-refs",
       "/api/storyboard/score-bed",
       "/api/storyboard/music-generate",
+      "/api/audio/analyze",
     ];
     for (const p of spend) expect(isSpendRoute("POST", p)).toBe(true);
   });
@@ -34,6 +35,7 @@ describe("isSpendRoute -- the GPU/spend surface", () => {
   it("does NOT match the same paths under GET (reads are free)", () => {
     expect(isSpendRoute("GET", "/api/render/film")).toBe(false);
     expect(isSpendRoute("GET", "/api/cast/7/train-lora")).toBe(false);
+    expect(isSpendRoute("GET", "/api/audio/analyze")).toBe(false);
   });
 
   it("does NOT match non-spend routes", () => {
@@ -152,9 +154,6 @@ describe("isSpendRoute -- the planner/chat surface (cf#256)", () => {
     expect(isSpendRoute("POST", "/api/storyboard/yaml")).toBe(false);
     expect(isSpendRoute("POST", "/api/storyboard/markers")).toBe(false);
     expect(isSpendRoute("POST", "/api/storyboard/bundle")).toBe(false);
-    // The demo assistant is deliberately NOT here: it runs a Workers AI OSS model behind its own
-    // per-IP + global D1 caps (src/demo-chat.ts) and holds no gateway credential.
-    expect(isSpendRoute("POST", "/api/demo/chat")).toBe(false);
   });
 });
 

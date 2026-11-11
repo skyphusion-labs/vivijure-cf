@@ -255,8 +255,8 @@ build). This keeps every binding pointing at an already-deployed module.
    `modules/*/wrangler.toml` with an explicit reviewed skip-list, so this maintenance step no longer
    exists):
    ```
-   for module in own-gpu finish-rife finish-upscale keyframe seedance kling \
-     minimax-hailuo google-veo vidu-q3 alibaba-wan film-titles dialogue-gen; do
+   for module in own-gpu finish-rife finish-upscale keyframe \
+     minimax-hailuo alibaba-wan film-titles dialogue-gen; do
    ```
    Add: `cloud-keyframe alibaba-wan-lora subtitle audio-master`. Order within the loop does not matter (all modules
    deploy before the core); only modules-before-core matters, which the job already guarantees.

@@ -39,21 +39,17 @@
 // instead. The BLIND control below reproduces exactly that, which is why it is a 503 with a valid
 // body rather than a thrown fetch.
 import { describe, it, expect, vi, afterEach } from "vitest";
+import { reachesRunpod } from "./runpod-census";
 
 import keyframeWorker from "../modules/keyframe/src/index";
 import finishUpscaleWorker from "../modules/finish-upscale/src/index";
 import finishBlenderWorker from "../modules/finish-blender/src/index";
 import finishRifeWorker from "../modules/finish-rife/src/index";
 import narrationGenWorker from "../modules/narration-gen/src/index";
-import seedanceWorker from "../modules/seedance/src/index";
-import klingWorker from "../modules/kling/src/index";
-import viduWorker from "../modules/vidu-q3/src/index";
-import veoWorker from "../modules/google-veo/src/index";
 import hailuoWorker from "../modules/minimax-hailuo/src/index";
 import wanWorker from "../modules/alibaba-wan/src/index";
 import wanLoraWorker from "../modules/alibaba-wan-lora/src/index";
 import ownGpuWorker from "../modules/own-gpu/src/index";
-import klingO1Worker from "../modules/kling-o1-r2v/src/index";
 import infinitetalkWorker from "../modules/infinitetalk/src/index";
 
 type Worker = { fetch(request: Request, env: never): Promise<Response> };
@@ -104,16 +100,12 @@ const CASES: Case[] = [
   // narration-gen rides a fixed hosted slug, so it needs no endpoint id. config.text is REQUIRED for
   // a real submit: with neither text nor storyboard scenes it refuses before it reaches /run.
   { name: "narration-gen", worker: narrationGenWorker as unknown as Worker, hook: "score", extraEnv: {}, input: { film_key: "renders/p_test/film.mp4", seconds: 30 }, config: { text: "The city exhales, and the neon holds its breath." } },
-  { name: "seedance", worker: seedanceWorker as unknown as Worker, hook: "motion.backend", extraEnv: R2, input: MOTION_INPUT, config: {} },
-  { name: "kling", worker: klingWorker as unknown as Worker, hook: "motion.backend", extraEnv: R2, input: MOTION_INPUT, config: {} },
-  { name: "vidu-q3", worker: viduWorker as unknown as Worker, hook: "motion.backend", extraEnv: R2, input: MOTION_INPUT, config: {} },
-  { name: "google-veo", worker: veoWorker as unknown as Worker, hook: "motion.backend", extraEnv: R2, input: MOTION_INPUT, config: {} },
+  // cf#921: `kling` is RETIRED. cf#1075 retired seedance, google-veo, and vidu-q3.
   { name: "minimax-hailuo", worker: hailuoWorker as unknown as Worker, hook: "motion.backend", extraEnv: R2, input: MOTION_INPUT, config: {} },
   { name: "alibaba-wan", worker: wanWorker as unknown as Worker, hook: "motion.backend", extraEnv: R2, input: MOTION_INPUT, config: {} },
   { name: "alibaba-wan-lora", worker: wanLoraWorker as unknown as Worker, hook: "motion.backend", extraEnv: R2, input: MOTION_INPUT, config: {} },
   // own-gpu drives OUR backend endpoint, so it needs the endpoint id as well.
   { name: "own-gpu", worker: ownGpuWorker as unknown as Worker, hook: "motion.backend", extraEnv: { ...ENDPOINT, ...R2 }, input: MOTION_INPUT, config: {} },
-  { name: "kling-o1-r2v", worker: klingO1Worker as unknown as Worker, hook: "motion.backend", extraEnv: R2, input: MOTION_INPUT, config: {} },
   { name: "infinitetalk", worker: infinitetalkWorker as unknown as Worker, hook: "motion.backend", extraEnv: R2, input: { ...MOTION_INPUT, audio_url: "https://example.invalid/line.wav" }, config: {} },
 ];
 
@@ -248,10 +240,17 @@ describe("the population is derived, not asserted (cf#398 denominator)", () => {
       }
     };
 
-    // Same predicate the cf#289 and cf#394 censuses use, so the three cannot drift into three
-    // different populations: a module reaches RunPod iff it names the RunPod API host or imports the
-    // shared route helper.
-    const runpod = candidates.filter((n) => read(n).includes("api.runpod.ai") || read(n).includes("_shared/runpod-route"));
+    // ONE shared predicate (tests/runpod-census.ts), so the copies cannot drift into different
+    // populations: a module reaches RunPod iff its RUNTIME CODE names the RunPod API host or
+    // imports the shared route helper.
+    //
+    // This comment used to say "the cf#289 and cf#394 censuses ... the three". Both halves were
+    // wrong (cf#951): cf#394 does not carry the predicate, and the files that DO are four, not
+    // three -- cf#289, cf#398, cf#578 and cf#604. Anyone following the old comment to "fix all
+    // three" would have edited a file with nothing to fix and missed two that had, producing the
+    // exact drift the sentence warned against. The wish is now a mechanism: one function, four
+    // importers.
+    const runpod = candidates.filter((n) => reachesRunpod(read(n)));
     const guarded = runpod.filter((n) => read(n).includes("planeRefusalReason("));
 
     // DENOMINATOR beside the result: a matcher returning almost everything has failed as completely
@@ -262,7 +261,7 @@ describe("the population is derived, not asserted (cf#398 denominator)", () => {
     // "nothing unguarded" passes vacuously.
     expect(candidates.length).toBeGreaterThanOrEqual(26);
     expect(runpod).toContain("narration-gen");
-    expect(runpod).toContain("seedance");
+    expect(runpod).toContain("minimax-hailuo");
     // NEGATIVE CONTROL: the predicate must REJECT the near-misses, or "all guarded" is satisfiable by
     // a matcher that selects nothing. local-gpu is the sharp one: it is a motion backend that polls
     // `<LOCAL_BACKEND_URL>/status/<id>`, so it looks identical to a RunPod poller and is not one.
@@ -273,7 +272,8 @@ describe("the population is derived, not asserted (cf#398 denominator)", () => {
 
     // FLOOR, not equality: a new non-RunPod module is normal and must not turn this red, while a
     // matcher that has stopped matching must.
-    expect(runpod.length).toBeGreaterThanOrEqual(14);
+    // Was 14 before cf#1075 retired seedance, google-veo, and vidu-q3 (three RunPod submitters).
+    expect(runpod.length).toBeGreaterThanOrEqual(11);
     // Every module driven above is in the derived set, so the behavioural half cannot silently cover
     // a smaller population than the census claims.
     expect(runpod.filter((n) => !CASES.some((c) => c.name === n) && !RUNSYNC_ONLY.includes(n)), "reach RunPod but are not driven above").toEqual([]);

@@ -86,6 +86,11 @@ to lay down. The only hard `ok:false` is malformed input (missing `film_id` / `a
 `output_url` / `output_key`). A master miss therefore degrades to the un-mastered (but intact) audio; it
 never drops a fully-rendered film.
 
+Reasons and verdicts (cf#1327): `container-unreachable` (transient), `container-http-error` with `HTTP n`
+(`failureFromStatus`: 429 capacity, 5xx server_error, other 4xx permanent refused), `container-bad-response`
+for a body that is not JSON or not an object (transient: the core holds and retries the step, bounded),
+`container-refused` for an `ok:false` body (permanent), `no-output-key`, and `no-audio-master-url`.
+
 ## License
 
 **AGPL-3.0-only.** A labor of love, given freely: use it, learn from it, self-host it, build your own creative visions on it. Run it as a network service and the AGPL has you share your changes back, so it stays a commons. It is not for sale, and not to be resold as a SaaS.

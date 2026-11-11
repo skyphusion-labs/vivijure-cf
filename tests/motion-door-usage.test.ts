@@ -8,15 +8,15 @@ import alibabaWanLoraWorker from "../modules/alibaba-wan-lora/src/index";
 import cfFlux3VideoWorker from "../modules/cf-flux-3-video/src/index";
 import cfGrokVideoWorker from "../modules/cf-grok-video/src/index";
 import cfHh1R2vWorker from "../modules/cf-hh1-r2v/src/index";
+import cfKlingV4Worker from "../modules/cf-kling-v4/src/index";
+import cfMinimaxH3Worker from "../modules/cf-minimax-h3/src/index";
 import cfSeedanceWorker from "../modules/cf-seedance/src/index";
-import googleVeoWorker from "../modules/google-veo/src/index";
-import klingWorker from "../modules/kling/src/index";
+import cfViduQ3TurboWorker from "../modules/cf-vidu-q3-turbo/src/index";
 import localGpuWorker from "../modules/local-gpu/src/index";
 import minimaxHailuoWorker from "../modules/minimax-hailuo/src/index";
 import ownGpuWorker from "../modules/own-gpu/src/index";
-import seedanceWorker from "../modules/seedance/src/index";
-import viduQ3Worker from "../modules/vidu-q3/src/index";
 import infinitetalkWorker from "../modules/infinitetalk/src/index";
+import cfPVideoAvatarWorker from "../modules/cf-p-video-avatar/src/index";
 
 type Worker = { fetch(request: Request, env: never): Promise<Response> };
 
@@ -61,27 +61,11 @@ const DOORS: { name: string; worker: Worker; usage: Usage }[] = [
     },
   },
   {
-    name: "seedance",
-    worker: seedanceWorker as unknown as Worker,
-    usage: {
-      native_audio: true, voice: "seed_and_prompt", scatter_native_audio: false,
-      min_seconds: 4, max_seconds: 12, first_last: true, seed: true,
-    },
-  },
-  {
-    name: "google-veo",
-    worker: googleVeoWorker as unknown as Worker,
+    name: "cf-vidu-q3-turbo",
+    worker: cfViduQ3TurboWorker as unknown as Worker,
     usage: {
       native_audio: true, voice: "prompt_lock", scatter_native_audio: false,
-      min_seconds: 4, max_seconds: 8, duration_steps: [4, 6, 8], first_last: false, seed: false,
-    },
-  },
-  {
-    name: "vidu-q3",
-    worker: viduQ3Worker as unknown as Worker,
-    usage: {
-      native_audio: true, voice: "prompt_lock", scatter_native_audio: false,
-      min_seconds: 3, max_seconds: 10,
+      min_seconds: 1, max_seconds: 16, first_last: true, seed: false,
     },
   },
   {
@@ -92,14 +76,9 @@ const DOORS: { name: string; worker: Worker; usage: Usage }[] = [
       min_seconds: 1, max_seconds: 15,
     },
   },
-  {
-    name: "kling",
-    worker: klingWorker as unknown as Worker,
-    usage: {
-      native_audio: false, voice: "cast_tts", scatter_native_audio: true,
-      min_seconds: 5, max_seconds: 10, duration_steps: [5, 10],
-    },
-  },
+  // cf#921: `kling` is RETIRED. Its RunPod slug returned 404 and no live Kling endpoint does
+  // plain i2v, so the door is gone rather than repointed. Restoring a line here means a module
+  // directory came back; it did not just get re-enabled.
   {
     name: "minimax-hailuo",
     worker: minimaxHailuoWorker as unknown as Worker,
@@ -125,11 +104,35 @@ const DOORS: { name: string; worker: Worker; usage: Usage }[] = [
     },
   },
   {
+    name: "cf-p-video-avatar",
+    worker: cfPVideoAvatarWorker as unknown as Worker,
+    usage: {
+      native_audio: false, voice: "cast_tts", scatter_native_audio: false, driving_audio: true,
+      min_seconds: 1, max_seconds: 15,
+    },
+  },
+  {
     name: "alibaba-wan-lora",
     worker: alibabaWanLoraWorker as unknown as Worker,
     usage: {
       native_audio: false, voice: "cast_tts", scatter_native_audio: false,
       min_seconds: 5, max_seconds: 8, duration_steps: [5, 8], seed: true,
+    },
+  },
+  {
+    name: "cf-kling-v4",
+    worker: cfKlingV4Worker as unknown as Worker,
+    usage: {
+      native_audio: false, voice: "cast_tts", scatter_native_audio: false,
+      min_seconds: 3, max_seconds: 30, first_last: true,
+    },
+  },
+  {
+    name: "cf-minimax-h3",
+    worker: cfMinimaxH3Worker as unknown as Worker,
+    usage: {
+      native_audio: false, voice: "cast_tts", scatter_native_audio: false,
+      min_seconds: 4, max_seconds: 15, first_last: true,
     },
   },
   {
@@ -206,10 +209,10 @@ describe("driving-audio honesty copy", () => {
     expect((m.usage as Usage).driving_audio).toBe(true);
   });
 
-  it("Seedance blurb may still mention the kept sample", async () => {
+  it("Seedance card promises no sample button, because the panel has none", async () => {
     const m = await moduleJson(cfSeedanceWorker as unknown as Worker);
     const card = ((m.ui?.blurb ?? "") + " " + (m.ui?.limits ?? []).join(" ")).toLowerCase();
-    expect(card).toMatch(/sample/);
+    expect(card).not.toMatch(/sample on cast/);
     expect(m.ui?.blurb ?? "").not.toMatch(JARGON);
   });
 

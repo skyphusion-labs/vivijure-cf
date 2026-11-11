@@ -14,12 +14,9 @@ import { describe, it, expect } from "vitest";
 
 import alibabaWanWorker from "../modules/alibaba-wan/src/index";
 import alibabaWanLoraWorker from "../modules/alibaba-wan-lora/src/index";
-import googleVeoWorker from "../modules/google-veo/src/index";
-import klingWorker from "../modules/kling/src/index";
 import minimaxHailuoWorker from "../modules/minimax-hailuo/src/index";
 import narrationGenWorker from "../modules/narration-gen/src/index";
-import seedanceWorker from "../modules/seedance/src/index";
-import viduQ3Worker from "../modules/vidu-q3/src/index";
+import cfViduQ3TurboWorker from "../modules/cf-vidu-q3-turbo/src/index";
 import dialogueGenWorker from "../modules/dialogue-gen/src/index";
 import musicGenWorker from "../modules/music-gen/src/index";
 import cfHh1R2vWorker from "../modules/cf-hh1-r2v/src/index";
@@ -57,12 +54,9 @@ const get = async (worker: Worker, env: Record<string, unknown>, path = "/ready"
 const RUNPOD_ONLY: { name: string; worker: Worker }[] = [
   { name: "alibaba-wan", worker: alibabaWanWorker as unknown as Worker },
   { name: "alibaba-wan-lora", worker: alibabaWanLoraWorker as unknown as Worker },
-  { name: "google-veo", worker: googleVeoWorker as unknown as Worker },
-  { name: "kling", worker: klingWorker as unknown as Worker },
+  // cf#921: `kling` is RETIRED. cf#1075 retired seedance, google-veo, and vidu-q3.
   { name: "minimax-hailuo", worker: minimaxHailuoWorker as unknown as Worker },
   { name: "narration-gen", worker: narrationGenWorker as unknown as Worker },
-  { name: "seedance", worker: seedanceWorker as unknown as Worker },
-  { name: "vidu-q3", worker: viduQ3Worker as unknown as Worker },
 ];
 
 describe.each(RUNPOD_ONLY)("$name: GET /ready (RunPod key, hard-required)", ({ name, worker }) => {
@@ -115,6 +109,7 @@ const GATEWAY_REQUIRED: { name: string; worker: Worker }[] = [
   { name: "cf-seedance", worker: cfSeedanceWorker as unknown as Worker },
   { name: "cf-grok-video", worker: cfGrokVideoWorker as unknown as Worker },
   { name: "cf-flux-3-video", worker: cfFlux3VideoWorker as unknown as Worker },
+  { name: "cf-vidu-q3-turbo", worker: cfViduQ3TurboWorker as unknown as Worker },
 ];
 
 describe.each(GATEWAY_REQUIRED)("$name: GET /ready (GATEWAY_ID, hard-required)", ({ name, worker }) => {
@@ -194,13 +189,20 @@ describe("plan-enhance: GET /ready (Opus credentials informational; local fallba
   const worker = planEnhanceWorker as unknown as Worker;
   it("ok:true with neither credential (local Workers AI fallback)", async () => {
     expect((await get(worker, {})).body).toEqual({
-      ok: true, module: "plan-enhance", credentials: { gateway_id: false, cf_aig_token: false },
+      ok: true, module: "plan-enhance", credentials: { gateway_id: false, cf_aig_token: false }, opus: "off",
     });
   });
   it("ok:true with both, reports both visible", async () => {
     expect((await get(worker, { GATEWAY_ID: "gw", CF_AIG_TOKEN: "tok" })).body).toEqual({
-      ok: true, module: "plan-enhance", credentials: { gateway_id: true, cf_aig_token: true },
+      ok: true, module: "plan-enhance", credentials: { gateway_id: true, cf_aig_token: true }, opus: "token",
     });
+  });
+  it("reports the binding transport only when opted in, with a gateway and no token", async () => {
+    expect((await get(worker, { GATEWAY_ID: "gw", ENHANCE_OPUS_BINDING: "1" })).body).toEqual({
+      ok: true, module: "plan-enhance", credentials: { gateway_id: true, cf_aig_token: false }, opus: "binding",
+    });
+    expect((await get(worker, { GATEWAY_ID: "gw" })).body).toMatchObject({ opus: "off" });
+    expect((await get(worker, { ENHANCE_OPUS_BINDING: "1" })).body).toMatchObject({ opus: "off" });
   });
 });
 
@@ -261,7 +263,7 @@ describe("cf#295: none of the newly-covered modules 404 on GET /ready", () => {
     const { status } = await get(worker, {});
     expect(status).toBe(200);
   });
-  it("the roster itself is the expected 24 (positive control on this file's own coverage)", () => {
-    expect(ALL.length).toBe(24);
+  it("the roster itself is the expected 23 (positive control on this file's own coverage)", () => {
+    expect(ALL.length).toBe(21);
   });
 });

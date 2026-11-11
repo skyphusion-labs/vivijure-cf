@@ -10,17 +10,16 @@
 // so every preview 404'd while every gate stayed green. A module that cannot write cannot recreate
 // that split, and a third-party module cannot invent its own namespace. The core owns persistence.
 //
-// Ship a new image model by adding its id to MODELS below; the catalog picks it up with no studio
+// Ship a new image model by adding its id to MODELS in ./manifest; the catalog picks it up with no studio
 // deploy. That is the whole point of the projection.
 
 import {
-  MODULE_API,
-  type ModuleManifest,
   type InvokeRequest,
   type InvokeResponse,
   type ImageGenerateInput,
   type ImageGenerateOutput,
 } from "./contract";
+import { LEGACY_MODELS, MANIFEST, MODELS } from "./manifest";
 import { bytesToBase64, generateImageBytes, type AiRun } from "./image-gen";
 
 interface SecretsStoreSecret {
@@ -30,48 +29,11 @@ interface SecretsStoreSecret {
 interface Env {
   AI: AiRun;
   GATEWAY_ID?: SecretsStoreSecret | string;
-  /** Optional BYOK key: enables transparent-PNG output on gpt-image-1.5. Absent = opaque proxy path. */
+  /** Optional BYOK key: transparent PNG on legacy gpt-image-1.5 only. gpt-image-2 uses the proxy. */
   OPENAI_API_KEY?: SecretsStoreSecret | string;
 }
 
-// The models this module can actually dispatch. Every id here is executable by image-gen.ts; a row
-// the module cannot run would be a lie in the studio picker, which is the defect class cf#129 exists
-// to kill. This list moved here from the studio's hardcoded src/image-models.ts.
-const MODELS = [
-  "@cf/black-forest-labs/flux-2-klein-9b",
-  "@cf/black-forest-labs/flux-2-klein-4b",
-  "@cf/black-forest-labs/flux-2-dev",
-  "google/nano-banana-2",
-  "google/nano-banana-pro",
-  "bytedance/seedream-5-pro",
-  "xai/grok-imagine-image",
-  "google/imagen-4",
-  "openai/gpt-image-1.5",
-  "recraft/recraftv4",
-];
-// Still runnable if a saved session names them. Not on the hosted picker.
-const LEGACY_MODELS = [
-  "@cf/black-forest-labs/flux-1-schnell",
-  "@cf/leonardo/lucid-origin",
-  "@cf/leonardo/phoenix-1.0",
-  "@cf/lykon/dreamshaper-8-lcm",
-  "@cf/stabilityai/stable-diffusion-xl-base-1.0",
-];
 const RUNNABLE = [...MODELS, ...LEGACY_MODELS];
-
-const MANIFEST: ModuleManifest = {
-  name: "image-generate",
-  version: "0.1.0",
-  api: MODULE_API,
-  hooks: ["image.generate"],
-  provides: [{ id: "image-gen", label: "Image generation (FLUX 2 / Nano Banana / SDXL)" }],
-  config_schema: {
-    // The core's projection reads THIS field to build the catalog rows, exactly as it reads
-    // plan-enhance's. Same declaration form, no special-casing of this module's name anywhere.
-    model: { type: "enum", values: MODELS, default: MODELS[0], label: "image model" },
-  },
-  ui: { section: "chat", order: 20 },
-};
 
 function json(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), {
@@ -118,7 +80,7 @@ async function runGenerate(
 ): Promise<InvokeResponse<ImageGenerateOutput>> {
   const input = req.input;
   if (!input || typeof input.prompt !== "string" || !input.prompt.trim()) {
-    return { ok: false, error: "image.generate: input needs a non-empty prompt" };
+    return { ok: false, error: "image.generate: input needs a non-empty prompt", reason: "bad-input" };
   }
   // Clamp the model to what this module declared. An unknown id falls back to the default rather
   // than being passed through to the binding, where it would fail as an opaque upstream error.
@@ -181,10 +143,10 @@ export default {
       try {
         req = (await request.json()) as InvokeRequest<ImageGenerateInput>;
       } catch {
-        return json({ ok: false, error: "invalid JSON body" } satisfies InvokeResponse);
+        return json({ ok: false, error: "invalid JSON body", reason: "bad-input" } satisfies InvokeResponse);
       }
       if (req.hook !== "image.generate") {
-        return json({ ok: false, error: `unsupported hook ${String(req.hook)}` } satisfies InvokeResponse);
+        return json({ ok: false, error: `unsupported hook ${String(req.hook)}`, reason: "unsupported" } satisfies InvokeResponse);
       }
       return json(await runGenerate(env, req));
     }
@@ -192,5 +154,3 @@ export default {
     return json({ ok: false, error: "not found" }, 404);
   },
 };
-
-export { MANIFEST, MODELS };

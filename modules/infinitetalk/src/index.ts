@@ -1,8 +1,15 @@
-// infinitetalk: a motion.backend module worker (vivijure-module/2), Kuaishou Kling V2.1 I2V Pro on RunPod.
-// Async (same shape as seedance): GET /module.json, POST /invoke (submit -> poll token), POST /poll
-// (check GET /status, finalize to R2 on completion). The second motion.backend backend -> the UI's
-// pick_one hook now has a real choice. Failures are DATA.
+// infinitetalk: an audio-driven motion.backend module worker (vivijure-module/2), MeiGen-AI
+// InfiniteTalk on the RunPod PUBLIC endpoint api.runpod.ai/v2/infinitetalk. Portrait plus Cast
+// audio: the mouth follows a line we synthesized, so this door needs a `dialogue` render to have
+// produced audio_url first (see kling.ts audioUrl). Two of the fifteen motion.backend doors
+// declare driving_audio and lip-sync: this one and alibaba-wan (which consumes audio_url in its
+// wan.ts). What is unique here is the PAIR of flags, not either half -- driving_audio true AND
+// native_audio false, so there is no invent-speech fallback and a shot with no line is refused
+// below rather than voiced by a stranger. alibaba-wan is native_audio true, so it voices it.
+// Async (same shape as alibaba-wan): GET /module.json, POST /invoke (submit -> poll token), POST /poll
+// (check GET /status, finalize to R2 on completion). Failures are DATA.
 
+import { withRetryingR2 } from "../../_shared/r2-retry";
 import {
   MODULE_API,
   type ModuleManifest,
@@ -13,10 +20,11 @@ import {
   type MotionBackendInput,
   type MotionBackendOutput,
 } from "./contract";
-import { buildKlingBody, extractVideoUrl, clipKey, clampDuration, encodePoll, decodePoll, runpodJobGone, classifyGoneState, workersStillCold, terminalErrorInOutput, framesFromDelivered, RUNPOD_COLD_GRACE_MS } from "./kling";
+import { MIN_SECONDS, MAX_SECONDS, buildKlingBody, extractVideoUrl, clipKey, clampDuration, encodePoll, decodePoll, runpodJobGone, classifyGoneState, workersStillCold, terminalErrorInOutput, deliveredTiming, RUNPOD_COLD_GRACE_MS } from "./kling";
 
 import { recordRunpodJob, probeRunpodJobLog, parseRunpodErrorType, runpodWalkedPastOutcome } from "../../_shared/runpod-job-log";
 import { planeRefusalReason, planeRefusalError, runpodRoute, runpodEndpointUrl, runpodHeaders, runpodCredentialName, type RunpodRoute } from "../../_shared/runpod-route";
+import { runpodSubmitFailure } from "../../_shared/runpod-submit-error";
 
 interface Env {
   RUNPOD_API_KEY: SecretsStoreSecret;
@@ -33,37 +41,45 @@ interface Env {
 }
 
 const ENDPOINT_ID = "infinitetalk";
-const OUT_FPS = 24;
 
 const MANIFEST: ModuleManifest = {
   name: "infinitetalk",
-  version: "0.1.1",
+  version: "0.2.2",
   api: MODULE_API,
   hooks: ["motion.backend"],
   provides: [{ id: "i2v-cloud", label: "Talking from our voice (InfiniteTalk)" }],
+  // cf#935: the size knob is GONE, not defaulted. The provider ignores it -- 480p and 720p both
+  // deliver 832x464 -- so offering the choice charged the user a published $0.50 against $0.25 for
+  // byte-identical pixels. Removing a published config field is a breaking contract change: 0.1.1 -> 0.2.0.
   config_schema: {
-    size: { type: "enum", values: ["480p", "720p"], default: "480p", label: "resolution" },
-    enable_safety_checker: { type: "bool", default: false, label: "provider safety filter (off: we already refuse CSAM)" },
   },
   ui: {
     section: "motion",
     order: 15,
     locality: "cloud",
-    cost: "Pay per render",
+    // cf#1246: provider cost, no markup. Source and date: docs/motion-door-prices.md.
+    cost: "$0.25 per clip (480p)",
+    cost_as_of: "2026-11-05",
+    cost_usd_per_clip: [{ usd: 0.25 }],
     blurb: "Portrait plus Cast audio. The speaker is ours, not invented.",
     limits: [
       "Mouth follows the storyboard line in the Cast voice. A shot with no line stays quiet.",
       "Clip length follows that audio.",
-      "One film, no scatter",
+      "480p only (832x464). The provider ignores any other resolution request.",
     ],
   },
+  // Lets a stopped film stop its clip jobs. Whether RunPod still charges a job cancelled while running is not
+  // measured: the metered price is per clip.
+  cancelable: true,
   usage: {
+    face_hold: "hold",
     native_audio: false,
     voice: "cast_tts",
     scatter_native_audio: false,
     driving_audio: true,
-    min_seconds: 2,
-    max_seconds: 15,
+    min_seconds: MIN_SECONDS,
+    // cf#931: our cap, not RunPod's. See MAX_SECONDS in ./kling.
+    max_seconds: MAX_SECONDS,
   },
 };
 
@@ -101,21 +117,21 @@ async function cancelRunpodJobBestEffort(route: RunpodRoute, jobId: string): Pro
 async function submit(env: Env, req: InvokeRequest<MotionBackendInput>): Promise<InvokeResponse<MotionBackendOutput>> {
   const input = req.input;
   if (!input || !input.keyframe_url || !input.prompt || !input.shot_id) {
-    return { ok: false, error: "motion.backend: input needs shot_id, keyframe_url, and prompt" };
+    return { ok: false, error: "motion.backend: input needs shot_id, keyframe_url, and prompt", reason: "bad-input" };
   }
   const audio = input.audio_url || (typeof req.config?.audio_url === "string" ? req.config.audio_url : "");
   if (!audio) {
-    return { ok: false, error: "infinitetalk: needs Cast audio (audio_url) so the speaker stays ours" };
+    return { ok: false, error: "infinitetalk: needs Cast audio (audio_url) so the speaker stays ours", reason: "bad-input" };
   }
   const route = await runpodRoute(env);
-  if (!route.credential) return { ok: false, error: "infinitetalk: " + runpodCredentialName(route) + " not configured" };
+  if (!route.credential) return { ok: false, error: "infinitetalk: " + runpodCredentialName(route) + " not configured", reason: "not-configured" };
   try {
     const r = await fetch(endpoint(route) + "/run", {
       method: "POST",
       headers: { ...auth(route), "content-type": "application/json" },
       body: JSON.stringify(buildKlingBody(input, req.config)),
     });
-    if (!r.ok) return { ok: false, error: "infinitetalk /run -> " + r.status };
+    if (!r.ok) return await runpodSubmitFailure("infinitetalk", r);
     const jobId = ((await r.json()) as { id?: string }).id;
     if (!jobId) return { ok: false, error: "infinitetalk /run returned no job id" };
     const submittedAt = Date.now();
@@ -219,11 +235,31 @@ async function poll(env: Env, body: PollRequest): Promise<PollResponse<MotionBac
   } catch (e) {
     return { ok: false, error: "R2 put failed: " + (e as Error).message };
   }
-  return { ok: true, output: { shot_id: st.shotId, clip_key: key, fps: OUT_FPS, frames: framesFromDelivered(bytes, st.seconds, OUT_FPS) } };
+  // cf#923: measured off the delivered container, not assumed. This door returns 25fps, not the 24
+  // it used to declare. 0/0 means the container could not be parsed; core skips recording a delivery
+  // rather than storing a rate nobody measured.
+  const timing = deliveredTiming(bytes);
+  return { ok: true, output: { shot_id: st.shotId, clip_key: key, fps: timing.fps, frames: timing.frames } };
+}
+
+/** Stop the job named by this poll token. A 404 means it is already gone, which is what was asked for. */
+async function cancel(env: Env, poll: string): Promise<{ ok: true } | { ok: false; error: string }> {
+  const st = decodePoll(poll);
+  if (!st) return { ok: false, error: "infinitetalk: bad poll token" };
+  const route = await runpodRoute(env);
+  if (!route.credential) return { ok: false, error: "infinitetalk: " + runpodCredentialName(route) + " not configured" };
+  try {
+    const resp = await fetch(endpoint(route) + "/cancel/" + encodeURIComponent(st.jobId), { method: "POST", headers: auth(route) });
+    if (resp.ok || resp.status === 404) return { ok: true };
+    return { ok: false, error: "infinitetalk /cancel -> " + resp.status };
+  } catch (e) {
+    return { ok: false, error: "infinitetalk cancel failed: " + (e as Error).message };
+  }
 }
 
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
+    withRetryingR2(env);
     const url = new URL(request.url);
     if (request.method === "GET" && url.pathname === "/module.json") return json(MANIFEST);
 
@@ -255,10 +291,10 @@ export default {
       try {
         req = (await request.json()) as InvokeRequest<MotionBackendInput>;
       } catch {
-        return json({ ok: false, error: "invalid JSON body" } as InvokeResponse);
+        return json({ ok: false, error: "invalid JSON body", reason: "bad-input" } as InvokeResponse);
       }
       if (req.hook !== "motion.backend") {
-        return json({ ok: false, error: "unsupported hook " + String(req.hook) } as InvokeResponse);
+        return json({ ok: false, error: "unsupported hook " + String(req.hook), reason: "unsupported" } as InvokeResponse);
       }
       return json(await submit(env, req));
     }
@@ -272,6 +308,12 @@ export default {
       if (!body || typeof body.poll !== "string") return json({ ok: false, error: "poll token required" } as PollResponse);
       return json(await poll(env, body));
     }
+    if (request.method === "POST" && url.pathname === "/cancel") {
+      const body = (await request.json().catch(() => null)) as { poll?: unknown } | null;
+      if (!body || typeof body.poll !== "string") return json({ ok: false, error: "poll token required" });
+      return json(await cancel(env, body.poll));
+    }
+
     return json({ ok: false, error: "not found" }, 404);
   },
 };

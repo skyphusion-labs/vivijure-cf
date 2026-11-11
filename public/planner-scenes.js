@@ -16,6 +16,30 @@
 
 const SCENE_YAML_REFRESH_MS = 500;
 
+// cf#1329: the editor shows one window of SCENE_PAGE_SIZE scenes at a time. A board may hold 600
+// (core STORYBOARD_MAX_SCENES), and 600 editable rows are 22,712 DOM nodes. Measured with
+// tests/browser/scene-editor-600.mjs (390 px, CPU throttled 4x): all 600 rows took 0.7 to 0.8 s to load,
+// 0.83 to 0.88 s per delete, and 31 to 34 ms from a key to the next frame; on the same box under load, one
+// run took 317 ms per key and 3.9 s per delete. One window is 6,772 nodes, about 0.2 s to load, 0.17 s
+// per delete and 17 to 18 ms per key. 50 is the most the planner writes in one turn (core
+// PLANNER_ASK_MAX_SCENES), so one plan is one window. A board of 50 or fewer shows no pager.
+const SCENE_PAGE_SIZE = 50;
+let scenePageStart = 0;
+// The board the window belongs to. A new board (a plan, a refine, a reopened project) starts at its first
+// scene; a delete or a discard edits the same board and keeps the window.
+let scenePageBoard = null;
+
+/** Pure: the window [start, end) that holds `start`, clamped to a board of `total` scenes. */
+function scenePageBounds(total, start, size) {
+  const n = Math.max(0, Math.floor(total) || 0);
+  const per = Math.max(1, Math.floor(size) || SCENE_PAGE_SIZE);
+  if (n === 0) return { start: 0, end: 0 };
+  const lastStart = Math.floor((n - 1) / per) * per;
+  const want = Math.floor((Number(start) || 0) / per) * per;
+  const s = Math.min(Math.max(0, want), lastStart);
+  return { start: s, end: Math.min(n, s + per) };
+}
+
 let sceneYamlRefreshTimer = null;
 let sceneYamlInflight = false;
 
@@ -109,7 +133,7 @@ function deleteScene(idx) {
   const scenes = planState.storyboard.scenes || [];
   if (idx < 0 || idx >= scenes.length) return;
   const scene = scenes[idx];
-  const label = scene.id ? scene.id : "scene " + (idx + 1);
+  const label = "Scene " + (idx + 1);
   if (!window.confirm("delete " + label + "? this cannot be undone (but discard all edits will restore it).")) return;
   scenes.splice(idx, 1);
   renderSceneEditor(planState.storyboard);
@@ -132,7 +156,7 @@ function buildSceneRow(scene, idx, useChars) {
   const head = document.createElement("div");
   head.className = "planner-scene-head";
   const idLabel = document.createElement("strong");
-  idLabel.textContent = scene.id || "scene " + (idx + 1);
+  idLabel.textContent = "Scene " + (idx + 1);
   head.appendChild(idLabel);
   if (scene.act) {
     const act = document.createElement("span");
@@ -170,7 +194,7 @@ function buildSceneRow(scene, idx, useChars) {
   const secField = document.createElement("label");
   secField.className = "planner-field";
   const secLabel = document.createElement("span");
-  secLabel.textContent = "target seconds";
+  secLabel.textContent = "Length (seconds)";
   secField.appendChild(secLabel);
   const secInput = document.createElement("input");
   secInput.type = "number";
@@ -217,7 +241,7 @@ function buildSceneRow(scene, idx, useChars) {
     const slotsField = document.createElement("div");
     slotsField.className = "planner-field";
     const slotsLabel = document.createElement("span");
-    slotsLabel.textContent = "character_slots (in this shot)";
+    slotsLabel.textContent = "Who's in this scene";
     slotsField.appendChild(slotsLabel);
     const slotsRow = document.createElement("div");
     slotsRow.className = "planner-scene-slots";
@@ -288,7 +312,7 @@ function buildSceneRow(scene, idx, useChars) {
     const dlgField = document.createElement("div");
     dlgField.className = "planner-field";
     const dlgLabel = document.createElement("span");
-    dlgLabel.textContent = "spoken line (voice is the Cast member you pick)";
+    dlgLabel.textContent = "What they say (voice is the Cast member you pick)";
     dlgField.appendChild(dlgLabel);
     const dlgRow = document.createElement("div");
     dlgRow.className = "planner-scene-dialogue";
@@ -342,15 +366,99 @@ function renderSceneEditor(storyboard) {
   list.innerHTML = "";
   if (!storyboard || !Array.isArray(storyboard.scenes) || storyboard.scenes.length === 0) {
     section.hidden = true;
+    renderScenePager(0, { start: 0, end: 0 });
     return;
   }
   backfillTargetSeconds(storyboard);
   const useChars = Array.isArray(storyboard.use_characters) ? storyboard.use_characters : [];
-  storyboard.scenes.forEach((scene, idx) => {
-    list.appendChild(buildSceneRow(scene, idx, useChars));
-  });
+  const total = storyboard.scenes.length;
+  if (storyboard !== scenePageBoard) {
+    scenePageBoard = storyboard;
+    scenePageStart = 0;
+  }
+  const win = scenePageBounds(total, scenePageStart, SCENE_PAGE_SIZE);
+  scenePageStart = win.start;
+  // The list numbers from the window's first scene, so screen readers and the markers read "Scene 51".
+  list.start = win.start + 1;
+  const frag = document.createDocumentFragment();
+  for (let idx = win.start; idx < win.end; idx++) {
+    frag.appendChild(buildSceneRow(storyboard.scenes[idx], idx, useChars));
+  }
+  list.appendChild(frag);
+  renderScenePager(total, win);
   section.hidden = false;
   refreshSceneDirtyBadge();
   setSceneStatus("", "");
 }
 
+/** Move the editor to the window holding scene index `idx` (0-based) and scroll that row into view.
+ *  Returns the row, or null when there is no such scene. */
+function showScene(idx) {
+  const scenes = planState.storyboard && Array.isArray(planState.storyboard.scenes) ? planState.storyboard.scenes : [];
+  const i = Math.floor(Number(idx));
+  if (!Number.isFinite(i) || i < 0 || i >= scenes.length) return null;
+  const win = scenePageBounds(scenes.length, scenePageStart, SCENE_PAGE_SIZE);
+  if (i < win.start || i >= win.end || planState.storyboard !== scenePageBoard) {
+    scenePageBoard = planState.storyboard;
+    scenePageStart = i;
+    renderSceneEditor(planState.storyboard);
+  }
+  const row = document.querySelector('.planner-scene-row[data-idx="' + i + '"]');
+  if (row && typeof row.scrollIntoView === "function") row.scrollIntoView({ block: "start" });
+  return row;
+}
+
+function goToScenePage(start, scrollTo) {
+  scenePageStart = start;
+  renderSceneEditor(planState.storyboard);
+  const target = scrollTo === "top" ? $("#planner-scenes-pager") : null;
+  if (target && typeof target.scrollIntoView === "function") target.scrollIntoView({ block: "start" });
+}
+
+/** The pager above and below the list. Hidden for a board that fits in one window. */
+function renderScenePager(total, win) {
+  for (const id of ["planner-scenes-pager", "planner-scenes-pager-bottom"]) {
+    const nav = document.getElementById(id);
+    if (!nav) continue;
+    nav.innerHTML = "";
+    nav.hidden = total <= SCENE_PAGE_SIZE;
+    if (nav.hidden) continue;
+    const bottom = id.endsWith("-bottom");
+    const prev = document.createElement("button");
+    prev.type = "button";
+    prev.className = "planner-scenes-page-prev";
+    prev.textContent = "previous " + SCENE_PAGE_SIZE;
+    prev.disabled = win.start === 0;
+    prev.addEventListener("click", () => goToScenePage(win.start - SCENE_PAGE_SIZE, bottom ? "top" : null));
+    const label = document.createElement("span");
+    label.className = "planner-scenes-page-label";
+    label.textContent = "Scenes " + (win.start + 1) + " to " + win.end + " of " + total;
+    const next = document.createElement("button");
+    next.type = "button";
+    next.className = "planner-scenes-page-next";
+    next.textContent = "next " + SCENE_PAGE_SIZE;
+    next.disabled = win.end >= total;
+    next.addEventListener("click", () => goToScenePage(win.end, bottom ? "top" : null));
+    nav.appendChild(prev);
+    nav.appendChild(label);
+    nav.appendChild(next);
+    if (!bottom) {
+      const jump = document.createElement("label");
+      jump.className = "planner-scenes-page-jump";
+      jump.appendChild(document.createTextNode("Go to scene "));
+      const input = document.createElement("input");
+      input.type = "number";
+      input.min = "1";
+      input.max = String(total);
+      input.inputMode = "numeric";
+      input.addEventListener("change", () => {
+        const n = Math.floor(Number(input.value));
+        if (Number.isFinite(n) && n >= 1 && n <= total) showScene(n - 1);
+      });
+      jump.appendChild(input);
+      nav.appendChild(jump);
+    }
+  }
+}
+
+window.plannerSceneEditor = { showScene, pageSize: SCENE_PAGE_SIZE, pageBounds: scenePageBounds };

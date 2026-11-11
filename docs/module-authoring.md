@@ -46,7 +46,7 @@ surface internal: the service binding is the boundary, do not punch a hole in it
 | `keyframe` | storyboard -> start keyframes (SDXL on GPU) | **pick one** |
 | `motion.backend` | keyframe (+ motion prompt) -> shot clip (GPU or cloud) | **pick one** per shot |
 | `finish` | post-process a clip: interpolation / lip-sync / upscale / face restore | **chain** |
-| `score` | add audio to a film: music / narration / beat-sync | **chain** |
+| `score` | add audio to a film: music / narration / beat-sync | **one per kind**: declare `score_kind` (`music`, `narration` or `beat`); the host picks one module per kind (vivijure-cf#878) |
 | `dialogue` | per-shot dialogue lines -> speech audio (TTS); becomes the shot's spoken track | **pick one** |
 | `speech` | per-shot dialogue audio -> cleaned/enhanced audio (post-dialogue, pre-finish) | **chain** |
 | `plan.enhance` | expand a storyboard before render (LLM auto-direction) | **chain** |
@@ -132,6 +132,11 @@ these, but `checkManifest` (the conformance harness) FAILS it:
 - a module serving `finish` or `speech` (the `CEILING_DERIVED_HOOKS`) must declare
   `max_invocation_seconds` (core#223): the wall-clock ceiling your module ACTUALLY enforces on one
   invocation, which the core sizes its phase stall ceiling against. Declare only a guard you have.
+  **Above 1800 it stops being a number about your module** (cf#762). The core's effective ceiling is
+  `max(PHASE_HARD_DEADLINE_SECONDS(5400), FINISH_STEP_MAX_ATTEMPTS(3) * declared)`, so a value past
+  `5400/3 = 1800` moves a GLOBAL per-phase deadline for every film whose chain can REACH your module,
+  including the films that never invoke it. Crossing it is a registered decision
+  (`modules/_shared/finish-ceiling.ts`), gated by `tests/finish-ceiling-crossover-cf762.test.ts`.
 
 **Optional, additive manifest fields** (no `MODULE_API` bump; see the doc comments on
 `ModuleManifest` in `@skyphusion-labs/vivijure-core/modules/types`): `cancelable`, `ui.locality`
@@ -288,7 +293,7 @@ Five rules that are not obvious from the code:
 - **Only `/run`, `/status/<id>`, `/cancel/<id>` and `/health` exist on the proxy.** Anything else is
   a 404 there, deliberately: `purge-queue` wipes an endpoint's queue for every tenant on it, and
   RunPod's per-endpoint scoping has no operation axis that could refuse it.
-- **The RunPod MANAGEMENT API (`rest.runpod.io`) is not proxied and never will be.** Endpoint
+- **The RunPod MANAGEMENT API (`api.runpod.io/v2`; REST v1 `rest.runpod.io` retires 2026-11-15) is not proxied and never will be.** Endpoint
   capacity is an operator property. If your module calls something like
   `reconcileRunpodEndpointWorkersMax`, gate it on `!route.proxied`.
 
@@ -368,6 +373,41 @@ studio-releases/<tag>/modules/<module>/worker.js
 The bundle is **not** built by a parallel bundler: it comes from `wrangler deploy --dry-run --outdir`
 against the module's own `wrangler.toml`, so the artifact is the deploy shape and cannot drift from
 it. The plane then fetches by `(tag, module)` and uploads into the tenant dispatch namespace.
+
+#### If your module declares a binding the PLANE has to emit (cf#942)
+
+The manifest carries a `bindings_required` object, read out of your own `wrangler.toml` by
+`build-module-release.ts`. Today it holds `workflows`, one entry per `[[workflows]]` block:
+
+```json
+"bindings_required": {
+  "workflows": [
+    { "binding": "DIALOGUE_WORKFLOW", "class_name": "DialogueGenWorkflow", "name": "dialogue-gen" }
+  ]
+}
+```
+
+**You declare it once, in your wrangler.toml, and nothing else needs telling.** The split is by who
+can possibly know each part: your module knows WHAT it needs (that it has a Workflow, its entrypoint
+class, and a logical name), and only the plane knows WHO it is for, so the plane composes the
+account-scoped resource name from the tenant. A triple typed into the plane's catalog would be a
+hand-maintained list that goes stale the first time you rename a class, and this estate has lost two
+of those in a month.
+
+Three things follow that are worth knowing before you add a `[[workflows]]` block:
+
+- **The field is always present, even empty.** `"workflows": []` means "this module declares none".
+  A manifest with NO `bindings_required` at all means the artifact predates this contract and cannot
+  say -- a different answer, and the only one that is a reason to refuse.
+- **A partial block is refused at BUILD.** Missing `class_name`, `binding` or `name` fails the
+  release build rather than publishing a requirement the plane cannot act on.
+- **A declared Workflow does not make the door work by itself.** Measured against the live API
+  (vivijure-control-plane cp#526): a WfP user Worker accepts a `workflow` binding and reads it back,
+  the upload does NOT create the account-scoped Workflow, and a script exporting a
+  `WorkflowEntrypoint` uploads perfectly happily with no binding at all. So a catalog row added
+  before the plane can emit AND provision gives a tenant a door that installs, passes `/ready` and
+  throws at the first invoke, with the keyframe pass already paid for. Publish the bundle; let the
+  row wait.
 
 **Which modules take this path is `scripts/tenant-release-modules.txt`, and that is the whole
 answer** (cf#394). Adding a module to it publishes a bundle; it does NOT provision anything, because
@@ -516,3 +556,12 @@ applies -- run it under `pywrangler dev` and a Python module passes
 `MODULE_URL=http://localhost:8787 npm run conformance` exactly like a TS one. This on-ramp was proven end-to-end by the now-retired `plan-enhance-py`
 proof module (the deterministic Python sibling of the TS `plan-enhance`); see it in the git
 history if you need a full worked example.
+
+## Saying why a step did not run
+
+A finish, speech, master or film.finish module that passes its input through because it could not run
+sets `degraded` and `failure` (`{ kind, code, detail? }`, additive). `transient` holds the film and retries
+the step. `permanent` names the step in `finish_incomplete` and the film moves on. Use
+`modules/_shared/finish-failure.ts`, and use code `capacity` only for a door with no free slot, since it is
+the one code held for hours. A passthrough with no `failure` counts as permanent. A CSAM refusal is never
+expressed this way: it stays a hard failure. See `docs/finish-capacity.md`.

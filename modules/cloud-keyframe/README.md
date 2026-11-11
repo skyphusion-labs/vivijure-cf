@@ -31,8 +31,9 @@ flowchart LR
 
 The seam is the keyframe key: this module reads each shot's prompt + character portraits from the
 bundle, generates a reference-conditioned keyframe, writes the PNG to the shared `vivijure` bucket at
-`renders/<project>/keyframes/<shot>.png`, and reports the key. The core presigns it so
-**motion.backend** can pull the frame and animate it.
+`renders/<project>/keyframes/<job>/<shot>.png`, and reports the key. The core presigns it so
+**motion.backend** can pull the frame and animate it. The job segment keeps concurrent renders of one
+project from overwriting each other's stills (cf#1059).
 
 **Aspect is pinned in two halves**, because the keyframe aspect drives the downstream i2v clip aspect
 (a square keyframe forces square clips the assembler then pillarboxes): (1) the model is asked for the
@@ -60,6 +61,16 @@ A consistency **probe** across 4 different shots (varied pose / setting / framin
 one character's face, hair, freckles, and wardrobe on **both** models; nano-banana-pro is the quality
 leader, FLUX-2 klein-9b the cost/speed leader.
 
+## Flip-safe character design
+
+Reference images hold a character's overall look. They do not hold left and right.
+
+- **A one-sided mark is not reliable on this route.** An eye patch or a single armband can land on either side from shot to shot.
+- **Use marks that read the same when mirrored.** Use a centered mark, or a matched pair: goggles centered on the forehead, or an armband on each arm. This removes the wrong-side failure.
+- **Make marks bold.** A fine line such as a thin scar can drop out, mostly when the face turns.
+
+This does not promise drift-free output. A shot can still add a prop, draw an extra hand, or move a mark, so check every still before you animate it.
+
 ## Configuration
 
 Config options (the planner-projected `config_schema`; the core clamps each against it):
@@ -67,9 +78,10 @@ Config options (the planner-projected `config_schema`; the core clamps each agai
 | Option | Type | Default | What it does |
 | --- | --- | --- | --- |
 | `model` | enum | `@cf/black-forest-labs/flux-2-klein-9b` | image model (FLUX-2 klein-9b / nano-banana-pro / klein-4b / dev) |
-| `width` | int (512..1536) | `1344` | keyframe width (16:9 so the whole chain stays 16:9) |
+| `width` | int (512..1536) | `1344` | keyframe width. 1344x768 is 1.75 (7:4), NOT 16:9 (1.7778); i2v doors conform the clip to the keyframe, so the chain runs at 1.75. See cf#945. |
 | `height` | int (512..1536) | `768` | keyframe height |
 | `refs_per_slot` | int (1..4) | `1` | reference portraits per character (more = stronger identity, larger payload) |
+| `style` | enum `photoreal` / `anime` | `photoreal` | still look. Anime adds an illustration lead to each prompt. |
 
 To self-host (service `vivijure-module-cloud-keyframe`, bound into the core as `MODULE_CLOUD_KEYFRAME`):
 
@@ -88,9 +100,11 @@ To self-host (service `vivijure-module-cloud-keyframe`, bound into the core as `
   ignored (this module trains no LoRA; identity is the portraits).
 - **Output** (`KeyframeOutput`): `project`, `keyframes[]` (`shot_id` + `keyframe_key`). No
   `trained_loras` (none trained).
-- **Async**: `POST /invoke` reads the bundle, stages refs, plans the shots, and returns a poll token;
-  `POST /poll` renders one shot per cycle (gen -> normalize -> store) and returns the keys on
-  completion.
+- **Async**: `POST /invoke` reads the bundle, stages refs, plans the shots, starts a Workflow, and
+  returns a poll token. The Workflow draws one shot per step (gen -> normalize -> store), so drawing
+  does not depend on a poll. `POST /poll` reads progress from R2 and returns the keys on completion.
+  `POST /cancel` stops the Workflow. Without the `KEYFRAME_WORKFLOW` binding, `/poll` draws one shot
+  per call.
 - **R2 transport**: this worker reads the bundle and writes the keyframes itself (it holds the
   `R2_RENDERS` binding), unlike the GPU `keyframe` module whose backend owns R2.
 

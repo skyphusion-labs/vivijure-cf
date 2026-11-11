@@ -38,9 +38,18 @@ model (`@cf/meta/llama-3.3-70b-instruct-fp8-fast`). Swapping an expensive cloud 
 local one without touching the hook is the Vivijure modularity thesis in one module.
 
 **Self-host**: service `vivijure-module-plan-enhance`, bound into the core as `MODULE_PLANENHANCE`.
-Binding: `AI` (Workers AI runner + AI Gateway accessor). Secrets (optional; both required to use
-Opus): `GATEWAY_ID`, `CF_AIG_TOKEN`. Optional var `ENHANCE_MODEL` overrides the cloud model
-(default `claude-opus-4-8`). See `wrangler.toml`.
+Binding: `AI` (Workers AI runner + AI Gateway accessor). Secrets (optional): `GATEWAY_ID`,
+`CF_AIG_TOKEN`. Optional var `ENHANCE_MODEL` overrides the cloud model (default `claude-opus-4-8`).
+See `wrangler.toml`.
+
+**Two ways to reach Opus.** With `GATEWAY_ID` and `CF_AIG_TOKEN`, the module calls the gateway's
+Anthropic endpoint with that token, as it always has. With `GATEWAY_ID` and the plain var
+`ENHANCE_OPUS_BINDING = "1"` and no token, it calls `env.AI.run` with the AI Gateway catalog id
+(`anthropic/claude-opus-4.8`; the catalog spells versions with a dot) and the gateway id. The AI binding
+is already authenticated, so no token is needed, and Unified Billing bills the account the Worker runs
+on. The token wins when both are set. The opt-in exists so that a deployment with a gateway and no
+token keeps the free local model it has today. `GET /ready` reports the choice as `opus`: `token`,
+`binding` or `off`.
 
 ## Contract
 
@@ -50,8 +59,17 @@ Opus): `GATEWAY_ID`, `CF_AIG_TOKEN`. Optional var `ENHANCE_MODEL` overrides the 
 
 ## Soft-degrade
 
-A failure is **data**, never an exception. No model available, or an unparseable reply, returns the
-storyboard passed through unchanged with an honest note rather than failing pre-production.
+A failure is **data**, never an exception. On the director pass, no model available, or an
+unparseable or truncated reply, returns the storyboard passed through unchanged with an honest note
+rather than failing pre-production. The `plan` and `refine` modes have no plan to pass through, so
+the same miss returns `ok: false` with the true reason.
+
+## Output budget
+
+`plan`, `refine` and the director pass send `max_tokens` 21000; `chat` sends 4096. Thinking tokens
+count against it. The module does not stream, and 21000 is the largest round value under the
+non-streaming ceiling the Anthropic SDK enforces (21333). A reply cut off at the limit is reported
+with `stop_reason max_tokens`, never parsed. `plan` and `refine` skip the AI Gateway cache.
 
 ## License
 

@@ -1,0 +1,43 @@
+# Isolated video-finish Cloudflare Container door. Not the studio Worker.
+#
+# Deployed on a `v*` tag by the deploy-video-finish-door job in ci.yml, on a GitHub-hosted runner. Any host with
+# a running Docker works, an arm64 Mac included: wrangler builds this image for linux/amd64 whatever
+# the host is, and refuses any other platform.
+
+name = "vivijure-video-finish"
+main = "src/index.ts"
+compatibility_date = "2026-06-01"
+compatibility_flags = ["nodejs_compat"]
+workers_dev = true
+preview_urls = false
+
+# Already this Worker's custom domain (AAAA 100::, proxied). The next
+# tag deploy owns the attachment. Nothing here deploys on a pull request.
+[[routes]]
+pattern = "video-finish.skyphusion.org"
+custom_domain = true
+
+# Door bearer. Value is a wrangler secret, never a [vars] entry.
+[secrets]
+required = ["LOCAL_FINISH_TOKEN"]
+
+[[containers]]
+class_name = "VideoFinishDoor"
+image = "../Dockerfile"
+image_build_context = ".."
+# The same size as the studio door, chosen for the same reason: an encode has no swap to fall back on.
+# One instance per film (src/routing.ts). 20 matches the slots the finish queue hands out, and the
+# account limits are far above it (6 TiB memory, 1,500 vCPU, 30 TB disk), with the studio door's 20
+# instances on top. COST: about USD 0.03 per film with cards, for 120s of encoding plus the 10 minute
+# idle timer: memory 12 GiB x 720s = 0.0216, disk 20 GB x 720s = 0.0010, CPU at most 4 x 120s = 0.0096,
+# at the published rates. Idle time is most of it, and it is paid per film now.
+instance_type = "standard-4"
+max_instances = 20
+
+[[durable_objects.bindings]]
+name = "FINISH"
+class_name = "VideoFinishDoor"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["VideoFinishDoor"]

@@ -60,15 +60,24 @@ export const SPEND_RETRY_AFTER_SECONDS = 60;
 //
 // cf#256: the PLANNER entry points are spend routes in exactly the sense this list means, and were
 // missing. Every route below that dispatches the plan.enhance hook runs an operator-billed frontier
-// model (the module model enum defaults to Opus, 4096 max_tokens per call, keyless on Unified
+// model (the module model enum defaults to Opus, up to 21000 max_tokens per call, keyless on Unified
 // Billing) with a caller-supplied system_message + message. Unmetered, that is a general-purpose AI
 // proxy for anyone holding a studio token. The file claimed this surface was auditable in one
 // place; until now that claim was false.
 const SPEND_PATTERNS: RegExp[] = [
+  // Runs named finish steps of an existing film again, which can call a GPU door, so it is metered like a
+  // render. Any credit or suspension refusal comes from the door the step calls, as it does for a render.
+  /^\/api\/render\/film\/[^/]+\/finish-retry$/,
   // GPU submits: render / animate / train / audio generation.
   /^\/api\/storyboard\/render$/,
   /^\/api\/render\/clips$/,
   /^\/api\/render\/film$/,
+  // A long film's parts. A part also passes these checks itself at submit, because a poll or the cron starts it.
+  /^\/api\/film$/,
+  /^\/api\/film\/[^/]+\/parts\/[^/]+\/retry$/,
+  /^\/api\/film\/[^/]+\/resume$/,
+  /^\/api\/film\/[^/]+\/shots\/[^/]+\/retake$/,
+  /^\/api\/film\/[^/]+\/ceiling$/,
 
   /^\/api\/storyboard\/render-from-keyframes$/,
   /^\/api\/storyboard\/renders\/[^/]+\/animate-cloud$/,
@@ -94,8 +103,42 @@ const SPEND_PATTERNS: RegExp[] = [
   /^\/api\/cast\/[^/]+\/train-lora$/,
   /^\/api\/cast\/[^/]+\/train-wan-lora$/,
   /^\/api\/cast\/[^/]+\/generate-refs$/,
+  // fc#2250: the cast talking-voice sample is the FIFTH paid submit to reach this list late, and
+  // the first outside the render-child family. startCastVoiceSample (src/cast-voice-sample.ts)
+  // invokes the `motion.backend` hook directly -- Seedance by default, and the caller names any
+  // installed talking door (Veo, Kling, Wan, ...) via `motion_backend` -- so one request is one
+  // paid image-to-video job of 5 or 10 seconds. Unmetered, a consumer token loops
+  // `{"seconds":10}` for unlimited paid video with no rate limiter, no daily ceiling and no
+  // storage quota: the denial-of-wallet case this whole file exists to bound.
+  //
+  // FAIL-CLOSED, DELIBERATELY, WITH NO isSafetyRoute CARVE-OUT. Adding a route here subjects it to
+  // the default posture, so an UNBOUND or throwing limiter now answers this route 503 instead of
+  // running it unmetered. That is the correct trade and not an accident of the default:
+  //
+  //   * It is a MONEY route and nothing else, exactly like train-lora and generate-refs two lines
+  //     up, which have always failed closed. Refusing it costs the filmmaker a cast preview they
+  //     can retry once the binding is fixed; allowing it costs an unbounded bill.
+  //   * The GHSA-wmjq-7647-h45x carve-out below is not a general "important route" exemption. It
+  //     exists because refusing an ABUSE REPORT leaves the reported content in place, which trades
+  //     a cost control against a SAFETY control. Nothing about hearing a voice sample is a safety
+  //     control, so the reason that justifies the carve-out is absent here and the carve-out with
+  //     it. SAFETY_PATTERNS is deliberately not widened.
+  //   * A healthy default deploy is unaffected: wrangler.toml.example binds SPEND_RATE_LIMITER, and
+  //     fail-closed bites only a broken limiter, never a working one.
+  //
+  // Anchored to the bare route on purpose. /voice-sample/keep only re-points the cast row at the
+  // clip this already-metered run produced, and /voice-sample/attach stores bytes the filmmaker
+  // brought (the STORAGE ceiling meters that, not this list). Both are asserted NOT metered in
+  // tests/spend-surface-cast-family.test.ts, which derives the cast-child population from the
+  // router rather than transcribing it, because a transcribed list is what drifted here.
+  /^\/api\/cast\/[^/]+\/voice-sample$/,
+  // One Aura-1 line (cf#982). Cheap next to a clip, still a paid model call.
+  /^\/api\/cast\/[^/]+\/voice-line$/,
   /^\/api\/storyboard\/score-bed$/,
   /^\/api\/storyboard\/music-generate$/,
+  // The beat read writes <audioKey>.beats.json and runs the analyze module. The film
+  // doors refuse a song that has no marker, so this route is the write they depend on.
+  /^\/api\/audio\/analyze$/,
   // Paid-AI submits (cf#256): the four POST routes that dispatch the plan.enhance hook. /api/chat
   // covers BOTH of its branches -- the text planner (chatComplete) and the image branch
   // (chatImageViaModule), which is paid image generation and belongs here just as much.
@@ -192,9 +235,11 @@ async function bumpDailyCount(db: SpendCounterDb, day: string): Promise<number> 
 
 // Enforce the spend limit for a request already known to be a spend route: the per-IP rate limiter
 // first, then the optional daily ceiling. A SAFETY route (isSafetyRoute) is throttled by the limiter
-// but is never denied by a broken check and never sees the daily ceiling. Default posture fails OPEN on a broken check (warns);
-// SPEND_LIMIT_FAIL_CLOSED="true" denies 503 instead. An explicit over-limit / over-ceiling verdict
-// is always a 429.
+// but is never denied by a broken check and never sees the daily ceiling. Default posture fails
+// CLOSED on a broken check (unbound binding, or `.limit()` throws): the request is denied 503, per
+// the header above. Only SPEND_LIMIT_FAIL_CLOSED="false" opts out to the allow-and-warn posture;
+// any other value, including unset, keeps the fail-closed default. An explicit over-limit /
+// over-ceiling verdict is always a 429.
 export async function enforceSpendLimit(
   request: Request,
   env: SpendLimitEnv,

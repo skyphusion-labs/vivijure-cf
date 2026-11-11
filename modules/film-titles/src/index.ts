@@ -13,7 +13,8 @@
 // R2 or holds S3 creds.
 //
 // Soft degrade: no title and no credits -> pass the film through unchanged (noop:no-cards). A
-// container failure -> passthrough the original film tagged "passthrough:container-failed", degraded.
+// container failure -> passthrough the original film tagged "passthrough:container-http-error" or
+// "passthrough:container-refused", degraded (cf#909).
 // A film.finish module must never drop the film it was handed.
 
 import {
@@ -43,6 +44,8 @@ function vfCall(env: Env) {
     return fetch(vfBase(env) + path, init);
   };
 }
+import { FAILURE_BAD_RESPONSE, FAILURE_NOT_CONFIGURED, FAILURE_REFUSED, FAILURE_UNREACHABLE, failureFromStatus, withFailure } from "../../_shared/finish-failure";
+import { finishAffinity, withAffinity } from "../../_shared/finish-affinity";
 import {
   classifyVideoFinish404, nextNotFoundStreak,
 } from "../../_shared/video-finish-404";
@@ -57,7 +60,7 @@ const ROUTE = "film-titles";
 
 const MANIFEST: ModuleManifest = {
   name: "film-titles",
-  version: "0.2.1",
+  version: "0.2.2",
   api: MODULE_API,
   hooks: ["film.finish"],
   provides: [{ id: "film-titles", label: "Title + credit cards on the finished film" }],
@@ -91,10 +94,10 @@ async function submitAsync(
   env: Env,
   spec: Record<string, unknown>,
   corr: VpcCorr = {},
-): Promise<string | null> {
+): Promise<string | "capacity" | null> {
   const timed = await timedVpcFetch(
     vfCall(env),
-    { method: "POST", headers: await mediaFinishHeaders(env.MEDIA_FINISH_TOKEN), body: JSON.stringify(spec) },
+    { method: "POST", headers: withAffinity(await mediaFinishHeaders(env.MEDIA_FINISH_TOKEN), finishAffinity(corr)), body: JSON.stringify(spec) },
     {
       module: MANIFEST.name,
       service: "video-finish",
@@ -107,6 +110,9 @@ async function submitAsync(
     },
   );
   if (timed.err || !timed.resp) return null;
+  // No slot: tell the core, so the film waits. The sync route is the same container and would only
+  // queue a second encode behind a refusal.
+  if (timed.resp.status === 429) return "capacity";
   if (timed.resp.status !== 202) return null;
   try {
     const body = (await timed.resp.json()) as { ok?: boolean; jobId?: string };
@@ -124,7 +130,7 @@ async function invokeSync(
 ): Promise<InvokeResponse<FilmFinishOutput>> {
   const timed = await timedVpcFetch(
     vfCall(env),
-    { method: "POST", headers: await mediaFinishHeaders(env.MEDIA_FINISH_TOKEN), body: JSON.stringify(spec) },
+    { method: "POST", headers: withAffinity(await mediaFinishHeaders(env.MEDIA_FINISH_TOKEN), finishAffinity(corr)), body: JSON.stringify(spec) },
     {
       module: MANIFEST.name,
       service: "video-finish",
@@ -136,16 +142,18 @@ async function invokeSync(
       contextJobId: corr.contextJobId,
     },
   );
-  if (timed.err || !timed.resp) return passthrough(input, "passthrough:container-unreachable", true);
+  if (timed.err || !timed.resp) return withFailure(passthrough(input, "passthrough:container-unreachable", true), FAILURE_UNREACHABLE);
   const resp = timed.resp;
-  if (!resp.ok) return passthrough(input, "passthrough:container-failed", true);
+  // cf#909: an HTTP refusal and a handler that answered ok:false are two failures with two tags. The
+  // first is the transport or the route; the second is the handler inside the container.
+  if (!resp.ok) return withFailure(passthrough(input, "passthrough:container-http-error", true), failureFromStatus(resp.status));
   let body: { ok?: boolean; key?: string; durationSeconds?: number };
   try {
     body = (await resp.json()) as typeof body;
   } catch {
-    return passthrough(input, "passthrough:container-bad-response", true);
+    return withFailure(passthrough(input, "passthrough:container-bad-response", true), FAILURE_BAD_RESPONSE);
   }
-  if (!body.ok) return passthrough(input, "passthrough:container-failed", true);
+  if (!body.ok) return withFailure(passthrough(input, "passthrough:container-refused", true), FAILURE_REFUSED);
   // Report prepend_seconds only when an opening TITLE card was actually rendered (it shifts the final
   // film`s timeline); credits are appended at the end and never shift cues (#663). titleSeconds is 0 when
   // there is no title card, so this passes through as no prepend.
@@ -165,10 +173,10 @@ async function invokeSync(
 async function invoke(env: Env, req: InvokeRequest<FilmFinishInput>): Promise<InvokeResponse<FilmFinishOutput>> {
   const input = req.input;
   if (!input || !input.film_key || !input.video_url || !input.output_url || !input.output_key) {
-    return { ok: false, error: "film.finish: input needs film_key, video_url, output_url, output_key" };
+    return { ok: false, error: "film.finish: input needs film_key, video_url, output_url, output_key", reason: "bad-input" };
   }
   if (!hasCards(input)) return passthrough(input, "noop:no-cards");
-  if (!vfBase(env)) return passthrough(input, "passthrough:no-video-finish-url", true);
+  if (!vfBase(env)) return withFailure(passthrough(input, "passthrough:no-video-finish-url", true), FAILURE_NOT_CONFIGURED);
 
   const cfg = coerceConfig(req.config);
   const spec = buildContainerSpec(input, cfg);
@@ -182,8 +190,9 @@ async function invoke(env: Env, req: InvokeRequest<FilmFinishInput>): Promise<In
   // container (back-compat). A sync fallback that itself fails soft-degrades (#190), never drops the film.
   const titleSeconds = hasTitleCard(input) ? cfg.title_seconds : 0; // #663: shifts the final timeline
   const jobId = await submitAsync(env, spec, corr);
+  if (jobId === "capacity") return withFailure(passthrough(input, "passthrough:container-capacity", true), failureFromStatus(429));
   if (jobId) {
-    return { ok: true, pending: true, poll: encodePoll({ jobId, filmKey: input.film_key, outputKey: input.output_key, submittedAt: Date.now(), notFoundStreak: 0, titleSeconds }) };
+    return { ok: true, pending: true, poll: encodePoll({ jobId, affinity: finishAffinity(corr), filmKey: input.film_key, outputKey: input.output_key, submittedAt: Date.now(), notFoundStreak: 0, titleSeconds }) };
   }
   return invokeSync(env, input, spec, titleSeconds, corr);
 }
@@ -197,7 +206,7 @@ async function poll(env: Env, body: PollRequest): Promise<PollResponse<FilmFinis
   // Intermediate pending polls stay silent; only terminal outcomes emit vpc.call with job wall-clock.
   const timed = await timedVpcFetch(
     vfCall(env),
-    { headers: await mediaFinishHeaders(env.MEDIA_FINISH_TOKEN) },
+    { headers: withAffinity(await mediaFinishHeaders(env.MEDIA_FINISH_TOKEN), st.affinity) },
     {
       module: MANIFEST.name,
       service: "video-finish",
@@ -311,10 +320,10 @@ export default {
       try {
         req = (await request.json()) as InvokeRequest<FilmFinishInput>;
       } catch {
-        return json({ ok: false, error: "invalid JSON body" } as InvokeResponse);
+        return json({ ok: false, error: "invalid JSON body", reason: "bad-input" } as InvokeResponse);
       }
       if (req.hook !== "film.finish") {
-        return json({ ok: false, error: "unsupported hook " + String(req.hook) } as InvokeResponse);
+        return json({ ok: false, error: "unsupported hook " + String(req.hook), reason: "unsupported" } as InvokeResponse);
       }
       return json(await invoke(env, req));
     }

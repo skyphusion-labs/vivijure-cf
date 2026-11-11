@@ -15,17 +15,21 @@
 // input clip through unchanged, but RECORDED) is preferred over a hard ok:false unless the job cannot
 // be submitted at all.
 
+import { FAILURE_ENDPOINT_ABSENT, FAILURE_UNREACHABLE, failureFromStatus, withFailure } from "../../_shared/finish-failure";
+import { runpodEndpointAbsent } from "../../_shared/runpod-endpoint-absent";
 import {
-  MODULE_API,
-  type ModuleManifest,
   type InvokeRequest,
   type InvokeResponse,
   type PollRequest,
+  type CancelRequest,
+  type CancelResponse,
   type PollResponse,
   type FinishInput,
   type FinishOutput,
 } from "./contract";
+import { MANIFEST } from "./manifest";
 import {
+  alreadyAtTarget,
   coerceConfig, buildRunPodBody, encodePoll, decodePoll, parseBackendOutput, finishedKey, appliedTags,
   passthroughOutput,
   type PollState,
@@ -61,31 +65,6 @@ interface Env {
   /** Comma-separated HTTPS origins. Empty = RunPod path. First URL is the legacy door. */
   FINISH_UPSCALE_DOORS?: string;
 }
-
-// Exported (cf#537) so a test can run conformance against the SHIPPED manifest rather than
-// against a transcribed copy in the test file. finish-lipsync already exported its own.
-export const MANIFEST: ModuleManifest = {
-  name: "finish-upscale",
-  version: "0.2.1",
-  api: MODULE_API,
-  hooks: ["finish"],
-  max_invocation_seconds: 900,
-  provides: [
-    { id: "upscale", label: "Upscale resolution (Real-ESRGAN)" },
-  ],
-  config_schema: {
-    scale: { type: "int",  default: 2, min: 2, max: 4, label: "upscale factor (explicit; omit to send delivery height)", enum_labels: { "2": "2x", "4": "4x" } },
-    model: { type: "enum", values: ["realesr-animevideov3", "RealESRGAN_x4plus"], default: "realesr-animevideov3", label: "model" },
-  },
-  ui: { section: "finish", icon: "expand", order: 20 },
-  // cf#537: EXPLICIT, behaviour unchanged. See finish-rife for why silence is not an option here.
-  participation: "default",
-  // Declared artifact conventions (S6): the Real-ESRGAN container appends _up to the input clip key.
-  finish_artifacts: {
-    output_key: { kind: "append_suffix", suffix: "_up" },
-    applied: [{ tag: "upscale:{scale|2}x" }],
-  },
-};
 
 function json(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
@@ -265,6 +244,21 @@ function passthrough(
  *  through then, and inventing a key would be worse than the error it replaced -- the caller keeps
  *  the terminal error and its message says which case it is.
  */
+/** What the door's wall-clock guard says when a clip ran out of its budget or was projected to (handler.py `reason`,
+ *  `project`, `_bounded_probe`). */
+const GUARD_EXPIRY = /exceeded|projected|expired|wall-clock/i;
+
+/** A door that could not upscale a clip, so the shot would stand out in the film. Most causes pass, so `transient`
+ *  makes the core hold and re-dispatch the step, and only when that runs out does the passthrough stand. A healthy try
+ *  is cheap: 40 clips cost $0.28 on BLACKWELL_96 at $3.49/hr, under a cent each. A guard expiry is the exception. Each
+ *  try runs up to 570 s, about $0.55, and a clip too heavy for the budget usually fails them all, so it goes straight
+ *  to the film's report as a limit, for a person to retry. */
+function softDegradeToRetry(st: PollState, reason: string): PollResponse<FinishOutput> | null {
+  const passed = pollPassthrough(st, BACKEND_SOFT_DEGRADE, reason || undefined);
+  if (!passed || GUARD_EXPIRY.test(reason)) return passed;
+  return withFailure(passed, { kind: "transient", code: "soft_degrade", detail: reason });
+}
+
 function pollPassthrough(st: PollState, reason: string, detail?: string): PollResponse<FinishOutput> | null {
   if (!st.clipKey) return null;
   console.warn(`finish-upscale: poll passthrough (${reason}) shot=${st.shotId}`);
@@ -281,8 +275,10 @@ function pollPassthrough(st: PollState, reason: string, detail?: string): PollRe
 async function submit(env: Env, req: InvokeRequest<FinishInput>): Promise<InvokeResponse<FinishOutput>> {
   const input = req.input;
   if (!input?.shot_id || !input?.clip_key) {
-    return { ok: false, error: "finish-upscale: input needs shot_id and clip_key" };
+    return { ok: false, error: "finish-upscale: input needs shot_id and clip_key", reason: "bad-input" };
   }
+  // A clip already at the target has nothing to gain, so it is not sent to a paid door.
+  if (alreadyAtTarget(input, coerceConfig(req.config))) return passthrough(input, "already-at-target", { degraded: false });
 
   // cf#480: our own always-on iron first, and ONLY on bound-ness. RunPod is not consulted, not
   // probed and not billed when the binding is present -- there is no failover, by design, because
@@ -312,7 +308,7 @@ async function submit(env: Env, req: InvokeRequest<FinishInput>): Promise<Invoke
 
   const workersMax = Number(env.RUNPOD_WORKERS_MAX);
   // cf#394: NOT on the proxied route. This reconcile targets the RunPod MANAGEMENT API
-  // (rest.runpod.io/v1), which the plane proxy does not carry, and endpoint capacity on a
+  // (api.runpod.io/v2), which the plane proxy does not carry, and endpoint capacity on a
   // shared pool is an operator property a tenant must neither set nor need. Skipped, not
   // failed: the render is unaffected and the pool is sized by whoever owns it.
   if (!route.proxied && Number.isFinite(workersMax) && workersMax > 0) {
@@ -348,7 +344,14 @@ async function submitVia(
       headers: { "content-type": "application/json" },
       body: JSON.stringify(buildRunPodBody(input, cfg, req.context.project)),
     });
-    if (!r.ok) return passthrough(input, where + "-run-failed", { detail: "HTTP " + r.status });
+    if (!r.ok) {
+      // cf#757: a bound endpoint that does not exist gets its own degrade reason and failure code, so it can be
+      // told apart from a bad request without reading prose. RunPod arm only: the measured body is RunPod's.
+      if (!t.door && r.status === 404 && runpodEndpointAbsent(r.status, await r.text().catch(() => ""))) {
+        return withFailure(passthrough(input, "runpod-endpoint-absent", { detail: "HTTP 404: RunPod endpoint not found, this door has no backend" }), FAILURE_ENDPOINT_ABSENT);
+      }
+      return withFailure(passthrough(input, where + "-run-failed", { detail: "HTTP " + r.status }), failureFromStatus(r.status));
+    }
     const jobId = ((await r.json()) as { id?: string }).id;
     if (!jobId) return passthrough(input, "no-jobid");
     // cf#279: neither service can enumerate jobs, so an id not recorded at submit is unreachable
@@ -371,7 +374,7 @@ async function submitVia(
       jobId,  // cf#289/#296: neither service can enumerate jobs, so a caller that is not handed the id at submit can never reach it.
     };
   } catch (e) {
-    return passthrough(input, "exception", { detail: (e as Error).message });
+    return withFailure(passthrough(input, "exception", { detail: (e as Error).message }), FAILURE_UNREACHABLE);
   }
 }
 
@@ -482,7 +485,7 @@ async function poll(env: Env, body: PollRequest): Promise<PollResponse<FinishOut
     // so it falls through to the pre-cf#594 terminal path below, row and message unchanged.
     const degrade = softDegradeInFailedEnvelope(s);
     if (degrade !== null) {
-      const passed = pollPassthrough(st, BACKEND_SOFT_DEGRADE, degrade || undefined);
+      const passed = softDegradeToRetry(st, degrade);
       if (passed) {
         await recordRunpodJob(env.TELEMETRY_DB, { jobId: st.jobId, module: MANIFEST.name, outcome: "completed", submittedAtMs: st.submittedAt, ...timingFromStatus(s) });
         return passed;
@@ -530,7 +533,7 @@ async function poll(env: Env, body: PollRequest): Promise<PollResponse<FinishOut
   // falls through to the pre-cf#594 terminal path below.
   const softDegrade = softDegradeInCompletedOutput(s.output);
   if (softDegrade !== null) {
-    const passed = pollPassthrough(st, BACKEND_SOFT_DEGRADE, softDegrade || undefined);
+    const passed = softDegradeToRetry(st, softDegrade);
     if (passed) return passed;
   }
   const csam = csamRefusalInCompletedOutput(s.output);
@@ -563,6 +566,39 @@ async function poll(env: Env, body: PollRequest): Promise<PollResponse<FinishOut
       applied: appliedTags(out),
     },
   };
+}
+
+// Stop the running job this token names (cf#1109). A 200 and a 404 both mean it is not running on our
+// account, so both are ok:true. Anything else, including a plane refusal, is ok:false, so the core logs
+// an orphan rather than assuming it stopped. Failures are data, never thrown.
+async function cancel(env: Env, body: CancelRequest): Promise<CancelResponse> {
+  const st = decodePoll(body.poll);
+  if (!st) return { ok: false, error: "finish-upscale: bad poll token" };
+  // The token decides the transport, as in poll: a door job id means nothing to RunPod, and the reverse.
+  let t: Transport;
+  let route: RunpodRoute | null = null;
+  if (tokenTookDoor(st.door)) {
+    const door = resolveDoor(await doorsFor(env), st.door);
+    if (!door) return { ok: false, error: "finish-upscale: door " + st.door + " is not bound; cannot cancel job " + st.jobId };
+    const problem = doorProblem(door);
+    if (problem) return { ok: false, error: "finish-upscale: " + problem };
+    t = doorTransport(door);
+  } else {
+    const creds = await runpodCreds(env);
+    const credProblem = credentialProblem(creds.route, creds.endpointId);
+    if (credProblem) return { ok: false, error: "finish-upscale: " + credProblem };
+    route = creds.route;
+    t = runpodTransport(creds.route, creds.endpointId);
+  }
+  try {
+    const resp = await t.call("/cancel/" + st.jobId, { method: "POST" });
+    const refusal = route ? planeRefusalReason(route, resp) : null;
+    if (refusal) return { ok: false, error: planeRefusalError(MANIFEST.name, refusal) };
+    if (resp.ok || resp.status === 404) return { ok: true };
+    return { ok: false, error: "finish-upscale /cancel -> " + resp.status };
+  } catch (e) {
+    return { ok: false, error: "finish-upscale cancel failed: " + (e as Error).message };
+  }
 }
 
 export default {
@@ -623,9 +659,17 @@ export default {
     if (request.method === "POST" && url.pathname === "/invoke") {
       let req: InvokeRequest<FinishInput>;
       try { req = await request.json() as InvokeRequest<FinishInput>; }
-      catch { return json({ ok: false, error: "invalid JSON body" } as InvokeResponse); }
-      if (req.hook !== "finish") return json({ ok: false, error: "unsupported hook " + String(req.hook) } as InvokeResponse);
+      catch { return json({ ok: false, error: "invalid JSON body", reason: "bad-input" } as InvokeResponse); }
+      if (req.hook !== "finish") return json({ ok: false, error: "unsupported hook " + String(req.hook), reason: "unsupported" } as InvokeResponse);
       return json(await submit(env, req));
+    }
+
+    if (request.method === "POST" && url.pathname === "/cancel") {
+      let body: CancelRequest;
+      try { body = await request.json() as CancelRequest; }
+      catch { return json({ ok: false, error: "invalid JSON body" } as CancelResponse); }
+      if (!body?.poll || typeof body.poll !== "string") return json({ ok: false, error: "poll token required" } as CancelResponse);
+      return json(await cancel(env, body));
     }
 
     if (request.method === "POST" && url.pathname === "/poll") {

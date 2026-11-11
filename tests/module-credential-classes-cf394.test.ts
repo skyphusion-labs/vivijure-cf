@@ -79,6 +79,7 @@ const CLASSIFICATION: Readonly<Record<string, { path: TenantPath; note: string }
   TELEMETRY_DB: { path: "plane-bound", note: "the tenant studio D1, for runpod_job_log (cf#279 / cp#248)" },
   TENANT_ID: { path: "plane-bound", note: "opaque tenant identifier, plain_text" },
   TENANT_SLUG: { path: "plane-bound", note: "tenant display slug, plain_text" },
+  ENHANCE_OPUS_BINDING: { path: "plane-bound", note: "plan-enhance opt-in to Opus over the AI binding with no CF_AIG_TOKEN, plain_text" },
   RUNPOD_ENDPOINT_ID: { path: "plane-bound", note: "plain_text at upload; an endpoint id is not a secret" },
 
   // --- reached through the plane proxy rather than held ---
@@ -94,6 +95,7 @@ const CLASSIFICATION: Readonly<Record<string, { path: TenantPath; note: string }
   R2_RENDERS: { path: "operator-only", note: "bound to the OPERATOR bucket in wrangler.toml. The plane binds no R2 at all; catalog modules avoid it via the per-job tenant R2 credential on the invoke envelope (needs_tenant_r2, cp#270)" },
   IMAGES: { path: "operator-only", note: "Cloudflare Images binding on the operator account" },
   EMAIL: { path: "operator-only", note: "send_email binding on the operator account" },
+  KEYFRAME_WORKFLOW: { path: "operator-only", note: "Workflow binding; the Workflow class ships with the operator's script. Without it the module draws one shot per poll" },
   DIALOGUE_WORKFLOW: { path: "operator-only", note: "Workflow binding; the Workflow class ships with the operator's script" },
   CHATTERBOX_WORKFLOW: { path: "operator-only", note: "Workflow binding; Chatterbox Turbo TTS class ships with the operator script" },
   SCORE_WORKFLOW: { path: "operator-only", note: "Workflow binding; the Workflow class ships with the operator's script" },
@@ -103,6 +105,7 @@ const CLASSIFICATION: Readonly<Record<string, { path: TenantPath; note: string }
   I2V_WORKFLOW: { path: "operator-only", note: "Workflow binding for CF AI Gateway i2v modules; gen runs in the Workflow step, not waitUntil (#155)" },
   R2_S3_ACCESS_KEY_ID: { path: "operator-only", note: "R2 S3 API key so cf-grok-video can mint a ZDR output.upload_url PUT; same store secret as the host" },
   R2_S3_SECRET_ACCESS_KEY: { path: "operator-only", note: "R2 S3 API secret for the ZDR upload_url PUT" },
+  R2_S3_SESSION_TOKEN: { path: "operator-only", note: "optional session token when the R2 S3 pair is a temporary credential" },
   R2_S3_ENDPOINT: { path: "operator-only", note: "R2 S3 endpoint identifier (not a secret)" },
   R2_S3_BUCKET: { path: "operator-only", note: "R2 bucket name for the ZDR upload_url PUT" },
   AUDIO_MASTER_URL: { path: "operator-only", note: "public HTTPS origin for the audio-master CPU container" },

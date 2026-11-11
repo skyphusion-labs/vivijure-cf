@@ -11,8 +11,11 @@ import {
 } from "@skyphusion-labs/vivijure-core/cast-db";
 import type { CastMember } from "@skyphusion-labs/vivijure-core/cast-db";
 import { toPublicCast } from "./cast-public";
+import { castOwnedPrefixes, isLegacySharedVoiceSampleKey, ownsVoiceRefKey } from "./record-reclaim";
+import { isOwnGeneratedSampleKey, voiceSampleStateKey } from "./cast-voice-sample";
 import { extFromMime } from "./utils";
 import { isSafeRelKey } from "@skyphusion-labs/vivijure-core/key-safety";
+import { getServedArtifact } from "./shared";
 
 export const CAST_IMAGE_MIME_RE = /^image\/(png|jpe?g|webp)$/i;
 export const CAST_MAX_BYTES = 16 * 1024 * 1024;
@@ -93,6 +96,29 @@ function wrap(fn: () => Promise<Response>): Promise<Response> {
   });
 }
 
+/** Answer with the written cast row, or 404 with a diagnostic when the write produced none.
+ *
+ *  Ported from vivijure-local#351 (cf#754). A row write that produced NOTHING failed; answering
+ *  `200 { cast: null }` renders the failure and the success as the same state, and no caller can
+ *  separate them from a field that is legitimately absent in neither case.
+ *
+ *  THE FAILURE BODY CARRIES NO `cast` FIELD AT ALL, and that is the load-bearing half. The panel
+ *  assigns `state.cast[idx] = data.cast` before it reads anything, so `{ cast: null }` lands null
+ *  in panel state at ANY status, 404 included; the next editor populate then throws a JavaScript
+ *  null-property error instead of reporting the write, and the list keeps rendering stale data.
+ *  With a bare `{ error }` the panel api() helper throws `Error(body.error)` and every existing
+ *  catch produces the right message with no panel change at all. */
+function castRowResponse(row: CastMember | null | undefined, op: string, id: number): Response {
+  if (!row) {
+    throw new HttpError(
+      404,
+      `${op}: the cast row write returned no row for cast ${id} ` +
+        `(cast missing, or the row write failed)`,
+    );
+  }
+  return json({ cast: toPublicCast(row) });
+}
+
 /** Copy a chat-side artifact into R2_RENDERS under destPrefix.<ext>.
  *
  *  Source is R2_RENDERS as of cf#140: chat artifacts are written to the served bucket now, so
@@ -104,7 +130,11 @@ export async function copyChatArtifactToRenders(
   srcKey: string,
   destPrefix: string,
 ): Promise<{ key: string; mime: string }> {
-  const obj = await env.R2_RENDERS.get(srcKey);
+  // Read through served artifact space: the source must be an object this deployment would SERVE.
+  // A key outside it (a held object, anything outside the artifact namespaces) reads as absent, so it
+  // cannot become the source of a new served key. The constraint is at the read, not here, so a copy
+  // path added later inherits it. Ref: GHSA-5fj8-6pc2-x9p5.
+  const obj = await getServedArtifact(env.R2_RENDERS, srcKey);
   if (!obj) throw new HttpError(404, `source artifact not found: ${srcKey}`);
   const bytes = new Uint8Array(await obj.arrayBuffer());
   if (bytes.length > CAST_MAX_BYTES) {
@@ -177,19 +207,24 @@ export async function handleCastPortraitUpload(
           `cast/${id}/portrait`,
         );
         const row = await setPortrait(env, id, key, mime);
-        // Guarded on `row` on purpose. This door still answers 200 { cast: null } when the row
-        // write produces nothing (the local#351 defect, not yet ported here and filed separately),
-        // and in that case `portrait_key` was never updated, so the old object must survive.
+        // Guarded on `row` on purpose, and KEPT now that cf#754 turns a null row into the 404 one
+        // line below. The guard is redundant against that throw; it stays because the ORDERING
+        // claim of #753 lives here, not in the throw: when the row write produces nothing
+        // `portrait_key` was never updated, so the superseded object must survive. Deleting it and
+        // relying on a later throw to make that invisible is exactly the dangling row #753 closed.
         if (row) await deleteSupersededPortrait(env, cur.portrait_key, key);
-        return json({ cast: row ? toPublicCast(row) : null });
+        return castRowResponse(row, "portrait upload (chat artifact copy)", id);
       }
 
       if (!body.key || !body.mime) throw new HttpError(400, "key and mime required");
       const mime = requireCastImageMime(body.mime);
       const key = requireCastStagedKey(id, body.key);
       const row = await setPortrait(env, id, key, mime);
-      if (!row) throw new HttpError(404, "cast not found");
-      return json({ cast: row ? toPublicCast(row) : null });
+      // local#446: the staged object is already in the bucket, so this path has no put.
+      // The previous portrait is still superseded once the row write returns a row. The
+      // helper returns immediately when oldKey is empty or equal to newKey.
+      if (row) await deleteSupersededPortrait(env, cur.portrait_key, key);
+      return castRowResponse(row, "portrait upload (staged key)", id);
     }
 
     const buf = await request.arrayBuffer();
@@ -202,8 +237,9 @@ export async function handleCastPortraitUpload(
       httpMetadata: { contentType: mime },
     });
     const row = await setPortrait(env, id, key, mime);
+    // #753 guard kept for the reason spelled out on the copy path above.
     if (row) await deleteSupersededPortrait(env, cur.portrait_key, key);
-    return json({ cast: row ? toPublicCast(row) : null });
+    return castRowResponse(row, "portrait upload (raw bytes)", id);
   });
 }
 
@@ -233,15 +269,14 @@ export async function handleCastRefAdd(
           `cast/${id}/refs/${crypto.randomUUID()}`,
         );
         const row = await addRef(env, id, { key, mime });
-        return json({ cast: row ? toPublicCast(row) : null });
+        return castRowResponse(row, "ref add (chat artifact copy)", id);
       }
 
       if (!body.key || !body.mime) throw new HttpError(400, "key and mime required");
       const mime = requireCastImageMime(body.mime);
       const key = requireCastStagedKey(id, body.key);
       const row = await addRef(env, id, { key, mime });
-      if (!row) throw new HttpError(404, "cast not found");
-      return json({ cast: row ? toPublicCast(row) : null });
+      return castRowResponse(row, "ref add (staged key)", id);
     }
 
     const buf = await request.arrayBuffer();
@@ -253,7 +288,7 @@ export async function handleCastRefAdd(
       httpMetadata: { contentType: mime },
     });
     const row = await addRef(env, id, { key, mime });
-    return json({ cast: row ? toPublicCast(row) : null });
+    return castRowResponse(row, "ref add (raw bytes)", id);
   });
 }
 
@@ -266,7 +301,9 @@ export async function handleCastRefRemove(
   if (!result.row) return json({ error: "cast not found" }, 404);
   if (!result.removedKey) return json({ error: "ref key not in this cast member's set" }, 404);
   try { await env.R2_RENDERS.delete(result.removedKey); } catch { /* ignore */ }
-  return json({ cast: result.row ? toPublicCast(result.row) : null });
+  // Dead ternary removed (cf#754): `result.row` is proven truthy by the 404 two lines above, so
+  // the null arm was unreachable -- but it is the exact shape this issue exists to delete.
+  return json({ cast: toPublicCast(result.row) });
 }
 
 export async function handleCastSourceAdd(
@@ -295,15 +332,14 @@ export async function handleCastSourceAdd(
           `cast/${id}/sources/${crypto.randomUUID()}`,
         );
         const row = await addSource(env, id, { key, mime });
-        return json({ cast: row ? toPublicCast(row) : null });
+        return castRowResponse(row, "source add (chat artifact copy)", id);
       }
 
       if (!body.key || !body.mime) throw new HttpError(400, "key and mime required");
       const mime = requireCastImageMime(body.mime);
       const key = requireCastStagedKey(id, body.key);
       const row = await addSource(env, id, { key, mime });
-      if (!row) throw new HttpError(404, "cast not found");
-      return json({ cast: row ? toPublicCast(row) : null });
+      return castRowResponse(row, "source add (staged key)", id);
     }
 
     const buf = await request.arrayBuffer();
@@ -315,7 +351,7 @@ export async function handleCastSourceAdd(
       httpMetadata: { contentType: mime },
     });
     const row = await addSource(env, id, { key, mime });
-    return json({ cast: row ? toPublicCast(row) : null });
+    return castRowResponse(row, "source add (raw bytes)", id);
   });
 }
 
@@ -328,22 +364,75 @@ export async function handleCastSourceRemove(
   if (!result.row) return json({ error: "cast not found" }, 404);
   if (!result.removedKey) return json({ error: "source key not in this cast member's set" }, 404);
   try { await env.R2_RENDERS.delete(result.removedKey); } catch { /* ignore */ }
-  return json({ cast: result.row ? toPublicCast(result.row) : null });
+  // Dead ternary removed (cf#754), same as handleCastRefRemove above.
+  return json({ cast: toPublicCast(result.row) });
 }
 
 // Issue #298: deleting a cast member must reclaim ALL of its R2 artifacts, not just the D1 row.
-// Mirrors the per-key best-effort delete the portrait/ref/source handlers already use. Collects the
-// portrait, every ref (the LoRA training set), every source (raw uploads), and the trained lora_key,
-// then issues one delete per key. Each delete is best-effort: an already-absent key is not a failure
-// (R2 delete is idempotent), and one transient miss must not abort the rest of the cleanup.
+// Each delete is best-effort: an already-absent key is not a failure (R2 delete is idempotent), and one
+// transient miss must not abort the rest of the cleanup.
+//
+// cf#1008: the member's own trees are SWEPT, not enumerated from columns. `cast/<id>/voice-line.wav` is
+// named by no column, so a column list could never reach it, and any key a future writer adds under the
+// member's tree is freed without this list learning about it. Column keys outside those trees (the
+// LoRA files) are still deleted by name. The sample-in-flight doc and its clip are freed too. A legacy
+// shared generated `voice_ref_key` is freed only when no surviving cast row names it.
 export async function deleteCastArtifacts(env: Env, cast: CastMember): Promise<void> {
-  const keys = [
-    cast.portrait_key,
-    ...cast.ref_keys.map((r) => r.key),
-    ...cast.source_keys.map((s) => s.key),
-    cast.lora_key,
-  ].filter((k): k is string => typeof k === "string" && k.length > 0);
+  const keys = new Set<string>();
+  const add = (k: unknown) => { if (typeof k === "string" && k.length > 0) keys.add(k); };
+  add(cast.portrait_key);
+  for (const r of cast.ref_keys) add(r.key);
+  for (const s of cast.source_keys) add(s.key);
+  add(cast.lora_key);
+  add(cast.wan_lora_key_high);
+  add(cast.wan_lora_key_low);
+  if (ownsVoiceRefKey(cast.id, cast.voice_ref_key)) add(cast.voice_ref_key);
+  else if (isLegacySharedVoiceSampleKey(cast.voice_ref_key) && (await countCastRowsNamingVoiceRef(env, cast.voice_ref_key as string)) === 0) {
+    add(cast.voice_ref_key);
+  }
+  for (const prefix of castOwnedPrefixes(cast.id)) for (const k of await listPrefixKeys(env, prefix)) add(k);
+  const stateKey = voiceSampleStateKey(cast.public_id);
+  let state: R2ObjectBody | null = null;
+  try { state = await env.R2_RENDERS.get(stateKey); } catch { /* unread: nothing named, nothing freed */ }
+  if (state) {
+    add(stateKey);
+    try {
+      const clip = (JSON.parse(await state.text()) as { clip_key?: unknown }).clip_key;
+      if (typeof clip === "string" && isOwnGeneratedSampleKey(cast.public_id, clip)) add(clip);
+    } catch { /* a corrupt doc is still this member's; its clip, if any, is not named */ }
+  }
   for (const key of keys) {
     try { await env.R2_RENDERS.delete(key); } catch { /* ignore: best-effort GC */ }
   }
+}
+
+/** Surviving rows that name `key` as their voice_ref_key. A failed count reads as "still named", so a
+ *  shared object is never deleted on an error. */
+async function countCastRowsNamingVoiceRef(env: Env, key: string): Promise<number> {
+  try {
+    const row = await env.DB.prepare("SELECT COUNT(*) AS n FROM cast_members WHERE voice_ref_key = ?").bind(key).first<{ n: number }>();
+    const n = row ? Number(row.n) : NaN;
+    return Number.isFinite(n) ? n : 1;
+  } catch {
+    return 1;
+  }
+}
+
+/** Every key under `prefix`, following the list cursor. A failed page stops the sweep there. */
+async function listPrefixKeys(env: Env, prefix: string): Promise<string[]> {
+  const out: string[] = [];
+  let cursor: string | undefined;
+  for (let page = 0; page < 100; page++) {
+    let res: R2Objects;
+    try {
+      res = await env.R2_RENDERS.list({ prefix, cursor });
+    } catch {
+      break;
+    }
+    for (const o of res.objects) out.push(o.key);
+    if (!res.truncated) break;
+    cursor = (res as { cursor?: string }).cursor;
+    if (!cursor) break;
+  }
+  return out;
 }

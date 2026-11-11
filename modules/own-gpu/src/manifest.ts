@@ -13,7 +13,7 @@ export const MANIFEST: ModuleManifest = {
   // of the module, and core must not branch on module identity.
   needs_tenant_r2: true,
   name: "own-gpu",
-  version: "0.2.2",
+  version: "0.2.3",
   api: MODULE_API,
   hooks: ["motion.backend"],
   provides: [{ id: "i2v-own-gpu", label: "Silent look (studio GPU)" }],
@@ -34,11 +34,11 @@ export const MANIFEST: ModuleManifest = {
       "About 2-8 second clips (no hard grid)",
       "Silent motion only. Best picture, not a talking door.",
       "Cannot lock a Cast voice sample. Spoken lines will not pick this door.",
-      "One film, no scatter (look door)",
       "Slower than a cloud talking door",
     ],
   },
   usage: {
+    face_hold: "one",
     native_audio: false,
     voice: "cast_tts",
     scatter_native_audio: false,

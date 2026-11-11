@@ -14,23 +14,27 @@ contract we actually honor.
 
 | Fact | What it means on a film |
 |---|---|
-| Duration | Clip length we snap to. A storyboard second outside this band is clamped. |
-| Talks? | Whether we keep the model's own soundtrack (`usage.native_audio`). |
+| Duration | Clip length we snap to. A storyboard second outside this band is clamped. Preflight reports it: over the top is an error, other misses are warnings (cf#926). |
+| Talks? | Whether we keep the model's own soundtrack (`usage.native_audio`). A door with no audio takes no spoken line. |
 | Voice lock | How the speaker stays the same shot to shot. |
 | First+last? | Whether we pass the next shot's start still as this clip's end frame. |
 | Cannot | Honest ceiling. If it is not listed, we do not promise it. |
 
 Shared rules:
 
-- One film, no split. Motion and film stay on a single job. Talking clips
-  stay on one film so the door can hear itself shot to shot.
+- A film is one job. A long film is parts, each one film job, joined at the end
+  (`docs/CONTRACT.md` 2.22a). Talking clips hear each other only inside one part, so a
+  voice held by description alone may drift from one part to the next. That is not yet
+  measured.
 - **Flux v2v** (feed the last 4 seconds of the previous clip) is the real Flux
   speaker lock. Talking Flux stays on one film so that path can land. Until
   v2v is wired, the speaker lock is the same prompt lock on every shot.
 - Seedance on Cloudflare uses the talking sample you kept as the voice
   lock. Same take, every shot.
-- Kling in this tree is **2.1 silent**. It is not Kling 2.6 `voice_id`. Speaking
-  is Cast TTS, muxed (a synced mouth is the InfiniteTalk door).
+- **A silent door takes no spoken line.** Submit refuses a board with a line on a
+  door where `usage.native_audio` and `usage.driving_audio` are both false, and the
+  planner hides those doors for that board (`docs/CONTRACT.md`). The check reads the
+  whole bundle, so one spoken shot rules out a silent door for the film (cf#1056).
 
 ## cf-flux-3-video (Flux talking)
 
@@ -46,51 +50,31 @@ Stylized talking clips from your stills. Faces drift.
 
 ## cf-seedance (Seedance talking)
 
-Fast talking clips. Uses the sample you kept.
+Fast talking clips. Uses the sample you kept. The default model is Seedance 2.5.
+The same door also calls 2.0, 2.0 Fast, and 2.0 Mini. Those four models do not
+share one input document.
 
 | | |
 |---|---|
-| Duration | 4-12 seconds |
+| Duration | 4-30 seconds on 2.5. 4-12 seconds on 2.0, 2.0 Fast, and 2.0 Mini. A longer ask is clamped to that model's max. |
 | Talks? | Yes. |
-| Voice lock | The sample you kept. Same voice on every shot. |
-| First+last? | Yes. The next shot's start still is the end frame when we have one. |
-| Cannot | Invent a different speaker. Hosted does not add mouths in finish. |
+| Voice lock | The sample you kept. 2.5 sends that clip as one item in `reference_videos`. The 2.0 family sends `reference_video`. 2.5 also publishes `reference_audios`, and Mini publishes `reference_audio`. The sample is a video, so those audio fields are not set. Whether 2.5 keeps the voice from `reference_videos` is unproven until a real render. |
+| First+last? | Yes. The next shot's start still is the end frame when we have one. On 2.5, first and last frames always use aspect ratio `adaptive` (a supplied ratio is overridden), so the ratio knob does not make a vertical clip. The keyframe has to be 9:16. On 2.0, Fast, and Mini, Cloudflare says aspect ratio is ignored when an image is used. |
+| Cannot | 1080p or 4k except on Seedance 2.0. 2.5, Fast, and Mini allow 480p and 720p. An ask outside that set is sent as 720p, the published default. 9:21 is not on 2.5. That ask is sent as `adaptive`. Invent a different speaker. Finish does not add mouths on this door. |
 
-## seedance (Seedance talking, hosted speed default)
+## cf-vidu-q3-turbo (Vidu Q3 Turbo talking)
 
-Same idea as `cf-seedance`. This is the hosted speed default. 4-12 seconds.
+Talking clips from a still. Replaces RunPod `vidu-q3` (cf#1075).
 
 | | |
 |---|---|
-| Duration | 4-12 seconds |
-| Talks? | Yes. |
-| Voice lock | `seed_and_prompt`. Same seed and same voice lock. |
-| First+last? | Declared yes (last still is the next start). Visual last-frame wiring on this door is the same intent as `cf-seedance`. |
-| Cannot | Lock the voice from a previous clip. No audio-reference field on the door we call. |
-
-## google-veo (Veo talking)
-
-Photoreal talking clips. Slow and spendy.
-
-| | |
-|---|---|
-| Duration | Only 4, 6, or 8 seconds |
-| Talks? | Yes. |
-| Voice lock | `prompt_lock`. Same voice lock on every shot. Seed is hardcoded, not a pin. |
-| First+last? | No. We do not pass a last frame. |
-| Cannot | Arbitrary lengths. First+last stills. Pin a seed from the voice lock. |
-
-## vidu-q3 (Vidu talking)
-
-Talking clips when you have several stills.
-
-| | |
-|---|---|
-| Duration | 3-10 seconds |
-| Talks? | Yes. |
+| Duration | 1-16 seconds (any integer; schema min 1, max 16) |
+| Talks? | Yes, when talking audio is on. |
 | Voice lock | `prompt_lock`. |
-| First+last? | No. |
-| Cannot | Hear the previous clip. Pin a seed from the voice lock. |
+| First+last? | Yes. The next shot's start still is `end_image` when we have one. |
+| Cannot | Lock the Cast voice sample. Pin a seed. Set aspect ratio on an image-to-video call (the schema says that field is text-to-video only, so we do not send it). |
+
+RunPod `seedance`, `google-veo`, and `vidu-q3` are retired (cf#1075). Veo on Cloudflare is `cf-veo`. The hosted spoken selector is InfiniteTalk when that door is installed (`hostedSpokenDoor`). It does not name RunPod Seedance.
 
 ## cf-grok-video (Grok talking drafts)
 
@@ -104,18 +88,6 @@ Quick talking drafts from a still.
 | First+last? | No. |
 | Cannot | Hear the previous clip. Pin a seed. |
 
-## kling (silent cinematic)
-
-Cinematic camera, silent clips.
-
-| | |
-|---|---|
-| Duration | 5 or 10 seconds |
-| Talks? | No. |
-| Voice lock | `cast_tts`. Speaking is the Cast voice, muxed. |
-| First+last? | No. |
-| Cannot | Native talking audio. This is Kling 2.1 silent, not 2.6 `voice_id`. |
-
 ## minimax-hailuo (silent physical)
 
 Physical motion, silent.
@@ -124,7 +96,7 @@ Physical motion, silent.
 |---|---|
 | Duration | 6 or 10 seconds |
 | Talks? | No. |
-| Voice lock | `cast_tts`. Cast voice muxed if they speak. |
+| Voice lock | None. No spoken lines on this door. |
 | First+last? | No. |
 | Cannot | Native talking audio. Arbitrary lengths. |
 
@@ -150,7 +122,7 @@ Same family, with your trained face. Silent.
 |---|---|
 | Duration | 5 or 8 seconds (the door we call; not the 5/10/15 Wan 2.6 grid) |
 | Talks? | No. |
-| Voice lock | `cast_tts`. Seed is available to pin the look. |
+| Voice lock | None. No spoken lines on this door. Seed is available to pin the look. |
 | First+last? | No. |
 | Cannot | Native talking audio. 10s or 15s clips on this door. |
 
@@ -162,7 +134,7 @@ Holds a look from reference stills. Silent.
 |---|---|
 | Duration | 3-15 seconds |
 | Talks? | No. |
-| Voice lock | `cast_tts`. |
+| Voice lock | None. No spoken lines on this door. |
 | First+last? | Yes. Start still plus the next shot's start still go in as reference images. |
 | Cannot | Native talking audio. |
 
@@ -175,7 +147,7 @@ Use a talking door for dialogue.
 |---|---|
 | Duration | About 2-8 seconds (no hard grid; backend snaps frames) |
 | Talks? | No. |
-| Voice lock | `cast_tts`. Seed pins the look when set. |
+| Voice lock | None. No spoken lines on this door. Seed pins the look when set. |
 | First+last? | No. |
 | Cannot | Native talking audio. Fast turnaround vs a cloud talking door. |
 
@@ -189,9 +161,22 @@ this door. Weights carry their own licences (CogVideoX on 16GB, LTX on 12GB).
 |---|---|
 | Duration | About 2-8 seconds unless the local door declares a tighter `duration_grid` |
 | Talks? | No. |
-| Voice lock | `cast_tts`. Seed is available. |
+| Voice lock | None. No spoken lines on this door. Seed is available. |
 | First+last? | No. |
 | Cannot | Native talking audio. Commercial self-host. Cloud API-free is the point, not datacenter parity. |
+
+## cf-p-video-avatar
+
+Portrait plus Cast audio, at 720p or 1080p. The speaker is ours. Higher
+resolution than infinitetalk. Not a default door.
+
+| | |
+|---|---|
+| Duration | 1 to 15 seconds. 15 is our door cap, not the provider's, until a real long-line test (#931). The line must be at least 1 second; a shorter one is padded with silence to 1 second (cf#1338). |
+| Talks? | Mouth follows our file. Not invented speech. |
+| Voice lock | Mouth follows the storyboard line in the Cast voice. A shot with no line is refused. |
+| First+last? | No. The page has a portrait and no end frame. |
+| Cannot | Invent speech. Lock the sample you kept. Say whether the picture follows the portrait. Say whether the required named voice changes an audio-driven clip. |
 
 ## infinitetalk
 
@@ -199,23 +184,35 @@ Portrait plus Cast audio. The speaker is ours, not invented.
 
 | | |
 |---|---|
-| Duration | Clip length follows the LINE audio. |
+| Duration | Clip length follows the LINE audio. The door declares 2-15 seconds. 15 is OUR cap, not RunPod's: the endpoint takes no duration parameter and publishes no length limit (checked 2026-11-09). Raising it needs a paid probe that compares the delivered clip length with the audio length (cf#931). |
 | Talks? | Mouth follows our file. Not invented speech. |
 | Voice lock | Mouth follows the storyboard line in the Cast voice. A shot with no line stays quiet. |
 | First+last? | No. |
 | Cannot | Invent speech. Lock the sample you kept. |
 
-## kling-o1-r2v (RunPod)
+## cf-kling-v4
 
-Multi-ref silent. Cast, props, locations.
+Clips with the model's own sound, from your stills. 3 to 30 seconds. Not a default door.
 
 | | |
 |---|---|
-| Duration | 3, 5, or 10 seconds |
-| Talks? | No. |
-| Voice lock | `cast_tts`. |
-| First+last? | Yes, as extra reference images. |
-| Cannot | Native talking audio. Kling 2.6 voice_id. |
+| Duration | 3 to 30 seconds. Whole seconds. |
+| Talks? | No. The model adds its own sound, measured 2026-10-30. It cannot be turned off. A score replaces it in the finished film. |
+| Voice lock | None. No spoken lines on this door. |
+| First+last? | Yes. The next shot's start still is the end frame when we have one. The model allows up to 9 middle frames. This door does not send them. |
+| Cannot | Spoken lines. Turn its sound off. Scatter. Send middle frames. Say whether 9:16 survives once a still is attached (the provider page says aspect is ignored when keyframes are given). Check a still before send. Assume a frame rate. |
+
+## cf-minimax-h3
+
+Clips with the model's own sound, from your stills. 4 to 15 seconds. Not a default door.
+
+| | |
+|---|---|
+| Duration | 4 to 15 seconds. Whole seconds. |
+| Talks? | No. The model adds its own sound, measured 2026-10-30. It cannot be turned off. A score replaces it in the finished film. |
+| Voice lock | None. No spoken lines on this door. |
+| First+last? | Yes. The next shot's start still is the end frame when we have one. |
+| Cannot | Spoken lines. Turn its sound off. Scatter. Send an image, video, or audio reference. Name a video-input price (the page does not list one). Say the provider default resolution (the schema lists none; we send 768P, the default per-second price). Assume a frame rate. |
 
 ## cf-hailuo (Cloudflare Hailuo 2.3)
 
@@ -223,7 +220,7 @@ Multi-ref silent. Cast, props, locations.
 |---|---|
 | Duration | 6 or 10 seconds |
 | Talks? | No. |
-| Voice lock | `cast_tts`. |
+| Voice lock | None. No spoken lines on this door. |
 | First+last? | No. |
 | Cannot | Native talking audio. |
 
@@ -231,7 +228,7 @@ Multi-ref silent. Cast, props, locations.
 
 | | |
 |---|---|
-| Duration | 4, 6, or 8 seconds |
+| Duration | 4, 6, or 8 seconds. 1080p is 8 seconds only (Google's Veo 3.1 rule); a 1080p shot of 4 or 6 seconds is refused before the provider is called (cf#932). |
 | Talks? | Yes. |
 | Voice lock | `prompt_lock`. |
 | First+last? | No. |
@@ -242,6 +239,6 @@ Multi-ref silent. Cast, props, locations.
 | `usage.voice` | What the filmmaker gets |
 |---|---|
 | `prompt_lock` | Same speaker description in every motion prompt. No speaker id on the door. |
-| `seed_and_prompt` | Same seed **and** the same prompt lock. Seedance. |
-| `cast_tts` | Speaking voice is the Cast voice (TTS). Driving-audio doors (InfiniteTalk, Wan) consume that LINE file at motion time. Post-hoc mouth-replace is GONE (cf#783): on a silent door the Cast voice is muxed and the mouth is not re-synced. |
+| `seed_and_prompt` | Same seed and the same prompt lock. Cloudflare Seedance (`cf-seedance`). |
+| `cast_tts` | Speaking voice is the Cast voice (TTS). Driving-audio doors (InfiniteTalk, Wan) consume that LINE file at motion time. Post-hoc mouth-replace is GONE (cf#783). A silent door declares this value too, and takes no spoken line: submit refuses the board. |
 | `prev_clip` | Each talking shot continues the previous clip (Flux v2v). Not wired yet. |

@@ -6,7 +6,7 @@ import { describe, it, expect } from "vitest";
 // cf#339: hRegenShot was the only startFilmJob door that wrote no renders row.
 
 describe("hRegenShot history row (cf#339)", () => {
-  const src = readFileSync(join(dirname(fileURLToPath(import.meta.url)), "../src/index.ts"), "utf8");
+  const src = readFileSync(join(dirname(fileURLToPath(import.meta.url)), "../src/studio.ts"), "utf8");
   const start = src.indexOf("const hRegenShot");
   const end = src.indexOf("const hPollRender", start);
   const body = start >= 0 && end > start ? src.slice(start, end) : "";

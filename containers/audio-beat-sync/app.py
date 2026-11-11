@@ -9,6 +9,7 @@ credentials on the Worker). See docs/audio-beat-sync-container.md.
 import asyncio
 import logging
 import os
+import subprocess
 import tempfile
 import time
 
@@ -16,7 +17,7 @@ import librosa
 import numpy as np
 from aiohttp import ClientSession, ClientTimeout, web
 
-from bearer import bearer_middleware
+from bearer import bearer_middleware, require_bearer_config
 from url_guard import guarded_get, validate_fetch_url
 
 PORT = int(os.environ.get("PORT", "8000"))
@@ -159,10 +160,61 @@ def _compute(path, clip_s, mode, min_s, max_s, force_shots, audio_key):
     }
 
 
+def _selftest():
+    """Local analyze. No R2. Isolated CF Container proof (cf#1045)."""
+    fd, path = tempfile.mkstemp(suffix=".wav")
+    os.close(fd)
+    try:
+        subprocess.run(
+            [
+                "ffmpeg", "-y", "-f", "lavfi",
+                "-i", "sine=frequency=440:duration=2:sample_rate=22050",
+                "-ac", "1", path,
+            ],
+            check=True,
+            capture_output=True,
+        )
+        plan = _compute(path, 8.0, "duration", 2.5, 12.0, None, "selftest")
+        if float(plan.get("duration_seconds") or 0) < 1:
+            raise RuntimeError("selftest duration missing")
+        return {
+            "ok": True,
+            "applied": ["selftest:analyze:duration"],
+            "duration_seconds": plan["duration_seconds"],
+            "suggested_shots": plan["suggested_shots"],
+            "mode": plan["mode"],
+        }
+    finally:
+        try:
+            os.unlink(path)
+        except OSError:
+            pass
+
+
+async def selftest(_req):
+    """POST /selftest -- local analyze. No R2. Isolated CF proof (cf#1045)."""
+    t0 = time.monotonic()
+    try:
+        result = await asyncio.get_running_loop().run_in_executor(None, _selftest)
+    except Exception as e:  # noqa: BLE001 - surface processing failure as 500
+        log.exception("selftest failed")
+        return web.json_response({"ok": False, "error": str(e)}, status=500)
+    result["elapsedMs"] = _elapsed_ms(t0)
+    return web.json_response(result)
+
+
 app = web.Application(middlewares=[bearer_middleware])
 app.router.add_get("/health", health)
+app.router.add_post("/selftest", selftest)
 app.router.add_post("/analyze", analyze)
 
 if __name__ == "__main__":
+    # cf#893: refuse to START without auth configured. At the real entry point rather than at module
+    # scope, and the difference is deliberate: `python app.py` is what the Dockerfile CMD runs, so
+    # this is the door opening, while an IMPORT is a test reading the module. Eleven container tests
+    # import app; gating import would have broken all of them for no security gain, because
+    # bearer_middleware independently answers 503 on every media route when no token is set.
+    # Two layers, each meaningful: this one refuses to bind, that one refuses to serve.
+    require_bearer_config()
     log.info("audio-beat-sync listening on 0.0.0.0:%d", PORT)
     web.run_app(app, host="0.0.0.0", port=PORT, access_log=None)

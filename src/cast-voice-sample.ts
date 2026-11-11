@@ -1,15 +1,17 @@
 // Cast talking-voice sample. The filmmaker hears a 5/10s clip from the portrait
 // on a talking door, then keeps it. Seedance later sends that clip as
-// reference_video. Veo cannot honor it.
+// reference_videos on Seedance 2.5, reference_video on the 2.0 family. Veo cannot honor it.
 
 import { getCastById, updateCast } from "@skyphusion-labs/vivijure-core/cast-db";
-import { discoverModules, invokeModule, pollModule, resolveFetcher } from "@skyphusion-labs/vivijure-core/modules/registry";
+import { discoverModules, invokeModule, pollModule, resolveFetcher, servingForHook } from "@skyphusion-labs/vivijure-core/modules/registry";
 import { composeMotionPrompt } from "@skyphusion-labs/vivijure-core/film-orchestrator";
 import { isSafeRelKey } from "@skyphusion-labs/vivijure-core/key-safety";
 import { presignR2Get } from "@skyphusion-labs/vivijure-core/presign";
 import { voiceLockHint } from "@skyphusion-labs/vivijure-core/voices";
+import type { RegisteredModule } from "@skyphusion-labs/vivijure-core";
 import type { Env } from "./env";
 import { studioEnv } from "./orchestrator-env";
+import { getServedArtifact } from "./shared";
 
 function fail(status: 400 | 404, msg: string): never {
   const e = new Error(msg) as Error & { sampleStatus: 400 | 404 };
@@ -30,17 +32,7 @@ export const TALKING_VOICE_HONOR = [
     label: "Uses the sample you kept. Same voice on every shot.",
   },
   {
-    name: "seedance",
-    honor: "none" as const,
-    label: "RunPod 1.5 cannot lock the sample. Use Cloudflare Seedance.",
-  },
-  {
     name: "cf-veo",
-    honor: "neighborhood" as const,
-    label: "Cannot lock the sample you heard. Same description, not the same take.",
-  },
-  {
-    name: "google-veo",
     honor: "neighborhood" as const,
     label: "Cannot lock the sample you heard. Same description, not the same take.",
   },
@@ -55,7 +47,7 @@ export const TALKING_VOICE_HONOR = [
     label: "Cannot lock the sample you heard. Same description, not the same take.",
   },
   {
-    name: "vidu-q3",
+    name: "cf-vidu-q3-turbo",
     honor: "neighborhood" as const,
     label: "Cannot lock the sample you heard. Same description, not the same take.",
   },
@@ -71,6 +63,22 @@ export const TALKING_VOICE_HONOR = [
   },
 ];
 
+/** TALKING_VOICE_HONOR projected through the modules actually installed on this deploy (cf#919).
+ *
+ *  The table is hand-maintained advertising copy shipped to the cast voice picker, and nothing
+ *  branches on it -- so an entry for a door this deploy does not have is simply a false statement in
+ *  the product surface. It named `infinitetalk`, which no hosted tenant can install. `catalogForDeploy`
+ *  already refuses to advertise capability a demo deploy does not have; this is that same rule one
+ *  deploy mode over, except the authority here is the live registry rather than a mode flag.
+ *
+ *  A door installed WITHOUT a row here still gets no row: the honest gap is silence, not invented copy.
+ *  cf#1075 dropped the RunPod seedance, google-veo, and vidu-q3 rows and added
+ *  cf-vidu-q3-turbo. A door installed without a row here still gets no row. */
+export function talkingVoiceHonorFor(modules: RegisteredModule[]): typeof TALKING_VOICE_HONOR {
+  const installed = new Set(servingForHook(modules, "motion.backend").map((m) => m.name));
+  return TALKING_VOICE_HONOR.filter((d) => installed.has(d.name));
+}
+
 type SampleState = {
   poll: string;
   binding: string;
@@ -78,8 +86,25 @@ type SampleState = {
   clip_key?: string;
 };
 
-function stateKey(publicId: string): string {
+/** The R2 doc that tracks one member's sample in flight. Cast delete frees it (cf#1008). */
+export function voiceSampleStateKey(publicId: string): string {
   return SAMPLE_STATE_PREFIX + publicId + ".json";
+}
+const stateKey = voiceSampleStateKey;
+
+/** cf#1008: the shot id a member's sample is generated under. Every motion module keys its clip from
+ *  `context.project` and `shot_id` alone, so a constant shot id made ONE clip key for every member:
+ *  cast B generating a sample overwrote cast A's. The member's public id makes each sample its own. */
+export function voiceSampleShotId(publicId: string): string {
+  return "voice-sample-" + publicId;
+}
+
+/** True when `key` is the clip a module wrote for THIS member's sample, under the per-member shot id.
+ *  The legacy constant shape (`renders/cast/clips/voice-sample_<module>.mp4`) is never a match. */
+export function isOwnGeneratedSampleKey(publicId: string, key: string | null | undefined): boolean {
+  if (!key || !publicId) return false;
+  const prefix = "renders/cast/clips/" + voiceSampleShotId(publicId) + "_";
+  return key.startsWith(prefix) && !key.slice(prefix.length).includes("/");
 }
 
 async function putState(env: Env, publicId: string, state: SampleState): Promise<void> {
@@ -131,7 +156,7 @@ export async function startCastVoiceSample(
   const r = await invokeModule(fetcher, {
     hook: "motion.backend",
     input: {
-      shot_id: "voice-sample",
+      shot_id: voiceSampleShotId(cast.public_id),
       keyframe_url,
       keyframe_key: cast.portrait_key,
       prompt,
@@ -177,9 +202,20 @@ export async function keepCastVoiceSample(env: Env, castId: number): Promise<{ v
   if (!cast) fail(404, "cast member");
   const state = await getState(env, cast.public_id);
   if (!state?.clip_key) fail(400, "No finished sample to keep. Generate one and wait for it.");
-  const row = await updateCast(env, castId, { voice_ref_key: state.clip_key });
-  if (!row) fail(404, "cast member");
-  return { voice_ref_key: state.clip_key };
+  // cf#1008: the kept sample is COPIED into the member's own tree, the same key the upload path writes,
+  // so voice_ref_key always names an object this member alone owns and cast delete can free it.
+  const obj = await env.R2_RENDERS.get(state.clip_key);
+  if (!obj) fail(400, "The sample is no longer in storage. Generate it again.");
+  const bytes = new Uint8Array(await obj.arrayBuffer());
+  const kept = await persistVoiceRef(env, castId, bytes, obj.httpMetadata?.contentType || "");
+  // The generated clip and its state doc are now spent. Free them, but only a clip under this member's
+  // own shot id: a state doc written before cf#1008 names the shared legacy key, which other members'
+  // rows may still point at.
+  if (isOwnGeneratedSampleKey(cast.public_id, state.clip_key)) {
+    try { await env.R2_RENDERS.delete(state.clip_key); } catch { /* best-effort */ }
+  }
+  try { await env.R2_RENDERS.delete(stateKey(cast.public_id)); } catch { /* best-effort */ }
+  return { voice_ref_key: kept.voice_ref_key };
 }
 
 export async function clearCastVoiceSample(env: Env, castId: number): Promise<void> {
@@ -283,7 +319,8 @@ export async function attachCastVoiceSampleFromKey(
   const cast = await getCastById(env, castId);
   if (!cast) fail(404, "cast member");
   if (!isSafeRelKey(srcKey)) fail(400, "unsafe key");
-  const obj = await env.R2_RENDERS.get(srcKey);
+  // Same served-space read as the image copy path, for the same reason (GHSA-5fj8-6pc2-x9p5).
+  const obj = await getServedArtifact(env.R2_RENDERS, srcKey);
   if (!obj) fail(404, "source clip not found");
   const bytes = new Uint8Array(await obj.arrayBuffer());
   return persistVoiceRef(env, castId, bytes, obj.httpMetadata?.contentType || "");

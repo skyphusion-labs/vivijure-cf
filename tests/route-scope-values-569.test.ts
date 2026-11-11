@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { API_ROUTES } from "../src/index";
+import { API_ROUTES } from "../src/studio";
 import { SCOPES, type Scope } from "../src/authz";
 import {
   EXPECTED_ROUTE_SCOPES,
@@ -62,6 +62,7 @@ function isFilmmakerConsumerPattern(pattern: string): boolean {
 const MUST_BE_OPERATOR: ReadonlyArray<{ method: string; pattern: string }> = [
   { method: "GET", pattern: "/api/storage/usage" },
   { method: "POST", pattern: "/api/storage/reconcile" },
+  { method: "GET", pattern: "/api/tiers/video-finish/readiness" },
   { method: "GET", pattern: "/api/modules/installed" },
   { method: "POST", pattern: "/api/modules/install" },
   { method: "DELETE", pattern: "/api/modules/install/:name" },

@@ -1,0 +1,709 @@
+{
+ "_source": "cf#1341 live refine 2, 2026-11-06 20:29:49Z, app.studio core 1.40.0, anthropic/claude-opus-4-8, message: Delete shots 10, 20 and 30. Keep every other scene exactly as it is.",
+ "sent": [
+  {
+   "prompt": "Shot 1: a woman at the market sits on a low wall, wide establishing frame.",
+   "id": "shot_01",
+   "target_seconds": 5,
+   "act": "setup"
+  },
+  {
+   "prompt": "Shot 2: a woman at the lighthouse turns and listens, wide establishing frame.",
+   "id": "shot_02",
+   "target_seconds": 5,
+   "act": "setup"
+  },
+  {
+   "prompt": "Shot 3: a woman at the train station reads a folded letter, wide establishing frame.",
+   "id": "shot_03",
+   "target_seconds": 5,
+   "act": "setup"
+  },
+  {
+   "prompt": "Shot 4: a woman at the rooftop checks an old watch, wide establishing frame.",
+   "id": "shot_04",
+   "target_seconds": 5,
+   "act": "setup"
+  },
+  {
+   "prompt": "Shot 5: a woman at the forest path looks out at the water at night, wide establishing frame.",
+   "id": "shot_05",
+   "target_seconds": 5,
+   "act": "setup"
+  },
+  {
+   "prompt": "Shot 6: a woman at the harbor walks slowly toward camera, wide establishing frame.",
+   "id": "shot_06",
+   "target_seconds": 5,
+   "act": "setup"
+  },
+  {
+   "prompt": "Shot 7: a woman at the market sits on a low wall, wide establishing frame.",
+   "id": "shot_07",
+   "target_seconds": 5,
+   "act": "setup"
+  },
+  {
+   "prompt": "Shot 8: a woman at the lighthouse turns and listens, wide establishing frame.",
+   "id": "shot_08",
+   "target_seconds": 5,
+   "act": "setup"
+  },
+  {
+   "prompt": "Shot 9: a woman at the train station reads a folded letter, wide establishing frame.",
+   "id": "shot_09",
+   "target_seconds": 5,
+   "act": "setup"
+  },
+  {
+   "prompt": "Shot 10: a woman at the rooftop checks an old watch, wide establishing frame.",
+   "id": "shot_10",
+   "target_seconds": 5,
+   "act": "setup"
+  },
+  {
+   "prompt": "Shot 11: a woman at the forest path looks out at the water, wide establishing frame.",
+   "id": "shot_11",
+   "target_seconds": 5,
+   "act": "setup"
+  },
+  {
+   "prompt": "Shot 12: a woman at the harbor walks slowly toward camera at night, wide establishing frame.",
+   "id": "shot_12",
+   "target_seconds": 5,
+   "act": "setup"
+  },
+  {
+   "prompt": "Shot 13: a woman at the market sits on a low wall, wide establishing frame.",
+   "id": "shot_13",
+   "target_seconds": 5,
+   "act": "setup"
+  },
+  {
+   "prompt": "Shot 14: a woman at the lighthouse turns and listens, wide establishing frame.",
+   "id": "shot_14",
+   "target_seconds": 5,
+   "act": "setup"
+  },
+  {
+   "prompt": "Shot 15: a woman at the train station reads a folded letter, wide establishing frame.",
+   "id": "shot_15",
+   "target_seconds": 5,
+   "act": "setup"
+  },
+  {
+   "prompt": "Shot 16: a woman at the rooftop checks an old watch, wide establishing frame.",
+   "id": "shot_16",
+   "target_seconds": 5,
+   "act": "setup"
+  },
+  {
+   "prompt": "Shot 17: a woman at the forest path looks out at the water, wide establishing frame.",
+   "id": "shot_17",
+   "target_seconds": 5,
+   "act": "setup"
+  },
+  {
+   "prompt": "Shot 18: a woman at the harbor walks slowly toward camera, wide establishing frame.",
+   "id": "shot_18",
+   "target_seconds": 5,
+   "act": "setup"
+  },
+  {
+   "prompt": "Shot 19: a woman at the market sits on a low wall, wide establishing frame.",
+   "id": "shot_19",
+   "target_seconds": 5,
+   "act": "setup"
+  },
+  {
+   "prompt": "Shot 20: a woman at the lighthouse turns and listens, wide establishing frame.",
+   "id": "shot_20",
+   "target_seconds": 5,
+   "act": "setup"
+  },
+  {
+   "prompt": "Shot 21: a woman at the train station reads a folded letter, wide establishing frame.",
+   "id": "shot_21",
+   "target_seconds": 5,
+   "act": "turn"
+  },
+  {
+   "prompt": "Shot 22: a woman at the rooftop checks an old watch, wide establishing frame.",
+   "id": "shot_22",
+   "target_seconds": 5,
+   "act": "turn"
+  },
+  {
+   "prompt": "Shot 23: a woman at the forest path looks out at the water, wide establishing frame.",
+   "id": "shot_23",
+   "target_seconds": 5,
+   "act": "turn"
+  },
+  {
+   "prompt": "Shot 24: a woman at the harbor walks slowly toward camera, wide establishing frame.",
+   "id": "shot_24",
+   "target_seconds": 5,
+   "act": "turn"
+  },
+  {
+   "prompt": "Shot 25: a woman at the market sits on a low wall, wide establishing frame.",
+   "id": "shot_25",
+   "target_seconds": 5,
+   "act": "turn"
+  },
+  {
+   "prompt": "Shot 26: a woman at the lighthouse turns and listens, wide establishing frame.",
+   "id": "shot_26",
+   "target_seconds": 5,
+   "act": "turn"
+  },
+  {
+   "prompt": "Shot 27: a woman at the train station reads a folded letter, wide establishing frame.",
+   "id": "shot_27",
+   "target_seconds": 5,
+   "act": "turn"
+  },
+  {
+   "prompt": "Shot 28: a woman at the rooftop checks an old watch, wide establishing frame.",
+   "id": "shot_28",
+   "target_seconds": 5,
+   "act": "turn"
+  },
+  {
+   "prompt": "Shot 29: a woman at the forest path looks out at the water, wide establishing frame.",
+   "id": "shot_29",
+   "target_seconds": 5,
+   "act": "turn"
+  },
+  {
+   "prompt": "Shot 30: a woman at the harbor walks slowly toward camera, wide establishing frame.",
+   "id": "shot_30",
+   "target_seconds": 5,
+   "act": "turn"
+  },
+  {
+   "prompt": "Shot 31: a woman at the market sits on a low wall, wide establishing frame.",
+   "id": "shot_31",
+   "target_seconds": 5,
+   "act": "turn"
+  },
+  {
+   "prompt": "Shot 32: a woman at the lighthouse turns and listens, wide establishing frame.",
+   "id": "shot_32",
+   "target_seconds": 5,
+   "act": "turn"
+  },
+  {
+   "prompt": "Shot 33: a woman at the train station reads a folded letter, wide establishing frame.",
+   "id": "shot_33",
+   "target_seconds": 5,
+   "act": "turn"
+  },
+  {
+   "prompt": "Shot 34: a woman at the rooftop checks an old watch, wide establishing frame.",
+   "id": "shot_34",
+   "target_seconds": 5,
+   "act": "turn"
+  },
+  {
+   "prompt": "Shot 35: a woman at the forest path looks out at the water, wide establishing frame.",
+   "id": "shot_35",
+   "target_seconds": 5,
+   "act": "turn"
+  },
+  {
+   "prompt": "Shot 36: a woman at the harbor walks slowly toward camera, wide establishing frame.",
+   "id": "shot_36",
+   "target_seconds": 5,
+   "act": "turn"
+  },
+  {
+   "prompt": "Shot 37: a woman at the market sits on a low wall, wide establishing frame.",
+   "id": "shot_37",
+   "target_seconds": 5,
+   "act": "turn"
+  },
+  {
+   "prompt": "Shot 38: a woman at the lighthouse turns and listens, wide establishing frame.",
+   "id": "shot_38",
+   "target_seconds": 5,
+   "act": "turn"
+  },
+  {
+   "prompt": "Shot 39: a woman at the train station reads a folded letter, wide establishing frame.",
+   "id": "shot_39",
+   "target_seconds": 5,
+   "act": "turn"
+  },
+  {
+   "prompt": "Shot 40: a woman at the rooftop checks an old watch at night in the rain, wide establishing frame.",
+   "id": "shot_40",
+   "target_seconds": 5,
+   "act": "turn"
+  },
+  {
+   "prompt": "Shot 41: a woman at the forest path looks out at the water, wide establishing frame.",
+   "id": "shot_41",
+   "target_seconds": 5,
+   "act": "end"
+  },
+  {
+   "prompt": "Shot 42: a woman at the harbor walks slowly toward camera, wide establishing frame.",
+   "id": "shot_42",
+   "target_seconds": 5,
+   "act": "end"
+  },
+  {
+   "prompt": "Shot 43: a woman at the market sits on a low wall, wide establishing frame.",
+   "id": "shot_43",
+   "target_seconds": 5,
+   "act": "end"
+  },
+  {
+   "prompt": "Shot 44: a woman at the lighthouse turns and listens, wide establishing frame.",
+   "id": "shot_44",
+   "target_seconds": 5,
+   "act": "end"
+  },
+  {
+   "prompt": "Shot 45: a woman at the train station reads a folded letter, wide establishing frame.",
+   "id": "shot_45",
+   "target_seconds": 5,
+   "act": "end"
+  },
+  {
+   "prompt": "Shot 46: a woman at the rooftop checks an old watch, wide establishing frame.",
+   "id": "shot_46",
+   "target_seconds": 5,
+   "act": "end"
+  },
+  {
+   "prompt": "Shot 47: a woman at the forest path looks out at the water, wide establishing frame.",
+   "id": "shot_47",
+   "target_seconds": 5,
+   "act": "end"
+  },
+  {
+   "prompt": "Shot 48: a woman at the harbor walks slowly toward camera, wide establishing frame.",
+   "id": "shot_48",
+   "target_seconds": 5,
+   "act": "end"
+  },
+  {
+   "prompt": "Shot 49: a woman at the market sits on a low wall, wide establishing frame.",
+   "id": "shot_49",
+   "target_seconds": 5,
+   "act": "end"
+  },
+  {
+   "prompt": "Shot 50: a woman at the lighthouse turns and listens, wide establishing frame.",
+   "id": "shot_50",
+   "target_seconds": 5,
+   "act": "end"
+  },
+  {
+   "prompt": "Shot 51: a woman at the train station reads a folded letter, wide establishing frame.",
+   "id": "shot_51",
+   "target_seconds": 5,
+   "act": "end"
+  },
+  {
+   "prompt": "Shot 52: a woman at the rooftop checks an old watch, wide establishing frame.",
+   "id": "shot_52",
+   "target_seconds": 5,
+   "act": "end"
+  },
+  {
+   "prompt": "Shot 53: a woman at the forest path looks out at the water, wide establishing frame.",
+   "id": "shot_53",
+   "target_seconds": 5,
+   "act": "end"
+  },
+  {
+   "prompt": "Shot 54: a woman at the harbor walks slowly toward camera, wide establishing frame.",
+   "id": "shot_54",
+   "target_seconds": 5,
+   "act": "end"
+  },
+  {
+   "prompt": "Shot 55: a woman at the market sits on a low wall, wide establishing frame.",
+   "id": "shot_55",
+   "target_seconds": 5,
+   "act": "end"
+  },
+  {
+   "prompt": "Shot 56: a woman at the lighthouse turns and listens, wide establishing frame.",
+   "id": "shot_56",
+   "target_seconds": 5,
+   "act": "end"
+  },
+  {
+   "prompt": "Shot 57: a woman at the train station reads a folded letter, wide establishing frame.",
+   "id": "shot_57",
+   "target_seconds": 5,
+   "act": "end"
+  },
+  {
+   "prompt": "Shot 58: a woman at the rooftop checks an old watch, wide establishing frame.",
+   "id": "shot_58",
+   "target_seconds": 5,
+   "act": "end"
+  },
+  {
+   "prompt": "Shot 59: a woman at the forest path looks out at the water, wide establishing frame.",
+   "id": "shot_59",
+   "target_seconds": 5,
+   "act": "end"
+  },
+  {
+   "prompt": "Shot 60: a woman at the harbor walks slowly toward camera, wide establishing frame.",
+   "id": "shot_60",
+   "target_seconds": 5,
+   "act": "end"
+  }
+ ],
+ "returned": [
+  {
+   "prompt": "Shot 1: a woman at the market sits on a low wall, wide establishing frame.",
+   "id": "shot_01",
+   "target_seconds": 5,
+   "act": "setup"
+  },
+  {
+   "prompt": "Shot 2: a woman at the lighthouse turns and listens, wide establishing frame.",
+   "id": "shot_02",
+   "target_seconds": 5,
+   "act": "setup"
+  },
+  {
+   "prompt": "Shot 3: a woman at the train station reads a folded letter, wide establishing frame.",
+   "id": "shot_03",
+   "target_seconds": 5,
+   "act": "setup"
+  },
+  {
+   "prompt": "Shot 4: a woman at the rooftop checks an old watch, wide establishing frame.",
+   "id": "shot_04",
+   "target_seconds": 5,
+   "act": "setup"
+  },
+  {
+   "prompt": "Shot 5: a woman at the forest path looks out at the water at night, wide establishing frame.",
+   "id": "shot_05",
+   "target_seconds": 5,
+   "act": "setup"
+  },
+  {
+   "prompt": "Shot 6: a woman at the harbor walks slowly toward camera, wide establishing frame.",
+   "id": "shot_06",
+   "target_seconds": 5,
+   "act": "setup"
+  },
+  {
+   "prompt": "Shot 7: a woman at the market sits on a low wall, wide establishing frame.",
+   "id": "shot_07",
+   "target_seconds": 5,
+   "act": "setup"
+  },
+  {
+   "prompt": "Shot 8: a woman at the lighthouse turns and listens, wide establishing frame.",
+   "id": "shot_08",
+   "target_seconds": 5,
+   "act": "setup"
+  },
+  {
+   "prompt": "Shot 9: a woman at the train station reads a folded letter, wide establishing frame.",
+   "id": "shot_09",
+   "target_seconds": 5,
+   "act": "setup"
+  },
+  {
+   "prompt": "Shot 11: a woman at the forest path looks out at the water, wide establishing frame.",
+   "id": "shot_11",
+   "target_seconds": 5,
+   "act": "setup"
+  },
+  {
+   "prompt": "Shot 12: a woman at the harbor walks slowly toward camera at night, wide establishing frame.",
+   "id": "shot_12",
+   "target_seconds": 5,
+   "act": "setup"
+  },
+  {
+   "prompt": "Shot 13: a woman at the market sits on a low wall, wide establishing frame.",
+   "id": "shot_13",
+   "target_seconds": 5,
+   "act": "setup"
+  },
+  {
+   "prompt": "Shot 14: a woman at the lighthouse turns and listens, wide establishing frame.",
+   "id": "shot_14",
+   "target_seconds": 5,
+   "act": "setup"
+  },
+  {
+   "prompt": "Shot 15: a woman at the train station reads a folded letter, wide establishing frame.",
+   "id": "shot_15",
+   "target_seconds": 5,
+   "act": "setup"
+  },
+  {
+   "prompt": "Shot 16: a woman at the rooftop checks an old watch, wide establishing frame.",
+   "id": "shot_16",
+   "target_seconds": 5,
+   "act": "setup"
+  },
+  {
+   "prompt": "Shot 17: a woman at the forest path looks out at the water, wide establishing frame.",
+   "id": "shot_17",
+   "target_seconds": 5,
+   "act": "setup"
+  },
+  {
+   "prompt": "Shot 18: a woman at the harbor walks slowly toward camera, wide establishing frame.",
+   "id": "shot_18",
+   "target_seconds": 5,
+   "act": "setup"
+  },
+  {
+   "prompt": "Shot 19: a woman at the market sits on a low wall, wide establishing frame.",
+   "id": "shot_19",
+   "target_seconds": 5,
+   "act": "setup"
+  },
+  {
+   "prompt": "Shot 21: a woman at the train station reads a folded letter, wide establishing frame.",
+   "id": "shot_21",
+   "target_seconds": 5,
+   "act": "turn"
+  },
+  {
+   "prompt": "Shot 22: a woman at the rooftop checks an old watch, wide establishing frame.",
+   "id": "shot_22",
+   "target_seconds": 5,
+   "act": "turn"
+  },
+  {
+   "prompt": "Shot 23: a woman at the forest path looks out at the water, wide establishing frame.",
+   "id": "shot_23",
+   "target_seconds": 5,
+   "act": "turn"
+  },
+  {
+   "prompt": "Shot 24: a woman at the harbor walks slowly toward camera, wide establishing frame.",
+   "id": "shot_24",
+   "target_seconds": 5,
+   "act": "turn"
+  },
+  {
+   "prompt": "Shot 25: a woman at the market sits on a low wall, wide establishing frame.",
+   "id": "shot_25",
+   "target_seconds": 5,
+   "act": "turn"
+  },
+  {
+   "prompt": "Shot 26: a woman at the lighthouse turns and listens, wide establishing frame.",
+   "id": "shot_26",
+   "target_seconds": 5,
+   "act": "turn"
+  },
+  {
+   "prompt": "Shot 27: a woman at the train station reads a folded letter, wide establishing frame.",
+   "id": "shot_27",
+   "target_seconds": 5,
+   "act": "turn"
+  },
+  {
+   "prompt": "Shot 28: a woman at the rooftop checks an old watch, wide establishing frame.",
+   "id": "shot_28",
+   "target_seconds": 5,
+   "act": "turn"
+  },
+  {
+   "prompt": "Shot 29: a woman at the forest path looks out at the water, wide establishing frame.",
+   "id": "shot_29",
+   "target_seconds": 5,
+   "act": "turn"
+  },
+  {
+   "prompt": "Shot 31: a woman at the market sits on a low wall, wide establishing frame.",
+   "id": "shot_31",
+   "target_seconds": 5,
+   "act": "turn"
+  },
+  {
+   "prompt": "Shot 32: a woman at the lighthouse turns and listens, wide establishing frame.",
+   "id": "shot_32",
+   "target_seconds": 5,
+   "act": "turn"
+  },
+  {
+   "prompt": "Shot 33: a woman at the train station reads a folded letter, wide establishing frame.",
+   "id": "shot_33",
+   "target_seconds": 5,
+   "act": "turn"
+  },
+  {
+   "prompt": "Shot 34: a woman at the rooftop checks an old watch, wide establishing frame.",
+   "id": "shot_34",
+   "target_seconds": 5,
+   "act": "turn"
+  },
+  {
+   "prompt": "Shot 35: a woman at the forest path looks out at the water, wide establishing frame.",
+   "id": "shot_35",
+   "target_seconds": 5,
+   "act": "turn"
+  },
+  {
+   "prompt": "Shot 36: a woman at the harbor walks slowly toward camera, wide establishing frame.",
+   "id": "shot_36",
+   "target_seconds": 5,
+   "act": "turn"
+  },
+  {
+   "prompt": "Shot 37: a woman at the market sits on a low wall, wide establishing frame.",
+   "id": "shot_37",
+   "target_seconds": 5,
+   "act": "turn"
+  },
+  {
+   "prompt": "Shot 38: a woman at the lighthouse turns and listens, wide establishing frame.",
+   "id": "shot_38",
+   "target_seconds": 5,
+   "act": "turn"
+  },
+  {
+   "prompt": "Shot 39: a woman at the train station reads a folded letter, wide establishing frame.",
+   "id": "shot_39",
+   "target_seconds": 5,
+   "act": "turn"
+  },
+  {
+   "prompt": "Shot 40: a woman at the rooftop checks an old watch at night in the rain, wide establishing frame.",
+   "id": "shot_40",
+   "target_seconds": 5,
+   "act": "turn"
+  },
+  {
+   "prompt": "Shot 41: a woman at the forest path looks out at the water, wide establishing frame.",
+   "id": "shot_41",
+   "target_seconds": 5,
+   "act": "end"
+  },
+  {
+   "prompt": "Shot 42: a woman at the harbor walks slowly toward camera, wide establishing frame.",
+   "id": "shot_42",
+   "target_seconds": 5,
+   "act": "end"
+  },
+  {
+   "prompt": "Shot 43: a woman at the market sits on a low wall, wide establishing frame.",
+   "id": "shot_43",
+   "target_seconds": 5,
+   "act": "end"
+  },
+  {
+   "prompt": "Shot 44: a woman at the lighthouse turns and listens, wide establishing frame.",
+   "id": "shot_44",
+   "target_seconds": 5,
+   "act": "end"
+  },
+  {
+   "prompt": "Shot 45: a woman at the train station reads a folded letter, wide establishing frame.",
+   "id": "shot_45",
+   "target_seconds": 5,
+   "act": "end"
+  },
+  {
+   "prompt": "Shot 46: a woman at the rooftop checks an old watch, wide establishing frame.",
+   "id": "shot_46",
+   "target_seconds": 5,
+   "act": "end"
+  },
+  {
+   "prompt": "Shot 47: a woman at the forest path looks out at the water, wide establishing frame.",
+   "id": "shot_47",
+   "target_seconds": 5,
+   "act": "end"
+  },
+  {
+   "prompt": "Shot 48: a woman at the harbor walks slowly toward camera, wide establishing frame.",
+   "id": "shot_48",
+   "target_seconds": 5,
+   "act": "end"
+  },
+  {
+   "prompt": "Shot 49: a woman at the market sits on a low wall, wide establishing frame.",
+   "id": "shot_49",
+   "target_seconds": 5,
+   "act": "end"
+  },
+  {
+   "prompt": "Shot 50: a woman at the lighthouse turns and listens, wide establishing frame.",
+   "id": "shot_50",
+   "target_seconds": 5,
+   "act": "end"
+  },
+  {
+   "prompt": "Shot 51: a woman at the train station reads a folded letter, wide establishing frame.",
+   "id": "shot_51",
+   "target_seconds": 5,
+   "act": "end"
+  },
+  {
+   "prompt": "Shot 52: a woman at the rooftop checks an old watch, wide establishing frame.",
+   "id": "shot_52",
+   "target_seconds": 5,
+   "act": "end"
+  },
+  {
+   "prompt": "Shot 53: a woman at the forest path looks out at the water, wide establishing frame.",
+   "id": "shot_53",
+   "target_seconds": 5,
+   "act": "end"
+  },
+  {
+   "prompt": "Shot 54: a woman at the harbor walks slowly toward camera, wide establishing frame.",
+   "id": "shot_54",
+   "target_seconds": 5,
+   "act": "end"
+  },
+  {
+   "prompt": "Shot 55: a woman at the market sits on a low wall, wide establishing frame.",
+   "id": "shot_55",
+   "target_seconds": 5,
+   "act": "end"
+  },
+  {
+   "prompt": "Shot 56: a woman at the lighthouse turns and listens, wide establishing frame.",
+   "id": "shot_56",
+   "target_seconds": 5,
+   "act": "end"
+  },
+  {
+   "prompt": "Shot 57: a woman at the train station reads a folded letter, wide establishing frame.",
+   "id": "shot_57",
+   "target_seconds": 5,
+   "act": "end"
+  },
+  {
+   "prompt": "Shot 58: a woman at the rooftop checks an old watch, wide establishing frame.",
+   "id": "shot_58",
+   "target_seconds": 5,
+   "act": "end"
+  },
+  {
+   "prompt": "Shot 59: a woman at the forest path looks out at the water, wide establishing frame.",
+   "id": "shot_59",
+   "target_seconds": 5,
+   "act": "end"
+  },
+  {
+   "prompt": "Shot 60: a woman at the harbor walks slowly toward camera, wide establishing frame.",
+   "id": "shot_60",
+   "target_seconds": 5,
+   "act": "end"
+  }
+ ]
+}

@@ -264,7 +264,7 @@ function buildSlotUploadRow(slot, char, bound) {
     linked.textContent =
       bound.name + " is in this film"
       + (portraitCount || refCount
-        ? " (" + (portraitCount ? "has a face" : "no face yet")
+        ? " (" + (portraitCount ? "face photo added" : "no face yet")
           + (refCount ? ", " + refCount + " extra photo" + (refCount === 1 ? "" : "s") : "")
           + ")."
         : " (add a face photo on Cast).")
@@ -469,7 +469,7 @@ async function ensureFilmBundle() {
     };
   }
   if (missing.length) {
-    return { ok: false, reason: missing.join(", ") + " need a face photo on Cast" };
+    return { ok: false, reason: missing.join(", ") + (missing.length === 1 ? " needs" : " need") + " a face photo on Cast" };
   }
   if (Object.keys(characterRefs).length === 0) {
     return { ok: false, reason: "no faces to pack" };

@@ -43,7 +43,7 @@ Shapes live in `@skyphusion-labs/vivijure-core` (`modules/types`).
 | `keyframe` | Storyboard -> start keyframes. Backend-selectable: GPU SDXL or GPUless cloud (e.g. cloud-keyframe) are modules. | pick one |
 | `motion.backend` | Keyframe (+ motion prompt) -> shot clip. GPU/RunPod and cloud providers are modules. | pick one per shot |
 | `finish` | Post-process a clip: frame interpolation, color grade, upscale (CUDA Real-ESRGAN), face restore. | chain (0..n, ordered) |
-| `score` | Add audio to a film: music, narration, beat-sync. | chain (0..n) |
+| `score` | Add audio to a film: music, narration, beat-sync. | one per kind (`score_kind`) |
 | `dialogue` | Per-shot dialogue lines -> speech audio (TTS, one voice per cast member). Runs after clips, before finish; its audio becomes the shot's spoken track, and is offered to any finish module that declares `finish_consumes_audio`. | pick one |
 | `speech` | Per-shot dialogue AUDIO -> cleaned/enhanced dialogue audio (e.g. speech upscale). Runs after `dialogue`, before `finish`, so the improved track is what the film carries. | chain (0..n) |
 | `plan.enhance` | Expand a storyboard before render: LLM auto-direction, camera/lighting enrichment. | chain (0..n) |
@@ -74,12 +74,15 @@ depends on the hook, not on the module:
 | `dialogue` | A submit failure on the pre-clip path fails the film; on the post-clip path the film finishes silent. |
 | `keyframe`, `motion.backend` | Fails that phase / shot (motion retries transient provider failures per shot). |
 
-> **Known deviation (#764, MA-13):** `score` is declared `chain`, but no render path folds a score
-> chain today. The host invokes exactly ONE score module per request from the planner
-> (`src/score-bed.ts`, core `beat-analyze`), classifying modules by which config key they declare:
-> `config_schema.prompt` = music bed, `config_schema.text` = narration, `config_schema.clip_seconds` =
-> beat analysis (first by `ui.order` unless the caller names one). The generated bed is read from an
-> `audio:<r2-key>` tag in `ScoreOutput.applied`, not from `film_key`.
+> **`score` is one module per KIND (vivijure-cf#878, MA-13 resolved).** The hook carries three products a
+> film can use together: a music bed, narration, and a beat plan. A score module MUST declare which one
+> it produces, as `score_kind`: `"music"`, `"narration"` or `"beat"`. The host picks one module within
+> the kind it needs (core `pickScoreModule`): the module the caller names, else the first of that kind
+> by `ui.order`. A score module that declares no kind is never selected, and the refusal names it; core
+> `checkManifest` fails conformance for it. Config keys never decide the kind any more (before #878,
+> `prompt` meant music, `text` narration and `clip_seconds` beat). The catalog reports the cardinality as
+> `pick_one_per_kind`. The generated bed is read from an `audio:<r2-key>` tag in `ScoreOutput.applied`,
+> not from `film_key`.
 
 ## The module manifest (`module.json`)
 
@@ -142,6 +145,7 @@ service-bound, but is never installed through the dispatch install gate, and is 
 | `cancelable` | boolean | no | not validated | |
 | `finish_artifacts` | `FinishArtifactsDecl` | no | malformed (see that section) | |
 | `finish_consumes_audio` | boolean | no | not validated | |
+| `finish_scales_frame` | boolean | no | not validated | |
 | `keyframe_label` | string | no | empty / whitespace / non-string | |
 | `duration_grid` | `{ fps: number; tiers: Record<string, { max_frames: number }> }` | no | not validated | |
 | `usage` | `MotionUsageDecl` | no | present but not a valid `MotionUsageDecl` (needs `native_audio`, `voice`, `scatter_native_audio`, `min_seconds`, `max_seconds`) | |
@@ -151,6 +155,9 @@ service-bound, but is never installed through the dispatch install gate, and is 
 | `ui.order` | number | no | | (absent sorts as `100`) |
 | `ui.locality` | `"local" \| "byo" \| "cloud"` | no | | (absent classifies as `cloud`) |
 | `ui.cost` | string | no | | |
+| `ui.cost_usd_per_second` | `[number, number]` | no | | (absent = price unknown) |
+| `ui.cost_usd_per_clip` | `{ usd, resolution?, seconds? }[]` | no | | (absent = price unknown) |
+| `ui.cost_as_of` | `"YYYY-MM-DD"` | with a cost field | | |
 | `ui.blurb` | string | no | | |
 | `ui.limits` | string[] | no | | |
 
@@ -164,9 +171,25 @@ What each optional field means:
   one whole invocation, relayed from the guard it actually runs with. The core sizes the phase stall
   ceiling from it. Declare the whole invocation or nothing; never a rate, never an aspiration. An
   absent value is reported (`FilmJob.ceiling_undeclared`, `film.ceiling_undeclared` event), not guessed.
+  A declared value ABOVE `PHASE_HARD_DEADLINE_SECONDS / FINISH_STEP_MAX_ATTEMPTS` (5400/3 = **1800**)
+  makes the core's effective phase deadline derived rather than floored, which moves it globally;
+  see `modules/_shared/finish-ceiling.ts` (cf#762).
 - **`cancelable`**: the module serves `POST /cancel` (see "Async + cancel").
 - **`usage`** (`motion.backend`): how the door is actually called (native audio, voice mode, min/max
   seconds, duration steps, first/last frame, seed, voice ref, driving audio). Absent = undeclared.
+- **`usage.face_hold`** (cf#1246): how well the door holds a face across a film. `hold` = the same face
+  throughout (a trained face, a reference lock, or a portrait driven by our audio), `two` = pinned by the
+  first and last stills, `one` = pinned by the start still only, `drift` = faces drift. The Make a video
+  page reads it to pick a face-consistent style.
+- **`ui.cost_usd_per_second`** / **`ui.cost_usd_per_clip`** (cf#1246): what one clip costs US, at the
+  provider's price with no markup (Conrad, 2026-11-05), so the panel can total a film. A door carries one
+  of the two, never both. Per second is `[lowest resolution, highest resolution]`. Per clip is a list of
+  price points; `resolution` is a value of the door's resolution enum, `seconds` one of its
+  `duration_steps`, and an absent key matches any value. No matching point means price unknown, never a
+  guess. `ui.cost_as_of` is the day the figure was read, and is required with either field. The
+  source of each figure is in `docs/motion-door-prices.md`. A door with no listed price leaves both out
+  and says so in `ui.limits`. The rules are in `modules/_shared/door-manifest-rules.ts` and
+  `docs/CONTRACT.md` 4.0.1.
 - **`needs_tenant_r2`**: see `InvokeRequest.r2` under "Invocation contract". Leave absent unless the
   module submits to a pooled RunPod endpoint that needs the tenant's per-job R2 credential.
 - **`ui.locality`**: load-bearing, not cosmetic. It drives the planner door tag AND the core's
@@ -291,9 +314,16 @@ planner routes do not poll: a planning module must answer inline (`ok: true, out
 (see above), so they arrive even though the module does not declare them.
 
 `config.system_message` carries the system prompt for the generative modes. A model MISS on
-`plan`/`refine` must degrade honestly (`ok: true`, the input storyboard passed through unchanged, and
-a `notes` entry naming what was skipped and why) rather than failing the chain; malformed I/O (a
-missing `config.message`) fails loud with `ok: false`.
+`plan`/`refine` (a model error, a reply cut off at its output limit, or a reply that does not parse)
+returns `ok: false` with an `error` stating the true reason, and the studio returns that reason to
+the caller. There is no plan to pass through: an `ok: true` passthrough would give the studio an empty
+storyboard to reject in `plan`, and an unchanged one that reads as a success in `refine`. The error
+must not carry model or upstream body text (cf#223). The default director pass still degrades
+honestly (`ok: true`, the input storyboard unchanged, and a `notes` entry naming the reason).
+
+`plan-enhance` sends `plan` and `refine` with `cf-aig-skip-cache: true`, so a retry cannot replay a
+failed reply from the AI Gateway cache. A truncated or refused Anthropic reply is not retried on the
+local fallback model.
 
 ### `image.generate` model catalog
 
@@ -413,7 +443,7 @@ permanent failure.
 | `image.generate` | No: a `pending` answer is rejected. |
 | `notify` | No: the host never polls a notifier; answer inline. |
 | `score` music / narration bed (planner) | MUST answer `pending` (a synchronous answer is rejected). |
-| `score` beat analysis (`config_schema.clip_seconds`) | No: answer inline. |
+| `score` beat analysis (`score_kind: "beat"`) | No: answer inline. |
 
 ### Credential readiness (`GET /ready`, optional + additive)
 
@@ -821,7 +851,7 @@ the hook's failure policy). Optional output fields are validated only when prese
 | out | `images[]` | yes | each `{ key, mime }` strings (already written to R2) |
 | out | `applied` | yes | `string[]` |
 
-**`score`** (see the MA-13 note under "The hooks" for how the host calls it today)
+**`score`** (declare `score_kind`; see the note under "The hooks" for how the host picks a module)
 
 | | Field | Req | Notes |
 |---|---|---|---|
@@ -903,15 +933,18 @@ GET /api/modules
 
 - `modules`: each manifest as served (the internal `binding` ref is stripped; topology never leaves
   the core). `hooks`: hook -> module names, in fold order.
-- `catalog`: EVERY hook (installed or not) with its `blurb`, `cardinality` (`pick_one` | `chain`) and
+- `catalog`: EVERY hook (installed or not) with its `blurb`, `cardinality` (`pick_one` | `chain` |
+  `pick_one_per_kind`, the last for `score` only) and
   display `order`; the UI renders the pipeline panel from it. `render`: host-owned render config
   (quality tiers, see CONTRACT.md 2.3.1).
 - `host` (optional, the host describing itself): `dispatch` (this deploy binds the WfP namespace),
   and when relevant `hooks_unavailable` (hook -> reason the UI prints verbatim, cf#98),
-  `abuse_report_url` (only when the operator set one), and on demo deploys `readonly: true`,
+  and `abuse_report_url` (only when the operator set one),
   `render.available`, `assistant`.
 - `studio_release` (cf#287) is the studio build identity: `env.STUDIO_RELEASE` when bound, else the
-  baked `package.json` version. Optional `git_sha` appears only when `env.STUDIO_GIT_SHA` is set.
+  baked `package.json` version. `core_version` (cf#1347) is the vivijure-core the worker was built with,
+  and `git_sha` is `env.STUDIO_GIT_SHA` when the deploy stamps a hex sha, else `null`. Both are always
+  present.
   Module manifest `version` strings do not substitute for this: each is that module's own release
   version (and `api` is the contract version), neither is the studio build.
 

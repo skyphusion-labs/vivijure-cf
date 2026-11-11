@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { clampTier, buildPreviewBody, parseKeyframes, parseTrainedLoras, encodePoll, decodePoll, runpodJobGone, classifyGoneState, RUNPOD_NOTFOUND_GRACE_MS } from "../modules/keyframe/src/keyframe";
+import { clampTier, clampStyle, KEYFRAME_BASES, buildPreviewBody, parseKeyframes, parseTrainedLoras, encodePoll, decodePoll, runpodJobGone, classifyGoneState, RUNPOD_NOTFOUND_GRACE_MS } from "../modules/keyframe/src/keyframe";
 import { MANIFEST } from "../modules/keyframe/src/manifest";
 
 describe("keyframe pure logic", () => {
@@ -70,6 +70,63 @@ describe("keyframe pure logic", () => {
     });
   });
 
+  it("buildPreviewBody forwards plate_people_free_background only as a real boolean (cf#1143 option c)", () => {
+    const on = buildPreviewBody({ project: "p", bundle_key: "b" }, { plate_people_free_background: true });
+    expect(on.input.render_overrides).toEqual({ keyframe: { plate_people_free_background: true } });
+    const bad = buildPreviewBody({ project: "p", bundle_key: "b" }, { plate_people_free_background: "true" });
+    expect(bad.input.render_overrides).toBeUndefined();
+  });
+
+  it("buildPreviewBody sends pose_scale where the backend reads it, under multi_char (cf#1143 option d)", () => {
+    const { input } = buildPreviewBody({ project: "p", bundle_key: "b" }, { pose_scale: 0.8 });
+    expect(input.render_overrides).toEqual({ keyframe: { multi_char: { controlnet_pose_scale: 0.8 } } });
+    const bad = buildPreviewBody({ project: "p", bundle_key: "b" }, { pose_scale: "0.8" });
+    expect(bad.input.render_overrides).toBeUndefined();
+  });
+
+  it("buildPreviewBody maps pose_conditioning on/off to multi_char and sends nothing on auto (cf#1281)", () => {
+    const on = buildPreviewBody({ project: "p", bundle_key: "b" }, { pose_conditioning: "on" });
+    expect(on.input.render_overrides).toEqual({ keyframe: { multi_char: { pose_conditioning: true } } });
+    const off = buildPreviewBody({ project: "p", bundle_key: "b" }, { pose_conditioning: "off" });
+    expect(off.input.render_overrides).toEqual({ keyframe: { multi_char: { pose_conditioning: false } } });
+    const auto = buildPreviewBody({ project: "p", bundle_key: "b" }, { pose_conditioning: "auto" });
+    expect(auto.input.render_overrides).toBeUndefined();
+    // A raw boolean or a typo is not a known value, so it never reaches the wire.
+    for (const v of [true, false, "true", "On", null]) {
+      expect(buildPreviewBody({ project: "p", bundle_key: "b" }, { pose_conditioning: v }).input.render_overrides).toBeUndefined();
+    }
+  });
+
+  it("buildPreviewBody keeps pose_scale and pose_conditioning together under one multi_char block (cf#1281)", () => {
+    const { input } = buildPreviewBody({ project: "p", bundle_key: "b" }, { pose_scale: 0.3, pose_conditioning: "on" });
+    expect(input.render_overrides).toEqual({ keyframe: { multi_char: { controlnet_pose_scale: 0.3, pose_conditioning: true } } });
+    const auto = buildPreviewBody({ project: "p", bundle_key: "b" }, { pose_scale: 0.3, pose_conditioning: "auto" });
+    expect(auto.input.render_overrides).toEqual({ keyframe: { multi_char: { controlnet_pose_scale: 0.3 } } });
+  });
+
+  it("buildPreviewBody forwards plate_regional_text only as a real boolean (cf#1143 option a)", () => {
+    const on = buildPreviewBody({ project: "p", bundle_key: "b" }, { plate_regional_text: true });
+    expect(on.input.render_overrides).toEqual({ keyframe: { plate_regional_text: true } });
+    const off = buildPreviewBody({ project: "p", bundle_key: "b" }, { plate_regional_text: false });
+    expect(off.input.render_overrides).toEqual({ keyframe: { plate_regional_text: false } });
+    const bad = buildPreviewBody({ project: "p", bundle_key: "b" }, { plate_regional_text: "true" });
+    expect(bad.input.render_overrides).toBeUndefined();
+  });
+
+  it("buildPreviewBody forwards plate_ip_adapter_scale, and drops a non-number (cf#1143 option b)", () => {
+    const { input } = buildPreviewBody({ project: "p", bundle_key: "b" }, { plate_ip_adapter_scale: 0.4 });
+    expect(input.render_overrides).toEqual({ keyframe: { plate_ip_adapter_scale: 0.4 } });
+    const bad = buildPreviewBody({ project: "p", bundle_key: "b" }, { plate_ip_adapter_scale: "0.4" });
+    expect(bad.input.render_overrides).toBeUndefined();
+  });
+
+  it("buildPreviewBody forwards face_crop_pad, and drops a non-number (cf#1143)", () => {
+    const { input } = buildPreviewBody({ project: "p", bundle_key: "b" }, { face_crop_pad: 1.1 });
+    expect(input.render_overrides).toEqual({ keyframe: { face_crop_pad: 1.1 } });
+    const bad = buildPreviewBody({ project: "p", bundle_key: "b" }, { face_crop_pad: "1.1" });
+    expect(bad.input.render_overrides).toBeUndefined();
+  });
+
   it("buildPreviewBody drops invalid scene_lock / canny_scale and never forwards scene_denoise", () => {
     const { input } = buildPreviewBody(
       { project: "p", bundle_key: "b" },
@@ -102,6 +159,33 @@ describe("keyframe pure logic", () => {
     expect(input.pretrained_loras).toEqual({ A: "loras/a.safetensors" });
   });
 
+  it("clampStyle keeps photoreal unless the value is anime", () => {
+    expect(clampStyle(undefined)).toBe("photoreal");
+    expect(clampStyle("photoreal")).toBe("photoreal");
+    expect(clampStyle("oil")).toBe("photoreal");
+    expect(clampStyle("anime")).toBe("anime");
+  });
+
+  it("buildPreviewBody maps anime style to the Animagine base and drops photoreal LoRAs", () => {
+    const { input } = buildPreviewBody(
+      { project: "p", bundle_key: "b", pretrained_loras: { A: "loras/a.safetensors" } },
+      { style: "anime" },
+    );
+    expect(input.render_overrides).toEqual({
+      keyframe: { base_model: KEYFRAME_BASES.anime },
+    });
+    expect(input.pretrained_loras).toBeUndefined();
+  });
+
+  it("buildPreviewBody leaves photoreal on the backend default and keeps reused LoRAs", () => {
+    const { input } = buildPreviewBody(
+      { project: "p", bundle_key: "b", pretrained_loras: { A: "loras/a.safetensors" } },
+      { style: "photoreal" },
+    );
+    expect(input.render_overrides).toBeUndefined();
+    expect(input.pretrained_loras).toEqual({ A: "loras/a.safetensors" });
+  });
+
   it("parseKeyframes reads the backend result shape (keyframes[].key) into KeyframeShot", () => {
     const result = {
       project: "neon_film",
@@ -120,6 +204,19 @@ describe("keyframe pure logic", () => {
   it("parseKeyframes unwraps a RunPod {output:...} envelope and accepts keyframe_key alias", () => {
     const wrapped = { output: { keyframes: [{ shot_id: "shot_01", keyframe_key: "k.png" }] } };
     expect(parseKeyframes(wrapped)).toEqual([{ shot_id: "shot_01", keyframe_key: "k.png" }]);
+  });
+
+  it("parseKeyframes forwards reused only when the backend sent true (core#372)", () => {
+    const parsed = parseKeyframes({ keyframes: [
+      { shot_id: "shot_01", key: "a", reused: true },
+      { shot_id: "shot_02", key: "b" },
+      { shot_id: "shot_03", key: "c", reused: "yes" },
+    ] });
+    expect(parsed).toEqual([
+      { shot_id: "shot_01", keyframe_key: "a", reused: true },
+      { shot_id: "shot_02", keyframe_key: "b" },
+      { shot_id: "shot_03", keyframe_key: "c" },
+    ]);
   });
 
   it("parseKeyframes skips malformed entries and returns [] for junk", () => {
@@ -188,7 +285,21 @@ describe("keyframe scene-lock schema", () => {
   const JARGON = /i2v|Unified Billing|endpoint|schema|RunPod|Workers AI|generate_audio/i;
 
   it("declares scene_lock default true and canny_scale default 0.70; no scene_denoise", () => {
-    expect(MANIFEST.version).toBe("0.3.2");
+    expect(MANIFEST.version).toBe("0.3.9");
+    expect(MANIFEST.config_schema?.plate_people_free_background).toMatchObject({ type: "bool", default: false });
+    // The pose default is the value the backend shipped with, so nothing changes until it is set.
+    expect(MANIFEST.config_schema?.pose_scale).toMatchObject({ type: "float", default: 0.55, min: 0, max: 1.5 });
+    expect(MANIFEST.config_schema?.plate_regional_text).toMatchObject({ type: "bool", default: false });
+    // cf#1281: tri-state, defaulting to "auto" so the backend default stands unless a job asks.
+    expect(MANIFEST.config_schema?.pose_conditioning).toMatchObject({ type: "enum", values: ["auto", "on", "off"], default: "auto" });
+    expect(MANIFEST.config_schema?.plate_ip_adapter_scale).toMatchObject({ type: "float", default: 0, min: 0, max: 1 });
+    // cf#1143: the default is the crop shipped before it was a knob, so nothing changes until it is set.
+    expect(MANIFEST.config_schema?.face_crop_pad).toMatchObject({ type: "float", default: 0.35, min: 0, max: 2 });
+    expect(MANIFEST.config_schema?.style).toMatchObject({
+      type: "enum",
+      values: ["photoreal", "anime"],
+      default: "photoreal",
+    });
     expect(MANIFEST.config_schema?.scene_lock).toMatchObject({
       type: "bool",
       default: true,

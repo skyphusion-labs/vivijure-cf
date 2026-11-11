@@ -16,7 +16,7 @@
 # migration excluded (must be ABSENT). A check that cannot produce the disconfirming result is not
 # evidence.
 #
-# Requires: sqlite3 and bash 4+ (mapfile). Nothing else -- no python, no node, no deps.
+# Requires: sqlite3 and bash. Nothing else -- no python, no node, no deps.
 #
 # NOT WIRED TO CI, DELIBERATELY AND SAY SO. This ships as a hand-run instrument, not a gate.
 # CI runs on ubuntu-latest, which does carry sqlite3, so wiring it is possible -- but a guard
@@ -33,7 +33,7 @@ trap 'rm -rf "$T"' EXIT
 
 # The numbered chain, in the order wrangler applies it. `migrations/manual/` is DELIBERATELY excluded:
 # those are supervised out-of-band steps and are not part of what a fresh install builds.
-mapfile -t CHAIN < <(find migrations -maxdepth 1 -name '[0-9]*.sql' | sort)
+CHAIN=(); while IFS= read -r m; do CHAIN+=("$m"); done < <(find migrations -maxdepth 1 -name '[0-9]*.sql' | sort)
 if [ "${#CHAIN[@]}" -lt 10 ]; then
   echo "REFUSE: found ${#CHAIN[@]} migrations, expected at least 10 -- the glob is wrong, not the repo" >&2
   exit 1
@@ -96,6 +96,10 @@ assert renders          output_ms 0016_render_output_ms.sql
 assert renders finish_elapsed_ms 0017_finish_elapsed_ms.sql
 assert renders          motion_backend 0018_render_motion_backend.sql
 assert renders          keyframe_backend 0018_render_motion_backend.sql
+assert shot_records     still_key 0022_shot_records.sql
+assert shot_records     wav_key 0022_shot_records.sql
+assert shot_records     clip_key 0022_shot_records.sql
+assert shot_records     step 0022_shot_records.sql
 
 if [ "$fail" -ne 0 ]; then
   echo "MIGRATION CHAIN VERIFY: FAILED" >&2

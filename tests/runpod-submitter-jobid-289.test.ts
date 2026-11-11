@@ -27,6 +27,7 @@
 // The census at the bottom of this file derives the population instead of asserting it, so the next
 // person does not inherit a hand-written list that can go stale the same way.
 import { describe, it, expect, vi, afterEach } from "vitest";
+import { reachesRunpod } from "./runpod-census";
 
 import keyframeWorker from "../modules/keyframe/src/index";
 import finishUpscaleWorker from "../modules/finish-upscale/src/index";
@@ -228,7 +229,7 @@ describe("the population under test is the whole one (cf#289)", () => {
     // matching the hook INSIDE the array, because keying on `hooks: ["motion.backend"]` matches
     // eight of the nine and silently drops local-gpu, which is dual-hook.
     const submitters = candidates.filter(
-      (n) => read(n).includes("api.runpod.ai") || read(n).includes("_shared/runpod-route"),
+      (n) => reachesRunpod(read(n)),
     );
     const motion = candidates.filter((n) => /hooks:\s*\[[^\]]*"motion\.backend"/.test(read(n)));
     const mine = submitters.filter((n) => !motion.includes(n));
@@ -251,18 +252,18 @@ describe("the population under test is the whole one (cf#289)", () => {
     // every assertion below vacuous by leaving all three sets empty.
     expect(candidates.length).toBeGreaterThanOrEqual(26);
     expect(submitters).toContain("narration-gen");
-    expect(submitters).toContain("seedance");
+    expect(submitters).toContain("minimax-hailuo");
     // NEGATIVE CONTROL: the RunPod filter must reject non-submitters, or "nothing uncovered" below
     // becomes satisfiable by covering everything. local-gpu is the sharp case -- it is a motion
     // backend that submits to a LOCAL door, so its id is not a RunPod id at all.
     expect(submitters).not.toContain("cast-image");
     expect(submitters).not.toContain("local-gpu");
     // NEGATIVE CONTROL on the split: this file must not claim the motion half.
-    expect(mine).not.toContain("seedance");
+    expect(mine).not.toContain("minimax-hailuo");
 
-    // cf#289's table named five submitters. It is fourteen. Pinned so the corrected population
-    // cannot quietly narrow back to the issue's version.
-    expect(submitters.length).toBeGreaterThanOrEqual(14);
+    // cf#289's table named five submitters. The floor was 14 until cf#1075 retired three
+    // RunPod motion doors. Pinned at the measured count so it cannot quietly narrow.
+    expect(submitters.length).toBeGreaterThanOrEqual(11);
     expect(submitters).toContain("chatterbox");
     expect(mine.filter((n) => !runsyncOnly.includes(n)).sort()).toEqual(covered.slice().sort());
   });

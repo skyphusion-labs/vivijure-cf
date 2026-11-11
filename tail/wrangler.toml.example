@@ -8,11 +8,17 @@
 #
 # account_id is NOT hardcoded; read from CLOUDFLARE_ACCOUNT_ID same as the core.
 #
-# NOTE: unlike the core, vivijure-tail is OUR-fleet-only (SELFHOST-SKIP in the root
+# NOTE: unlike the core, vivijure-tail is an OPT-IN tier (SELFHOST-SKIP in the root
 # wrangler.toml.example; stripped in studio-release.yml for a WfP tenant) and changes rarely, so it
 # is not part of deploy.sh or the tag-gated CI release job. cf#294: render + deploy it with
 # scripts/deploy-tail.sh (CLOUDFLARE_ACCOUNT_ID, CLOUDFLARE_API_TOKEN, LOKI_VPC_ID) -- run by hand,
 # same as before, but now from this tracked example instead of a hand-edited or guessed config.
+#
+# STATUS 2026-09-27 (cf#838): the reference instance no longer runs a Loki, and the root config no
+# longer binds this worker as a tail consumer. Nothing here is fleet-specific any more: the sink is
+# whatever Loki YOU stand up behind the Workers VPC service you supply below. The worker reports
+# every dropped batch as {"ev":"tail.sink.drop"} in its own Workers Logs, so a misconfigured sink is
+# visible here rather than silent.
 
 name = "vivijure-tail"
 main = "src/index.ts"
@@ -37,12 +43,24 @@ logpush = false
 # Not itself a tail_consumers producer -- it IS the tail consumer for vivijure-studio's core (see
 # the tail_consumers entry in the root wrangler.toml.example).
 
-# Workers VPC -> the self-hosted Loki on biafra (fed the studio core's render logs; see
+# Workers VPC -> the Loki the OPERATOR runs (fed the studio core's render logs; see
 # docs/observability.md). The service id is an account-internal identifier, not a credential, but
 # per this repo's convention (docs/deploy-config-injection.md) it still does not get inlined here.
-# Recorded in the private store (fleet-chezmoi); not reproducible from a documented CF API today
-# (the Workers VPC services surface is not in Cloudflare's public OpenAPI spec as of this writing).
+# Supply it as LOKI_VPC_ID; it is not reproducible from a documented CF API today (the Workers VPC
+# services surface is not in Cloudflare's public OpenAPI spec as of this writing, confirmed again
+# 2026-09-27: GET /accounts/{id}/vpc/services answers 7000 "no route for that URI").
+#
+# The binding is declared here and OPTIONAL in the hand-authored Env (tail/src/index.ts): a deploy
+# rendered without it is a real state this worker must handle, and before cf#838 the type claimed the
+# binding always existed while the code silently returned when it did not. Now that case reports
+# {"ev":"tail.sink.drop","reason":"sink_unbound"} instead of looking like a healthy pipeline.
 [[vpc_services]]
 binding = "LOKI_VPC"
 service_id = "${LOKI_VPC_ID}"
 remote = true
+
+# Optional: where to POST inside the VPC. Unset uses http://loki:3100/loki/api/v1/push, the
+# docker-compose service name the reference instance used. Set it if your Loki answers on another
+# name or port, rather than editing tail/src/index.ts. Mirrored as LOKI_PUSH_URL in the Env there.
+# [vars]
+# LOKI_PUSH_URL = "http://loki:3100/loki/api/v1/push"

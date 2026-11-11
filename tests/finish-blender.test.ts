@@ -10,7 +10,7 @@ import {
   finishedKey,
   defaultConfig,
 } from "../modules/finish-blender/src/finish";
-import { MANIFEST } from "../modules/finish-blender/src/index";
+import { MANIFEST } from "../modules/finish-blender/src/manifest";
 import worker from "../modules/finish-blender/src/index";
 import { DOOR_ROUTE_NAME } from "../modules/_shared/finish-door";
 import type { FinishInput } from "../modules/finish-blender/src/contract";
@@ -43,6 +43,33 @@ describe("finish-blender: coerceConfig", () => {
 describe("finish-blender: blenderKey", () => {
   it("appends _bl before extension", () => {
     expect(blenderKey("renders/p/clips/shot.mp4")).toBe("renders/p/clips/shot_bl.mp4");
+  });
+});
+
+describe("finish-blender: presigned transport (cf#1146)", () => {
+  it("forwards the core's presigned URLs, so a door with no R2 env can run", () => {
+    const body = buildRunPodBody(
+      { ...sample, video_url: "https://g/in.mp4", output_url: "https://p/out.mp4", hash_url: "https://p/out.hash" },
+      coerceConfig({}),
+      "p",
+    );
+    expect(body.input).toMatchObject({
+      video_url: "https://g/in.mp4",
+      output_url: "https://p/out.mp4",
+      hash_url: "https://p/out.hash",
+    });
+  });
+  it("names the key the core presigned, and derives one only when the core sent none", () => {
+    const told = buildRunPodBody({ ...sample, output_key: "renders/p/film-1/x_bl.mp4" }, coerceConfig({}), "p");
+    expect(told.input.output_key).toBe("renders/p/film-1/x_bl.mp4");
+    const derived = buildRunPodBody(sample, coerceConfig({}), "p");
+    expect(String(derived.input.output_key)).toContain("_bl");
+  });
+  it("CONTROL: a core that sends no URLs gets R2 mode, with no empty keys", () => {
+    const body = buildRunPodBody(sample, coerceConfig({}), "p");
+    expect(body.input).not.toHaveProperty("video_url");
+    expect(body.input).not.toHaveProperty("output_url");
+    expect(body.input).not.toHaveProperty("hash_url");
   });
 });
 

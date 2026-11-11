@@ -1,0 +1,73 @@
+/* Make a video (cf#1242). Phone first: one column, big targets. Builds on styles.css tokens. */
+
+.make-layout { max-width: 640px; padding: 18px 16px 96px; }
+.make-form, .make-progress, .make-result { display: grid; gap: 18px; }
+.make-form h1 { margin: 0; font-size: 26px; }
+.make-step { display: grid; gap: 10px; padding: 16px; border: 1px solid var(--line); border-radius: 14px; background: var(--panel); }
+.make-step h2, .make-progress h2, .make-result h2 { margin: 0; font-size: 18px; display: flex; align-items: center; gap: 10px; }
+.make-num {
+  display: inline-grid; place-items: center; width: 26px; height: 26px; border-radius: 50%;
+  font-size: 14px; color: var(--bg); background: linear-gradient(90deg, var(--accent), var(--accent-2));
+}
+.make-hint { margin: 0; color: var(--muted); font-size: 14px; }
+.make-note { margin: 0; color: var(--muted); font-size: 14px; min-height: 1.2em; }
+.make-warn { margin: 0; color: #ffb4a8; font-size: 14px; }
+.make-notes { display: grid; gap: 6px; }
+
+.make-chosen { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
+.make-chosen:empty { display: none; }
+.make-person { display: grid; grid-template-columns: 52px 1fr auto; gap: 12px; align-items: center;
+  padding: 8px; border: 1px solid var(--line); border-radius: 12px; background: var(--panel-2); }
+.make-person img { width: 52px; height: 52px; border-radius: 50%; object-fit: cover; background: var(--line); }
+.make-person div { display: grid; gap: 2px; min-width: 0; }
+.make-person strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.make-drop { min-height: 44px; padding: 0 12px; border-radius: 10px; border: 1px solid var(--line);
+  background: transparent; color: var(--muted); font: inherit; cursor: pointer; }
+.make-drop:hover { border-color: var(--accent); color: var(--ink); }
+
+.make-faces { display: grid; grid-template-columns: repeat(auto-fill, minmax(76px, 1fr)); gap: 10px; }
+.make-faces:empty { display: none; }
+.make-face { display: grid; gap: 4px; justify-items: center; padding: 6px; border: 1px solid transparent;
+  border-radius: 12px; background: transparent; color: var(--ink); font: inherit; font-size: 13px; cursor: pointer; }
+.make-face img { width: 64px; height: 64px; border-radius: 50%; object-fit: cover; background: var(--line); }
+.make-face span { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.make-face:hover:not(:disabled), .make-face:focus-visible { border-color: var(--accent); }
+.make-face:disabled { opacity: 0.4; cursor: default; }
+
+.make-add { display: grid; gap: 10px; }
+.make-add > summary { cursor: pointer; min-height: 44px; display: flex; align-items: center; color: var(--accent); font-weight: 600; }
+.make-add[open] { padding-bottom: 4px; }
+.make-add[open] > * + * { margin-top: 10px; }
+
+.make-layout textarea { width: 100%; font-size: 16px; }
+.make-layout input[type="text"] { font-size: 16px; }
+
+.make-options { display: grid; gap: 8px; }
+.make-option { display: grid; grid-template-columns: auto 1fr; gap: 12px; align-items: center; min-height: 52px;
+  padding: 10px 12px; border: 1px solid var(--line); border-radius: 12px; background: var(--panel-2); cursor: pointer; }
+.make-option:has(input:checked) { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 10%, var(--panel-2)); }
+.make-option input { width: 20px; height: 20px; accent-color: var(--accent); margin: 0; }
+.make-option span { display: grid; gap: 2px; }
+.make-option small { color: var(--muted); font-size: 13px; }
+
+.make-total-figure { margin: 0; font-size: 22px; font-weight: 700; }
+.make-style { margin: 0; color: var(--ink); font-size: 14px; }
+
+.make-go { width: 100%; min-height: 56px; font-size: 18px; border-radius: 14px; }
+.make-go:disabled { opacity: 0.5; cursor: default; }
+
+.make-bar { height: 14px; border-radius: 7px; background: var(--panel-2); border: 1px solid var(--line); overflow: hidden; }
+.make-bar span { display: block; height: 100%; width: 0; background: linear-gradient(90deg, var(--accent), var(--accent-2)); transition: width 0.4s ease; }
+.make-progress p { margin: 0; }
+
+.make-result video { width: 100%; max-height: 70vh; border-radius: 12px; background: #000; }
+.make-actions { display: flex; flex-wrap: wrap; gap: 10px; }
+.make-actions > * { flex: 1 1 160px; min-height: 48px; display: inline-flex; align-items: center; justify-content: center; text-decoration: none; }
+.make-layout .make-actions a.planner-primary { color: var(--bg); }
+
+.make-confirm { max-width: min(520px, calc(100vw - 32px)); border: 1px solid var(--line); border-radius: 16px;
+  background: var(--panel); color: var(--ink); padding: 20px; }
+.make-confirm::backdrop { background: rgba(0, 0, 0, 0.6); }
+.make-confirm form { display: grid; gap: 12px; }
+.make-confirm h2 { margin: 0; font-size: 20px; }
+.make-confirm p { margin: 0; }

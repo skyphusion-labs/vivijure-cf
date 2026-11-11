@@ -24,6 +24,7 @@
 // unchanged and must be GREEN in every case BOTH before and after. A run where the reference also
 // reddens is measuring the harness, not the modules.
 import { describe, it, expect, vi, afterEach } from "vitest";
+import { reachesRunpod } from "./runpod-census";
 
 import finishRifeWorker from "../modules/finish-rife/src/index";
 import finishBlenderWorker from "../modules/finish-blender/src/index";
@@ -252,7 +253,7 @@ describe("the artifact-less COMPLETED contract holds for EVERY finish-class door
     // artifact key AND reaches RunPod (directly or through the shared route helper).
     const finishClass = candidates.filter(
       (n) => src(n).includes("parseBackendOutput(s.output)") &&
-        (src(n).includes("api.runpod.ai") || src(n).includes("_shared/runpod-route")),
+        reachesRunpod(src(n)),
     );
     // The behaviour under test, anchored on the CALL, not on a mention of the reason string.
     const PASSTHROUGH_CALL = 'pollPassthrough(st, "no-output-key")';

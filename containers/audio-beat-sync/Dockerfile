@@ -1,7 +1,8 @@
 # syntax=docker/dockerfile:1
-# Pinned to 3.11: numba (via librosa) supports only >=3.10,<3.14, and the numba-cache
-# warm step below hardcodes the python3.11 site-packages path. Do NOT bump past 3.13.
-FROM python:3.11-slim-bookworm
+# Pinned to 3.12: librosa 1.0 requires Python >=3.12, and numba (via librosa)
+# supports only >=3.10,<3.14. The numba-cache warm step below hardcodes the
+# python3.12 site-packages path. Do NOT bump past 3.13.
+FROM python:3.12-slim-bookworm
 
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
@@ -36,7 +37,7 @@ COPY url_guard.py bearer.py app.py .
 # baked stamp match what the runtime sees. (See containers/image-prep for the
 # same fix; this beat-sync path JITs on first request, not at bind, so unlike
 # image-prep it never blocked activation, only first-request latency.)
-RUN find /usr/local/lib/python3.11/site-packages/librosa -name '*.py' -exec touch -d '@1700000000' {} + \
+RUN find /usr/local/lib/python3.12/site-packages/librosa -name '*.py' -exec touch -d '@1700000000' {} + \
     && python -c "import librosa, numpy; librosa.beat.beat_track(y=numpy.zeros(22050, dtype='float32'), sr=22050); print('warm OK')" \
     && test -d /app/numba-cache && echo "numba cache baked: $(find /app/numba-cache -name '*.nbi' | wc -l) kernels"
 

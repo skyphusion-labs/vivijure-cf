@@ -1,0 +1,308 @@
+import { describe, it, expect, vi } from "vitest";
+import { DatabaseSync } from "node:sqlite";
+import { readFileSync, readdirSync } from "node:fs";
+import { join } from "node:path";
+
+// cf#1241: a film started through the API must leave a project the panel can reopen. The database
+// here is REAL SQLite with the repo's own migrations, and the project rows go through core's real
+// createProject / setLastStoryboard / listProjects. So this proves the SQL, not my idea of it.
+// What it cannot prove is D1 itself; the live check in the PR is what covers that.
+vi.mock("@skyphusion-labs/vivijure-core/bundle-storyboard", async (orig) => {
+  const actual = await orig<typeof import("@skyphusion-labs/vivijure-core/bundle-storyboard")>();
+  return { ...actual, readBundleScenes: vi.fn(async () => []) };
+});
+
+import worker from "../src/index";
+import { BUNDLE_BOARD_READ_FAILED, FILM_PROJECT_SAVE_FAILED, chooseFilmProject, saveBundleFilmProject, stableJson } from "../src/film-project";
+import { MODULE_API } from "@skyphusion-labs/vivijure-core/modules/types";
+
+function realD1() {
+  const db = new DatabaseSync(":memory:");
+  const dir = join(__dirname, "..", "migrations");
+  for (const f of readdirSync(dir).filter((n) => n.endsWith(".sql")).sort()) db.exec(readFileSync(join(dir, f), "utf8"));
+  const stmt = (sql: string, args: unknown[] = []) => ({
+    bind: (...a: unknown[]) => stmt(sql, a),
+    first: async () => (db.prepare(sql).get(...(args as never[])) as Record<string, unknown> | undefined) ?? null,
+    all: async () => ({ results: db.prepare(sql).all(...(args as never[])) }),
+    run: async () => { db.prepare(sql).run(...(args as never[])); return { success: true, meta: {} }; },
+  });
+  return { db, d1: { prepare: (sql: string) => stmt(sql), batch: async (ss: Array<{ run(): Promise<unknown> }>) => Promise.all(ss.map((s) => s.run())) } };
+}
+
+function r2() {
+  const store = new Map<string, { body: string; etag: string }>();
+  let n = 0;
+  return {
+    async get(key: string) {
+      const v = store.get(key);
+      return v ? { etag: v.etag, json: async () => JSON.parse(v.body), text: async () => v.body } : null;
+    },
+    async head(key: string) { const v = store.get(key); return v ? { etag: v.etag, size: v.body.length } : null; },
+    async put(key: string, body: string, opts?: { onlyIf?: { etagMatches?: string; etagDoesNotMatch?: string } }) {
+      const cur = store.get(key);
+      if (opts?.onlyIf?.etagDoesNotMatch === "*" && cur) return null;
+      if (opts?.onlyIf?.etagMatches && cur?.etag !== opts.onlyIf.etagMatches) return null;
+      const etag = `e${++n}`;
+      store.set(key, { body, etag });
+      return { etag };
+    },
+    async delete(key: string) { store.delete(key); },
+    async list({ prefix }: { prefix: string }) {
+      return { objects: [...store.keys()].filter((k) => k.startsWith(prefix)).sort().map((key) => ({ key, uploaded: new Date() })) };
+    },
+  };
+}
+
+function moduleBinding(name: string, hooks: string[]) {
+  return {
+    fetch: async () => new Response(JSON.stringify({ name, version: "0.1.0", api: MODULE_API, hooks, ui: { order: 10, locality: "cloud" } }),
+      { status: 200, headers: { "content-type": "application/json" } }),
+  };
+}
+
+function env() {
+  const { d1 } = realD1();
+  return {
+    ALLOW_UNAUTHENTICATED: "true",
+    SPEND_RATE_LIMITER: { limit: async () => ({ success: true }) },
+    DB: d1, R2_RENDERS: r2(),
+    MODULE_KEYFRAME: moduleBinding("keyframe", ["keyframe"]),
+    MODULE_TALK: moduleBinding("talk", ["motion.backend"]),
+  } as never as Record<string, unknown>;
+}
+
+const ctx = { waitUntil() {}, passThroughOnException() {} } as never;
+const board = (tag: string, title = "t") => ({
+  title, projectName: "Master", full_prompt: "x", style_prefix: "", style_category: "", style_preset: "",
+  use_characters: [], cast_rules: "", duration_seconds: 16, clip_seconds: 4,
+  scenes: [1, 2, 3, 4].map((i) => ({ shot_id: `s${i}`, prompt: `${tag} p${i}`, seconds: 4 })),
+});
+const filmBody = (over: Record<string, unknown> = {}) => ({
+  project: "Long", idempotency_key: "one", storyboard: board("a"), character_refs: {}, part_size: 2,
+  shared: { motion_backend: "talk", style: "photoreal", delivery_width: 832, delivery_height: 464 },
+  spend_ceiling_usd: 10, cost_usd_per_shot_est: 0.5, ...over,
+});
+const call = async (e: unknown, method: string, path: string, body?: unknown) => {
+  const res = await worker.fetch(new Request(`https://studio.example${path}`, {
+    method, headers: { "content-type": "application/json", authorization: "Bearer t" },
+    body: body === undefined ? undefined : JSON.stringify(body),
+  }), e as never, ctx);
+  return { status: res.status, body: (await res.json()) as Record<string, unknown> };
+};
+type Proj = { id: string; name: string; last_storyboard: unknown };
+const projects = async (e: unknown) => ((await call(e, "GET", "/api/storyboard/projects")).body.projects as Proj[]);
+
+describe("cf#1241: a film started through the API saves its board to a project", () => {
+  it("a film with no project leaves one the panel can reopen, holding the master board", async () => {
+    const e = env();
+    const r = await call(e, "POST", "/api/film", filmBody());
+    expect(r.status).toBe(201);
+    const list = await projects(e);
+    expect(list).toHaveLength(1);
+    expect(list[0].name).toBe("Long");
+    expect(list[0].last_storyboard).toEqual(board("a"));
+    expect(r.body.project).toEqual({ saved: true, id: list[0].id, name: "Long", created: true });
+  });
+
+  it("the same request twice makes one project, not two", async () => {
+    const e = env();
+    await call(e, "POST", "/api/film", filmBody());
+    const again = await call(e, "POST", "/api/film", filmBody());
+    expect(again.status).toBe(200);
+    expect(await projects(e)).toHaveLength(1);
+    expect((again.body.project as { created: boolean }).created).toBe(false);
+  });
+
+  it("a draft with the film's name and a different board is never overwritten", async () => {
+    const e = env();
+    const draft = (await call(e, "POST", "/api/storyboard/projects", { name: "Long" })).body.project as Proj;
+    // Its own title: since core#518 (core 1.43.0, PR core#519) two boards with one title key cannot both
+    // be stored, and that case is the next test. This one is about a DIFFERENT board, as it always was.
+    await call(e, "POST", `/api/storyboard/projects/${draft.id}/storyboard`, { storyboard: board("draft", "draft title") });
+    await call(e, "POST", "/api/film", filmBody());
+    const list = await projects(e);
+    expect(list).toHaveLength(2);
+    expect(list.find((p) => p.id === draft.id)!.last_storyboard).toEqual(board("draft", "draft title"));
+    expect(list.find((p) => p.id !== draft.id)!.last_storyboard).toEqual(board("a"));
+  });
+
+  it("cf#1387: a film board whose title key a draft holds is not saved, and leaves no empty project", async () => {
+    // core#518 (PR core#519): a board is refused when another project already renders under its title key,
+    // because the two would share stored keyframes and LoRAs (vivijure-backend#487). The film still starts:
+    // saving its board never refuses the film. Before this fix the project was created first, so a refusal
+    // left an empty "Long" behind.
+    const e = env();
+    const draft = (await call(e, "POST", "/api/storyboard/projects", { name: "Draft" })).body.project as Proj;
+    await call(e, "POST", `/api/storyboard/projects/${draft.id}/storyboard`, { storyboard: board("draft") });
+    const r = await call(e, "POST", "/api/film", filmBody());
+    expect(r.status).toBe(201);
+    const saved = r.body.project as { saved: boolean; error?: string };
+    expect(saved.saved).toBe(false);
+    expect(saved.error).toContain(`already uses the render key "t"`);
+    const list = await projects(e);
+    expect(list.map((p) => p.name)).toEqual(["Draft"]);
+    expect(list[0].last_storyboard).toEqual(board("draft"));
+  });
+
+  // The two halves of the film-path fix each cover for the other, so each gets its own test.
+  const spyDb = (e: Record<string, unknown>, blindKeyCheckOnce = false) => {
+    const db = e.DB as { prepare: (sql: string) => { bind: (...a: unknown[]) => unknown } };
+    const real = db.prepare.bind(db);
+    const seen: string[] = [];
+    let blinded = !blindKeyCheckOnce;
+    db.prepare = (sql: string) => {
+      seen.push(sql);
+      // Simulate the race: the pre-check reads before a concurrent save takes the key.
+      if (!blinded && sql.includes("json_extract(last_storyboard_json")) {
+        blinded = true;
+        const empty = { bind: () => empty, all: async () => ({ results: [] }), first: async () => null, run: async () => ({ success: true, meta: {} }) };
+        return empty as never;
+      }
+      return real(sql) as never;
+    };
+    return seen;
+  };
+
+  it("cf#1387: the key is checked BEFORE the project is created, so no row is ever written for a refusal", async () => {
+    const e = env();
+    const draft = (await call(e, "POST", "/api/storyboard/projects", { name: "Draft" })).body.project as Proj;
+    await call(e, "POST", `/api/storyboard/projects/${draft.id}/storyboard`, { storyboard: board("draft") });
+    const seen = spyDb(e);
+    await call(e, "POST", "/api/film", filmBody());
+    expect(seen.filter((q) => /INSERT INTO storyboard_projects/i.test(q))).toEqual([]);
+  });
+
+  it("cf#1387: if a concurrent save takes the key after the check, the project just made is removed", async () => {
+    const e = env();
+    const draft = (await call(e, "POST", "/api/storyboard/projects", { name: "Draft" })).body.project as Proj;
+    await call(e, "POST", `/api/storyboard/projects/${draft.id}/storyboard`, { storyboard: board("draft") });
+    const seen = spyDb(e, true);
+    const r = await call(e, "POST", "/api/film", filmBody());
+    expect(seen.some((q) => /INSERT INTO storyboard_projects/i.test(q))).toBe(true); // the race really ran
+    expect((r.body.project as { saved: boolean }).saved).toBe(false);
+    expect((await projects(e)).map((p) => p.name)).toEqual(["Draft"]);
+  });
+
+  describe("cf#1387: every board-save route answers a key collision with 409, never 500", () => {
+    const seeded = async () => {
+      const e = env();
+      const a = (await call(e, "POST", "/api/storyboard/projects", { name: "A" })).body.project as Proj;
+      expect((await call(e, "POST", `/api/storyboard/projects/${a.id}/storyboard`, { storyboard: board("a", "Shared Title") })).status).toBe(200);
+      const b = (await call(e, "POST", "/api/storyboard/projects", { name: "B" })).body.project as Proj;
+      return { e, a, b };
+    };
+    it("POST /api/storyboard/projects/:id/storyboard", async () => {
+      const { e, b } = await seeded();
+      const r = await call(e, "POST", `/api/storyboard/projects/${b.id}/storyboard`, { storyboard: board("b", "Shared Title") });
+      expect(r.status).toBe(409);
+      expect(String(r.body.error)).toContain(`project "A"`);
+    });
+    it("PATCH /api/storyboard/projects/:id with storyboard", async () => {
+      const { e, b } = await seeded();
+      const r = await call(e, "PATCH", `/api/storyboard/projects/${b.id}`, { storyboard: board("b", "Shared Title") });
+      expect(r.status).toBe(409);
+      expect(String(r.body.error)).toContain(`project "A"`);
+    });
+    it("CONTROL: saving a project's own board again is not refused", async () => {
+      const { e, a } = await seeded();
+      expect((await call(e, "POST", `/api/storyboard/projects/${a.id}/storyboard`, { storyboard: board("a2", "Shared Title") })).status).toBe(200);
+    });
+  });
+
+  it("an empty project with the film's name takes the board", async () => {
+    const e = env();
+    const empty = (await call(e, "POST", "/api/storyboard/projects", { name: "Long" })).body.project as Proj;
+    await call(e, "POST", "/api/film", filmBody());
+    const list = await projects(e);
+    expect(list).toHaveLength(1);
+    expect(list[0].id).toBe(empty.id);
+    expect(list[0].last_storyboard).toEqual(board("a"));
+  });
+
+  it("a named project_id gets the board, whatever the film is called", async () => {
+    const e = env();
+    const mine = (await call(e, "POST", "/api/storyboard/projects", { name: "My story" })).body.project as Proj;
+    const r = await call(e, "POST", "/api/film", filmBody({ project_id: mine.id }));
+    const list = await projects(e);
+    expect(list).toHaveLength(1);
+    expect(list[0].last_storyboard).toEqual(board("a"));
+    expect(r.body.project).toEqual({ saved: true, id: mine.id, name: "My story", created: false });
+  });
+
+  it("a project_id that names nothing still starts the film, and says the board was not saved", async () => {
+    const e = env();
+    const r = await call(e, "POST", "/api/film", filmBody({ project_id: "p_doesnotexist000000" }));
+    expect(r.status).toBe(201);
+    expect(r.body.project).toEqual({ saved: false, error: expect.any(String) });
+    expect(await projects(e)).toHaveLength(0);
+  });
+});
+
+describe("chooseFilmProject", () => {
+  const row = (id: number, name: string, sb: unknown) => ({ id, public_id: `p${id}`, slug: `s${id}`, name, prefs: {}, last_storyboard: sb, created_at: "", updated_at: "" });
+  it("matches a board regardless of key order", () => {
+    expect(stableJson({ b: 1, a: [1, { d: 2, c: 3 }] })).toBe(stableJson({ a: [1, { c: 3, d: 2 }], b: 1 }));
+    const c = chooseFilmProject([row(1, "F", { b: 1, a: 2 })], "F", { a: 2, b: 1 }, null);
+    expect(c).toEqual({ use: row(1, "F", { b: 1, a: 2 }), write: false });
+  });
+  it("ignores a project with another name", () => {
+    expect(chooseFilmProject([row(1, "Other", null)], "F", {}, null)).toEqual({ create: true });
+  });
+});
+
+// vivijure-cf#1395 (CodeQL js/stack-trace-exposure, alert #86): a thrown value can carry a stack and storage
+// internals. It goes to the log, and the response carries a fixed sentence.
+describe("cf#1395: a save that throws answers fixed text, never the error", () => {
+  const SECRET = "D1_ERROR: no such table storyboard_projects_internal";
+  const boom = () => {
+    const err = new Error(SECRET);
+    err.stack = `Error: ${SECRET}\n    at secretFrame (/srv/worker/internal.js:42:7)`;
+    return err;
+  };
+
+  it("POST /api/film: the film starts, the project answer is the fixed sentence, and the error is logged", async () => {
+    const logs: string[] = [];
+    const spy = vi.spyOn(console, "error").mockImplementation((m: unknown) => { logs.push(String(m)); });
+    const e = env();
+    const db = e.DB as { prepare: (sql: string) => unknown };
+    const real = db.prepare.bind(db);
+    db.prepare = (sql: string) => {
+      if (/FROM storyboard_projects/i.test(sql) && !/film/i.test(sql)) throw boom();
+      return real(sql);
+    };
+    const res = await worker.fetch(new Request("https://studio.example/api/film", {
+      method: "POST", headers: { "content-type": "application/json", authorization: "Bearer t" }, body: JSON.stringify(filmBody()),
+    }), e as never, ctx);
+    const text = await res.text();
+    spy.mockRestore();
+    expect(res.status).toBe(201);
+    expect((JSON.parse(text) as { project: unknown }).project).toEqual({ saved: false, error: FILM_PROJECT_SAVE_FAILED });
+    expect(text).not.toContain("D1_ERROR");
+    expect(text).not.toContain("secretFrame");
+    expect(logs.some((l) => l.includes("film_project.save_failed") && l.includes(SECRET))).toBe(true);
+  });
+
+  it("the bundle board read: fixed sentence out, the storage error to the log", async () => {
+    const logs: string[] = [];
+    const spy = vi.spyOn(console, "error").mockImplementation((m: unknown) => { logs.push(String(m)); });
+    const r = await saveBundleFilmProject({ R2_RENDERS: { get: async () => { throw boom(); }, put: async () => null } } as never, { bundleKey: "bundles/b.tar.gz", filmName: "F" });
+    spy.mockRestore();
+    expect(r).toEqual({ saved: false, error: BUNDLE_BOARD_READ_FAILED });
+    expect(JSON.stringify(r)).not.toContain("D1_ERROR");
+    expect(logs.some((l) => l.includes("film_project.bundle_board_read_failed"))).toBe(true);
+  });
+
+  it("CONTROL: core's key collision THROWN by the save is still told in core's words, not the fixed sentence", async () => {
+    // The named-project path writes through setLastStoryboard, which throws BoardKeyCollisionError, so this
+    // reaches the catch (the create path refuses before it, and never does).
+    const e = env();
+    const a = (await call(e, "POST", "/api/storyboard/projects", { name: "A" })).body.project as Proj;
+    await call(e, "POST", `/api/storyboard/projects/${a.id}/storyboard`, { storyboard: board("a") });
+    const b = (await call(e, "POST", "/api/storyboard/projects", { name: "B" })).body.project as Proj;
+    const r = await call(e, "POST", "/api/film", filmBody({ project_id: b.id }));
+    expect(r.status).toBe(201);
+    const err = (r.body.project as { saved: boolean; error: string });
+    expect(err.saved).toBe(false);
+    expect(err.error).toContain("already uses the render key");
+  });
+});

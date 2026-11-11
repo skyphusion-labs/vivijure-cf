@@ -22,7 +22,7 @@ import { ORCHESTRATOR_VAR_KEYS } from "../src/platform/orchestrator-vars";
 
 const MIGRATIONS_DIR = "migrations";
 
-/** The scope rule, restated: top-level only. manual/ is operator-run, demo/ is seed data. */
+/** The scope rule, restated: top-level only. manual/ is operator-run and is not shipped. */
 function topLevelMigrations(): string[] {
   return readdirSync(MIGRATIONS_DIR)
     .filter((f) => f.endsWith(".sql"))

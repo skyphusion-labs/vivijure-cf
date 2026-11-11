@@ -29,8 +29,20 @@ describe("callVideoFinishInspect (container round-trip)", () => {
     const r = await callVideoFinishInspect(orch(withDoor(async () => jr({ ok: true, verdict: "corrupt", reason: "no keyframe match" }))), { clipUrl: "https://r2/clip" });
     expect(r).toMatchObject({ ok: true, verdict: "corrupt" });
   });
-  it("returns null on an unreachable container (fetch throws)", async () => {
+  // core#321 SPLIT two states this test used to collapse. Before, a transport failure and a 2xx
+  // answer with an unparseable body both came back `null`, so a caller could not tell "the tier is
+  // down" from "the container misbehaved on THIS clip" -- and only the first should trip the
+  // per-pass breaker. Both arms are pinned now, because a split asserted in one direction only
+  // leaves the other free to drift back.
+  it("marks an unreachable container UNREACHABLE (fetch throws), not null", async () => {
     const r = await callVideoFinishInspect(orch(withDoor(async () => { throw new Error("down"); })), { clipUrl: "u" }, { retries: 2, backoffMs: 0 });
+    expect(r).toEqual({ unreachable: true });
+  });
+  it("still returns null when the container ANSWERS 2xx with a body that will not parse", async () => {
+    // The tier is up and serving; this clip is the problem. Must NOT read as unreachable, or one
+    // bad clip would suppress inspection of every other shot in the pass.
+    const bad = new Response("not json", { status: 200, headers: { "content-type": "application/json" } });
+    const r = await callVideoFinishInspect(orch(withDoor(async () => bad)), { clipUrl: "u" }, { retries: 1, backoffMs: 0 });
     expect(r).toBeNull();
   });
   it("retries the transient 503 then succeeds", async () => {
@@ -76,11 +88,18 @@ describe("contentValidateDoneClips (Layer 2 verdict application at the finish ga
     const j = job([doneShot("ok1"), doneShot("skip1")]);
     const inspect = async (_e: unknown, k: string): Promise<ContentVerdict> => (k.includes("ok1") ? { verdict: "ok" } : { verdict: "skip", reason: "unreachable" });
     const changed = await contentValidateDoneClips(orch(env), j, inspect);
-    expect(changed).toBe(false);
+    // cf#856: a skip now WRITES `content_unmeasured`, so `changed` is true. Asserting the new field
+    // rather than just flipping the boolean, because the point of cf#856 is that a film which
+    // advanced while the gate never looked stopped being indistinguishable from one that passed --
+    // measured on a live film at 5 skips / 0 passes with nothing recording it anywhere.
+    expect(changed).toBe(true);
     expect(j.shots.every((s) => s.status === "done")).toBe(true);
     expect(j.shots[0].content_validated).toBe("ok");
-    // #30: "skip" is not persisted so a later tick can re-inspect after a transient outage.
+    expect(j.shots[0].content_unmeasured).toBeUndefined();   // it DID measure this one
+    // #30 still holds: "skip" is not persisted as a verdict, so a later tick re-inspects.
     expect(j.shots[1].content_validated).toBeUndefined();
+    // ...but the fact that it could not run is now on the record, with its reason.
+    expect(j.shots[1].content_unmeasured).toBe("unreachable");
   });
 
   it("is idempotent + emits one clip.content_validate event per shot", async () => {

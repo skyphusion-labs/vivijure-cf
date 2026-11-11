@@ -15,6 +15,7 @@
 //
 // Failures are DATA (ok:false), never thrown across the wire.
 
+import { withRetryingR2 } from "../../_shared/r2-retry";
 import {
   MODULE_API,
   type ModuleManifest,
@@ -78,13 +79,13 @@ export interface WorkflowParams {
 
 const MANIFEST: ModuleManifest = {
   name: "dialogue-gen",
-  version: "0.1.1",
+  version: "0.1.2",
   api: MODULE_API,
   hooks: ["dialogue"],
   provides: [{ id: "aura1", label: "Dialogue voices (Deepgram Aura-1)" }],
   // No user-facing knobs: the voice is the speaking cast member's assigned voice_id (resolved by the
   // core), and the line is the shot's dialogue. Both are authored upstream, not module config.
-  ui: { section: "dialogue", icon: "mic", order: 10 },
+  ui: { section: "dialogue", icon: "mic", order: 5 },
 };
 
 function json(body: unknown, status = 200): Response {
@@ -136,12 +137,16 @@ async function synthLine(env: Env, project: string, line: NormalizedLine): Promi
   const body = new ArrayBuffer(written.byteLength);
   new Uint8Array(body).set(written);
   const key = audioKey(project, line.shot_id);
-  await env.R2_RENDERS.put(key, body, { httpMetadata: { contentType: AUDIO_MIME } });
+  // On the object, so the gain a line was given can be read back from the line itself.
+  await env.R2_RENDERS.put(key, body, {
+    httpMetadata: { contentType: AUDIO_MIME },
+    ...(norm ? { customMetadata: { gain_db: norm.gain_db.toFixed(2), tail_trimmed_s: norm.tail_trimmed_s.toFixed(3) } } : {}),
+  });
   return {
     shot_id: line.shot_id,
     audio_key: key,
     voice_id: line.voice,
-    ...(norm ? { duration_s: norm.seconds } : {}),
+    ...(norm ? { duration_s: norm.seconds, gain_db: norm.gain_db } : {}),
   };
 }
 
@@ -154,6 +159,7 @@ const SYNTH_STEP_CONFIG: WorkflowStepConfig = {
 
 export class DialogueGenWorkflow extends WorkflowEntrypoint<Env, WorkflowParams> {
   async run(event: WorkflowEvent<WorkflowParams>, step: WorkflowStep): Promise<void> {
+    withRetryingR2(this.env);
     const { job_id, project, lines } = event.payload;
     try {
       const audio: DialogueShotAudio[] = [];
@@ -175,9 +181,9 @@ export class DialogueGenWorkflow extends WorkflowEntrypoint<Env, WorkflowParams>
 
 async function submit(env: Env, req: InvokeRequest<DialogueInput>): Promise<InvokeResponse<DialogueOutput>> {
   const norm = normalizeInput(req.input);
-  if (!norm.ok) return { ok: false, error: "dialogue: " + norm.error };
+  if (!norm.ok) return { ok: false, error: "dialogue: " + norm.error, reason: "bad-input" };
   const gatewayId = await secretValue(env.GATEWAY_ID);
-  if (!gatewayId) return { ok: false, error: "dialogue: GATEWAY_ID not configured" };
+  if (!gatewayId) return { ok: false, error: "dialogue: GATEWAY_ID not configured", reason: "not-configured" };
 
   // No lines with anything to say: a film with no dialogue. Return an empty result immediately rather
   // than spinning up a workflow that does nothing.
@@ -234,6 +240,7 @@ async function poll(env: Env, body: PollRequest): Promise<PollResponse<DialogueO
 
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
+    withRetryingR2(env);
     const url = new URL(request.url);
     if (request.method === "GET" && url.pathname === "/module.json") return json(MANIFEST);
 
@@ -256,10 +263,10 @@ export default {
       try {
         req = (await request.json()) as InvokeRequest<DialogueInput>;
       } catch {
-        return json({ ok: false, error: "invalid JSON body" } as InvokeResponse);
+        return json({ ok: false, error: "invalid JSON body", reason: "bad-input" } as InvokeResponse);
       }
       if (req.hook !== "dialogue") {
-        return json({ ok: false, error: "unsupported hook " + String(req.hook) } as InvokeResponse);
+        return json({ ok: false, error: "unsupported hook " + String(req.hook), reason: "unsupported" } as InvokeResponse);
       }
       return json(await submit(env, req));
     }

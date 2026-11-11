@@ -12,7 +12,7 @@ const STATE = readFileSync(`${process.cwd()}/public/planner-state.js`, "utf8");
 const RENDER = readFileSync(`${process.cwd()}/public/planner-render.js`, "utf8");
 const BUNDLE = readFileSync(`${process.cwd()}/public/planner-bundle.js`, "utf8");
 const ROW = readFileSync(`${process.cwd()}/public/planner-history-row.js`, "utf8");
-const INDEX = readFileSync(`${process.cwd()}/src/index.ts`, "utf8");
+const INDEX = readFileSync(`${process.cwd()}/src/studio.ts`, "utf8");
 const FINALIZE = readFileSync(`${process.cwd()}/src/finalize-from-keyframes.ts`, "utf8");
 const RETRY = readFileSync(`${process.cwd()}/src/render-retry.ts`, "utf8");
 
@@ -183,6 +183,17 @@ vi.mock("@skyphusion-labs/vivijure-core/renders-db", async (orig) => {
 vi.mock("../src/film-render-bridge", async (orig) => {
   const actual = await orig<typeof import("../src/film-render-bridge")>();
   return { ...actual, filmRowFromJob: vi.fn(() => ({ jobId: "film-528", project: "p" })) };
+});
+// fc#2250 item 7. The env below binds no R2_RENDERS, so the real readBundleScenes threw on
+// `env.R2_RENDERS.get` and these two cases reached 201 ONLY because hSubmitRender swallowed that
+// exception. In other words this file was green OVER the silent-film defect, which is the same
+// shape the fix is about: a swallowed derivation failure is indistinguishable from a silent
+// storyboard. Stubbing the read to [] (the same stub render-submit-honesty.test.ts already uses)
+// keeps this file testing what its name says -- that the client idempotency key reaches
+// startFilmJob -- instead of depending on a swallow that no longer exists.
+vi.mock("@skyphusion-labs/vivijure-core/bundle-storyboard", async (orig) => {
+  const actual = await orig<typeof import("@skyphusion-labs/vivijure-core/bundle-storyboard")>();
+  return { ...actual, readBundleScenes: vi.fn(async () => []) };
 });
 
 import worker from "../src/index";

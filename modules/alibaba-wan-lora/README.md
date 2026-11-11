@@ -10,7 +10,7 @@ This is the cost-door for controllable cloud i2v: your own trained look, no GPU 
 ## Where it fits
 
 `motion.backend` is a **pick_one** hook: the studio binds exactly one motion backend per render, and
-this is one selectable provider among several (seedance, kling, minimax-hailuo, google-veo, vidu-q3,
+this is one selectable provider among several (minimax-hailuo, cf-seedance, cf-veo, cf-vidu-q3-turbo,
 alibaba-wan, and this LoRA variant). It sits at the **clips** stage, right
 after the keyframe is fixed and before dialogue: the keyframe drives the motion, the clip flows on into
 the dialogue and speech phases and then finish.
@@ -60,8 +60,6 @@ Selecting a different model means binding a different `motion.backend` module, n
   strength (omit -> `1.0`). Example: `[{"path":"https://huggingface.co/me/look.safetensors","scale":0.9}]`.
 - `low_noise_loras` (string, default `"[]"`) -- same shape, applied on the low-noise pass.
 - `seed` (int, default `-1`) -- `-1` is a random seed per job; pin it for reproducibility.
-- `enable_safety_checker` (bool, default `true`) -- the endpoint's NSFW safety checker; only an explicit
-  `false` disables it.
 
 The LoRA lists ride as JSON **strings** because the module contract's config fields are scalar
 (int / float / bool / enum / string) -- there is no array field type -- so a structured list is carried
@@ -77,7 +75,7 @@ snap is recorded (logged) when it changes the requested timing -- never silent. 
 - **Input** (`MotionBackendInput`): `shot_id`, `keyframe_url` (a presigned, fetchable URL of the start
   keyframe -- passed straight to the endpoint as `image`), `prompt` (the motion description), `seconds`.
 - **Config** (`config_schema`): `high_noise_loras`, `low_noise_loras` (JSON `[{path,scale}]` strings,
-  default empty), `seed` (default `-1`), `enable_safety_checker` (default `true`).
+  default empty), `seed` (default `-1`). The provider safety filter is always on and is not configurable.
 - **Output** (`MotionBackendOutput`): `shot_id`, `clip_key` (the stored clip), `fps` (24), `frames`.
 - **Async**: cloud i2v takes minutes, longer than a Worker request can hold. `POST /invoke` submits to
   RunPod (`/run`) and returns a poll token immediately; `POST /poll` checks status (`/status/{job_id}`)

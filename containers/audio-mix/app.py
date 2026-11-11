@@ -24,7 +24,7 @@ import time
 
 from aiohttp import ClientSession, ClientTimeout, web
 
-from bearer import bearer_middleware
+from bearer import bearer_middleware, require_bearer_config
 from mix_core import DEFAULT_TARGET_LUFS, FfmpegTimeout, ROLES, mix_tracks
 from url_guard import guarded_get, guarded_put, safe_log_value, validate_fetch_url
 
@@ -32,6 +32,10 @@ PORT = int(os.environ.get("PORT", "8000"))
 DOWNLOAD_TIMEOUT_S = 120
 UPLOAD_TIMEOUT_S = 120
 MAX_TRACK_BYTES = 128 * 1024 * 1024   # 128 MB per track
+# The dialogue track is the assembled film, because ffmpeg takes its audio from there. An upscaled film of
+# about 2 minutes passes 128 MB, and that used to cost the film its voices (vivijure-cf#1158). A larger film
+# is still refused, and the studio then keeps its voices and drops the bed.
+MAX_DIALOGUE_TRACK_BYTES = 3 * 1024 * 1024 * 1024
 MAX_TRACKS = 16
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
@@ -46,6 +50,11 @@ def _elapsed_ms(t0: float) -> int:
 async def health(_req):
     # Cheap readiness probe; does not shell out to ffmpeg.
     return web.json_response({"ok": True})
+
+
+def track_cap(role):
+    """Bytes allowed for a track. Only dialogue may be a whole film."""
+    return MAX_DIALOGUE_TRACK_BYTES if role == "dialogue" else MAX_TRACK_BYTES
 
 
 async def _download(session, url, path, cap):
@@ -63,6 +72,46 @@ async def _download(session, url, path, cap):
         return True, total
     except ValueError as e:
         return False, f"blocked: {e}"
+
+
+class _PutFailed(Exception):
+    """A presigned PUT that did not return 2xx.
+
+    Carries the upstream status so the route reports exactly the error string it reported before
+    the upload was made streaming: `output put <status>`.
+    """
+
+    def __init__(self, status):
+        super().__init__(f"output put {status}")
+        self.status = status
+
+
+async def _put_file(session, url, path, content_type):
+    """Stream the mixed artifact to a presigned PUT.
+
+    Deliberately NOT `data=f.read()`. That materialises the WHOLE mix in memory before the upload
+    starts. `format` accepts `wav`, and a film-length stereo WAV runs about 10 MB per minute on
+    top of up to MAX_TRACKS x MAX_TRACK_BYTES of downloaded sources, so the buffer is hundreds of
+    MB on a normal film. A Cloudflare Container has no swap, so exceeding memory restarts the
+    instance rather than paging; disk is ephemeral and resets to the image on wake, so the work
+    dir dies with it and the job fails as though it never ran (cf#802; #808 applied this same fix
+    to video-finish, cf#814 carries it to the siblings it was scoped out of).
+
+    Content-Length is set explicitly because a presigned PUT will not accept the chunked
+    transfer-encoding aiohttp would otherwise use for a file object with no length -- streaming
+    without it would trade an OOM for a 4xx.
+
+    Returns the byte count, so the response body and the log line keep reporting a real size
+    rather than the length of a buffer that no longer exists.
+    """
+    size = os.path.getsize(path)
+    with open(path, "rb") as f:
+        async with guarded_put(session, url, allow_redirects=False, data=f,
+                               headers={"content-type": content_type,
+                                        "content-length": str(size)}) as r:  # codeql[py/full-ssrf]
+            if r.status not in (200, 201, 204):
+                raise _PutFailed(r.status)
+    return size
 
 
 async def mix(req):
@@ -117,7 +166,7 @@ async def mix(req):
         async with ClientSession(timeout=ClientTimeout(total=DOWNLOAD_TIMEOUT_S)) as s:
             for i, t in enumerate(parsed):
                 p = os.path.join(work, f"track_{i:02d}.bin")
-                ok, info = await _download(s, t["url"], p, MAX_TRACK_BYTES)
+                ok, info = await _download(s, t["url"], p, track_cap(t["role"]))
                 if not ok:
                     status = 413 if info == "too large" else (400 if info.startswith("blocked:") else 502)
                     return web.json_response({"ok": False, "error": f"tracks[{i}] {info}"}, status=status)
@@ -138,22 +187,19 @@ async def mix(req):
             log.exception("mix failed")
             return web.json_response({"ok": False, "error": str(e)}, status=500)
 
-        with open(out_path, "rb") as f:
-            out_bytes = f.read()
-
         content_type = "audio/mpeg" if fmt == "mp3" else "audio/wav"
         async with ClientSession(timeout=ClientTimeout(total=UPLOAD_TIMEOUT_S)) as s:
-            async with guarded_put(s, output_url, allow_redirects=False, data=out_bytes,
-                             headers={"content-type": content_type}) as r:  # codeql[py/full-ssrf]
-                if r.status not in (200, 201, 204):
-                    return web.json_response({"ok": False, "error": f"output put {r.status}"}, status=502)
+            try:
+                out_size = await _put_file(s, output_url, out_path, content_type)
+            except _PutFailed as e:
+                return web.json_response({"ok": False, "error": str(e)}, status=502)
 
         log.info("/mix ok key=%s bytes=%d dur=%.3f lufs=%.2f ducked=%s",  # codeql[py/log-injection]
-                 safe_log_value(output_key), len(out_bytes), result["durationSeconds"], result["lufs"], result["ducked"])
+                 safe_log_value(output_key), out_size, result["durationSeconds"], result["lufs"], result["ducked"])
         return web.json_response({
             "ok": True,
             "key": output_key,
-            "bytes": len(out_bytes),
+            "bytes": out_size,
             "format": fmt,
             "durationSeconds": result["durationSeconds"],
             "lufs": result["lufs"],
@@ -166,16 +212,79 @@ async def mix(req):
         shutil.rmtree(work, ignore_errors=True)
 
 
+def _selftest():
+    """Local mix. No R2. Isolated CF Container proof (cf#1044)."""
+    work = tempfile.mkdtemp(prefix="amix-selftest-")
+    try:
+        dia = os.path.join(work, "dia.wav")
+        mus = os.path.join(work, "mus.wav")
+        subprocess.run(
+            [
+                "ffmpeg", "-y", "-f", "lavfi", "-i", "sine=frequency=440:duration=2",
+                "-ac", "2", "-ar", "48000", "-c:a", "pcm_s16le", dia,
+            ],
+            check=True,
+            capture_output=True,
+        )
+        subprocess.run(
+            [
+                "ffmpeg", "-y", "-f", "lavfi", "-i", "sine=frequency=220:duration=2",
+                "-af", "volume=0.5",
+                "-ac", "2", "-ar", "48000", "-c:a", "pcm_s16le", mus,
+            ],
+            check=True,
+            capture_output=True,
+        )
+        tracks = [
+            {"path": dia, "role": "dialogue", "gainDb": 0.0},
+            {"path": mus, "role": "music", "gainDb": 0.0},
+        ]
+        out_path, result = mix_tracks(work, tracks, DEFAULT_TARGET_LUFS, "mp3")
+        size = os.path.getsize(out_path) if os.path.isfile(out_path) else 0
+        if size < 100:
+            raise RuntimeError("selftest output missing")
+        return {
+            "ok": True,
+            "applied": ["selftest:mix:duck"],
+            "bytes": size,
+            "durationSeconds": result["durationSeconds"],
+            "lufs": result["lufs"],
+            "ducked": result["ducked"],
+        }
+    finally:
+        shutil.rmtree(work, ignore_errors=True)
+
+
+async def selftest(_req):
+    """POST /selftest -- local mix. No R2. Isolated CF proof (cf#1044)."""
+    t0 = time.monotonic()
+    try:
+        result = await asyncio.get_running_loop().run_in_executor(None, _selftest)
+    except Exception as e:  # noqa: BLE001 - surface processing failure as 500
+        log.exception("selftest failed")
+        return web.json_response({"ok": False, "error": str(e)}, status=500)
+    result["elapsedMs"] = _elapsed_ms(t0)
+    return web.json_response(result)
+
+
 app = web.Application(
     client_max_size=1024 * 1024,  # JSON bodies are small (URLs only)
     middlewares=[bearer_middleware],
 )
 app.router.add_get("/health", health)
+app.router.add_post("/selftest", selftest)
 app.router.add_post("/mix", mix)
 # The single-bed "master the bed" pass (formerly POST /music-upscale here) was lifted out into its own
 # first-class module under the `master` hook (modules/audio-master + containers/audio-master). This
 # container stays the multi-track MIX + duck only.
 
 if __name__ == "__main__":
+    # cf#893: refuse to START without auth configured. At the real entry point rather than at module
+    # scope, and the difference is deliberate: `python app.py` is what the Dockerfile CMD runs, so
+    # this is the door opening, while an IMPORT is a test reading the module. Eleven container tests
+    # import app; gating import would have broken all of them for no security gain, because
+    # bearer_middleware independently answers 503 on every media route when no token is set.
+    # Two layers, each meaningful: this one refuses to bind, that one refuses to serve.
+    require_bearer_config()
     log.info("audio-mix listening on 0.0.0.0:%d", PORT)
     web.run_app(app, host="0.0.0.0", port=PORT, access_log=None)

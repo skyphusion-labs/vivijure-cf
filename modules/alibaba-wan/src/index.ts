@@ -7,9 +7,10 @@
 // fast (a status check; only the final one downloads), so nothing holds a multi-minute request.
 //
 // Phase 1 (#175): video-only. Wan 2.6 has no audio output param; the core's score/mux chain owns
-// audio, exactly like the seedance/hailuo reference. enable_prompt_expansion defaults false so the
+// audio, exactly like the minimax-hailuo door. enable_prompt_expansion defaults false so the
 // prompt is sent as-is; expose it as an opt-in config bool for one-line enable later.
 
+import { withRetryingR2 } from "../../_shared/r2-retry";
 import {
   MODULE_API,
   type ModuleManifest,
@@ -20,10 +21,11 @@ import {
   type MotionBackendInput,
   type MotionBackendOutput,
 } from "./contract";
-import { buildWanBody, extractVideoUrl, clipKey, clampDuration, encodePoll, decodePoll, runpodJobGone, classifyGoneState, workersStillCold, terminalErrorInOutput, RUNPOD_COLD_GRACE_MS } from "./wan";
+import { buildWanBody, extractVideoUrl, clipKey, clampDuration, encodePoll, decodePoll, runpodJobGone, classifyGoneState, workersStillCold, terminalErrorInOutput, deliveredTiming, RUNPOD_COLD_GRACE_MS } from "./wan";
 
 import { recordRunpodJob, probeRunpodJobLog, parseRunpodErrorType, runpodWalkedPastOutcome } from "../../_shared/runpod-job-log";
 import { planeRefusalReason, planeRefusalError, runpodRoute, runpodEndpointUrl, runpodHeaders, runpodCredentialName, type RunpodRoute } from "../../_shared/runpod-route";
+import { runpodSubmitFailure } from "../../_shared/runpod-submit-error";
 
 interface Env {
   RUNPOD_API_KEY: SecretsStoreSecret;
@@ -40,39 +42,56 @@ interface Env {
 }
 
 const ENDPOINT_ID = "wan-2-6-i2v";
-const OUT_FPS = 24;
 
 const MANIFEST: ModuleManifest = {
   name: "alibaba-wan",
-  version: "0.2.0",
+  version: "0.2.4",
   api: MODULE_API,
   hooks: ["motion.backend"],
   provides: [{ id: "i2v-cloud", label: "Talking (Wan 2.6)" }],
   config_schema: {
+    // cf#922: values are the VENDOR's enum (720p / 1080p), NOT the `1280*720` form RunPod's docs
+    // print for this field. Proven live: a 1080p request delivered 1920x1080. RunPod bills 1080p at
+    // $0.15/s against $0.10/s at 720p, so this knob costs real money and 720p stays the default.
+    size: { type: "enum", values: ["720p", "1080p"], default: "720p", label: "output size" },
     enable_prompt_expansion: { type: "bool", default: false, label: "expand prompt (off by default)" },
-    enable_safety_checker: { type: "bool", default: false, label: "provider safety filter (off: we already refuse CSAM)" },
   },
   ui: {
     section: "motion",
     order: 70,
     locality: "cloud",
-    cost: "Pay per render",
-    blurb: "Wan 2.6 stills-to-clip. Talks. Mouth follows the storyboard line when we have a Cast voice. Without a line, invents speech.",
+    // cf#1246: provider cost, no markup. Source and date: docs/motion-door-prices.md.
+    cost: "$0.10/s at 720p, $0.15/s at 1080p",
+    cost_as_of: "2026-11-05",
+    cost_usd_per_second: [0.10, 0.15],
+    // cf#929: the blurb used to stop at "Mouth follows the storyboard line", which reads as a promise
+    // that the mouth TRACKS the line. It does not stop when the line does. Measured: a 1.4s line in a
+    // 5s clip left the speaker mouthing silence for 3.6s, 72% of the clip.
+    blurb: "Wan 2.6 stills-to-clip. Talks. Mouth follows the storyboard line when we have a Cast voice, and keeps moving after the line ends. Without a line, invents speech.",
     limits: [
-      "5, 10, or 15 second clips",
+      "5, 10, or 15 second clips. A shorter shot is rounded UP to the next of these.",
       "Mouth follows the storyboard line in the Cast voice.",
+      "The speaker keeps mouthing words after the line ends, for the rest of the clip.",
+      "A line shorter than 5 seconds always leaves that silent-mouthing tail.",
       "Without a line, invents speech from the prompt.",
       "Cannot lock the sample you kept.",
-      "One film, no scatter",
     ],
   },
   usage: {
+    face_hold: "one",
     native_audio: true,
     voice: "cast_tts",
     scatter_native_audio: false,
     driving_audio: true,
+    // cf#957: Wan 2.6 takes driving audio of 3 to 30 seconds. The floor is this door's, so the core pads a
+    // line to it for a shot on this door only. The dialogue modules no longer pad every line to 3s.
+    driving_audio_min_seconds: 3,
     min_seconds: 5,
     max_seconds: 15,
+    // cf#929: this is a FLOOR plus a rounding rule, not a menu. wan.ts clampDuration snaps UP to the
+    // next allowed value, so a 1.4s line cannot produce a clip shorter than 5s, and the door keeps the
+    // mouth moving through the remainder. That interaction is what makes the tail unavoidable for
+    // ordinary dialogue rather than an edge case.
     duration_steps: [5, 10, 15],
   },
 };
@@ -112,17 +131,17 @@ async function cancelRunpodJobBestEffort(route: RunpodRoute, jobId: string): Pro
 async function submit(env: Env, req: InvokeRequest<MotionBackendInput>): Promise<InvokeResponse<MotionBackendOutput>> {
   const input = req.input;
   if (!input || !input.keyframe_url || !input.prompt || !input.shot_id) {
-    return { ok: false, error: "motion.backend: input needs shot_id, keyframe_url, and prompt" };
+    return { ok: false, error: "motion.backend: input needs shot_id, keyframe_url, and prompt", reason: "bad-input" };
   }
   const route = await runpodRoute(env);
-  if (!route.credential) return { ok: false, error: "alibaba-wan: " + runpodCredentialName(route) + " not configured" };
+  if (!route.credential) return { ok: false, error: "alibaba-wan: " + runpodCredentialName(route) + " not configured", reason: "not-configured" };
   try {
     const r = await fetch(endpoint(route) + "/run", {
       method: "POST",
       headers: { ...auth(route), "content-type": "application/json" },
       body: JSON.stringify(buildWanBody(input, req.config)),
     });
-    if (!r.ok) return { ok: false, error: "alibaba-wan /run -> " + r.status };
+    if (!r.ok) return await runpodSubmitFailure("alibaba-wan", r);
     const jobId = ((await r.json()) as { id?: string }).id;
     if (!jobId) return { ok: false, error: "alibaba-wan /run returned no job id" };
     const submittedAt = Date.now();
@@ -227,11 +246,17 @@ async function poll(env: Env, body: PollRequest): Promise<PollResponse<MotionBac
   } catch (e) {
     return { ok: false, error: "R2 put failed: " + (e as Error).message };
   }
-  return { ok: true, output: { shot_id: st.shotId, clip_key: key, fps: OUT_FPS, frames: st.seconds * OUT_FPS, has_audio: true } };
+  // cf#923: measured off the delivered container. This door previously reported frames as
+  // `st.seconds * 24` -- the REQUESTED seconds times an assumed rate, never opening the file. It
+  // returns 30fps, so a 5s clip reported 120 frames against an actual 150. 0/0 means unparseable;
+  // core skips recording rather than storing an invented rate.
+  const timing = deliveredTiming(bytes);
+  return { ok: true, output: { shot_id: st.shotId, clip_key: key, fps: timing.fps, frames: timing.frames, has_audio: true } };
 }
 
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
+    withRetryingR2(env);
     const url = new URL(request.url);
     if (request.method === "GET" && url.pathname === "/module.json") return json(MANIFEST);
 
@@ -263,10 +288,10 @@ export default {
       try {
         req = (await request.json()) as InvokeRequest<MotionBackendInput>;
       } catch {
-        return json({ ok: false, error: "invalid JSON body" } as InvokeResponse);
+        return json({ ok: false, error: "invalid JSON body", reason: "bad-input" } as InvokeResponse);
       }
       if (req.hook !== "motion.backend") {
-        return json({ ok: false, error: "unsupported hook " + String(req.hook) } as InvokeResponse);
+        return json({ ok: false, error: "unsupported hook " + String(req.hook), reason: "unsupported" } as InvokeResponse);
       }
       return json(await submit(env, req));
     }

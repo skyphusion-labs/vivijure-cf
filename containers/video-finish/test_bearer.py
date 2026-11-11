@@ -22,6 +22,9 @@ def check(name, cond):
 
 check.failed = 0
 
+# cf#911 stage 1 added this rollout permit; stage 2 removed it from bearer.py.
+RETIRED_PERMIT = "LOCAL_FINISH_ACCEPT_MISSING_TOKEN"
+
 
 async def _client():
     client = TestClient(TestServer(app.app))
@@ -31,14 +34,29 @@ async def _client():
 
 async def main():
     prev = os.environ.get(bearer.TOKEN_ENV)
+    # cf#893: control BOTH bearer vars, not just the token. The CI step that runs these scripts sets
+    # LOCAL_FINISH_ALLOW_UNAUTHENTICATED so the other container tests can drive routes without
+    # credentials; leaving it ambient here would turn this file's fail-closed case into a
+    # pass-through and it would pass while asserting nothing. A test about auth configuration has to
+    # own its auth configuration.
+    prev_allow = os.environ.get(bearer.ALLOW_UNAUTH_ENV)
+    prev_accept = os.environ.get(RETIRED_PERMIT)
     try:
         os.environ.pop(bearer.TOKEN_ENV, None)
+        os.environ.pop(bearer.ALLOW_UNAUTH_ENV, None)
+        os.environ.pop(RETIRED_PERMIT, None)
         client = await _client()
         try:
             r = await client.get("/health")
+            # /health stays open with no credential, always. Swarm and Traefik healthchecks depend
+            # on it, so closing it would break orchestration rather than the auth hole.
             check("unset token: /health 200", r.status == 200)
             r = await client.post("/finish", json={})
-            check("unset token: work route still reachable (fail-open)", r.status != 401)
+            # cf#893: this case used to assert `r.status != 401` under the label "(fail-open)".
+            # It KEPT PASSING after the gate was closed, because the new refusal is 503 and 503 is
+            # also != 401 -- a test passing for the wrong reason while asserting the opposite of the
+            # behaviour it now covers. Asserting the exact status is what makes it mean something.
+            check("unset token: work route is REFUSED 503, never served", r.status == 503)
         finally:
             await client.close()
 
@@ -59,7 +77,25 @@ async def main():
             check("armed: good bearer is not 401", r.status != 401)
         finally:
             await client.close()
+
+        # cf#911 stage 2: the rollout permit is RETIRED. Setting it must relax nothing, or a stale
+        # deploy env could quietly keep the door accepting requests with no header.
+        os.environ[RETIRED_PERMIT] = "true"
+        client = await _client()
+        try:
+            r = await client.post("/finish", json={})
+            check("retired permit: no bearer is still 401", r.status == 401)
+        finally:
+            await client.close()
     finally:
+        if prev_accept is None:
+            os.environ.pop(RETIRED_PERMIT, None)
+        else:
+            os.environ[RETIRED_PERMIT] = prev_accept
+        if prev_allow is None:
+            os.environ.pop(bearer.ALLOW_UNAUTH_ENV, None)
+        else:
+            os.environ[bearer.ALLOW_UNAUTH_ENV] = prev_allow
         if prev is None:
             os.environ.pop(bearer.TOKEN_ENV, None)
         else:

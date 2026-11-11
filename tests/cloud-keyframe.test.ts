@@ -2,7 +2,7 @@ import { describe, it, expect, vi, afterEach } from "vitest";
 import worker from "../modules/cloud-keyframe/src/index";
 import { emitTar } from "@skyphusion-labs/vivijure-core/tar";
 import { checkManifest, checkHookOutput, allPass, failures } from "@skyphusion-labs/vivijure-core/modules/conformance";
-import { MANIFEST } from "../modules/cloud-keyframe/src/index";
+import { MANIFEST } from "../modules/cloud-keyframe/src/manifest";
 import {
   MODELS,
   clampModel,
@@ -10,6 +10,7 @@ import {
   clampRefsPerSlot,
   composePrompt,
   composeEditPrompt,
+  clampStyle,
   keyframeKey,
   stageRefKey,
   plateKey,
@@ -85,8 +86,11 @@ const REGISTRY_JSON = JSON.stringify({
 });
 
 describe("cloud-keyframe pure logic", () => {
-  it("clampModel always lands on RunPod Nano Banana 2", () => {
+  it("unknown model ids clamp to the default, and listed ids pass", () => {
+    expect(MODELS[0]).toBe("google/nano-banana-2");
     expect(clampModel("google/nano-banana-2")).toBe("google/nano-banana-2");
+    expect(clampModel("google/nano-banana-2.1")).toBe("google/nano-banana-2.1");
+    expect(clampModel("pruna/p-image-edit")).toBe("pruna/p-image-edit");
     expect(clampModel("google/nano-banana-pro")).toBe("google/nano-banana-2");
     expect(clampModel("@cf/black-forest-labs/flux-2-dev")).toBe("google/nano-banana-2");
     expect(clampModel("nano-pro-2")).toBe("google/nano-banana-2");
@@ -131,11 +135,30 @@ describe("cloud-keyframe pure logic", () => {
 
   it("composePrompt handles a character-less shot (no style) cleanly", () => {
     const p = composePrompt("", "empty landscape, no one", [], {});
-    expect(p).toBe("empty landscape, no one");
+    expect(p).toBe("empty landscape, no one No written words, captions, subtitles or speech bubbles in the image.");
   });
 
-  it("R2 key conventions match the contract (renders/<project>/keyframes/<shot>.png)", () => {
-    expect(keyframeKey("neon_film", "shot_01")).toBe("renders/neon_film/keyframes/shot_01.png");
+  it("clampStyle keeps photoreal unless the value is anime", () => {
+    expect(clampStyle(undefined)).toBe("photoreal");
+    expect(clampStyle("anime")).toBe("anime");
+  });
+
+  it("composePrompt prepends an anime lead only on the anime path", () => {
+    const photo = composePrompt("", "empty landscape, no one", [], {}, "photoreal");
+    expect(photo).toBe("empty landscape, no one No written words, captions, subtitles or speech bubbles in the image.");
+    const anime = composePrompt("", "empty landscape, no one", [], {}, "anime");
+    expect(anime).toBe("anime illustration, cel-shaded, clean linework. empty landscape, no one No written words, captions, subtitles or speech bubbles in the image.");
+  });
+
+  it("composeEditPrompt names an anime still on the anime path", () => {
+    const p = composeEditPrompt("Wren runs down a wet alley", "anime");
+    expect(p).toMatch(/Create a new anime illustration still/);
+    expect(p).toMatch(/Wren runs down a wet alley/);
+  });
+
+  it("R2 key conventions match the contract (renders/<project>/keyframes/<job>/<shot>.png)", () => {
+    expect(keyframeKey("neon_film", "job-1", "shot_01")).toBe("renders/neon_film/keyframes/job-1/shot_01.png");
+    expect(keyframeKey("neon_film", "job-1", "shot_01")).not.toBe(keyframeKey("neon_film", "job-2", "shot_01"));
     expect(stageRefKey("neon_film", "job-7", "A", 1)).toBe("keyframe-stage/neon_film/job-7/ref_A_01.png");
     expect(plateKey("neon_film", "job-7", "shot_01")).toBe("keyframe-stage/neon_film/job-7/plate_shot_01.png");
     expect(stateKey("neon_film", "job-7")).toBe("keyframe-stage/neon_film/job-7.state.json");
@@ -326,6 +349,11 @@ describe("cloud-keyframe conformance (the contract is the law)", () => {
     expect(MANIFEST.name).toBe("cloud-keyframe");
     expect(MANIFEST.api).toBe("vivijure-module/2");
     expect(MANIFEST.config_schema?.film_ref).toMatchObject({ type: "string", default: "first_keyframe" });
+    expect(MANIFEST.config_schema?.style).toMatchObject({
+      type: "enum",
+      values: ["photoreal", "anime"],
+      default: "photoreal",
+    });
   });
 
   it("a well-formed KeyframeOutput passes checkHookOutput('keyframe')", () => {
@@ -607,14 +635,14 @@ describe("cloud-keyframe plate-then-edit", () => {
     expect(done.ok, done.error).toBe(true);
     expect(genCalls.length).toBe(2);
     expect(genCalls[0].refCount).toBe(0);
-    expect(genCalls[0].prompt).toBe("diner booth at night");
+    expect(genCalls[0].prompt).toBe("diner booth at night No written words, captions, subtitles or speech bubbles in the image.");
     expect(genCalls[0].prompt).not.toMatch(/Featuring/);
     expect(genCalls[1].refCount).toBe(2); // plate + face
     expect(genCalls[1].prompt).toMatch(/location in the first image/);
     expect(genCalls[1].prompt).toMatch(/diner booth at night/);
     const out = done.output as { keyframes: { shot_id: string; keyframe_key: string }[] };
     expect(out.keyframes).toEqual([
-      { shot_id: "shot_01", keyframe_key: "renders/neon_film/keyframes/shot_01.png" },
+      { shot_id: "shot_01", keyframe_key: keyframeKey("neon_film", token.job_id, "shot_01") },
     ]);
     const plate = plateKey(token.project, token.job_id, "shot_01");
     expect(out.keyframes[0].keyframe_key).not.toBe(plate);
@@ -654,10 +682,27 @@ describe("cloud-keyframe plate-then-edit", () => {
     ]);
     const out = done.output as { keyframes: { shot_id: string; keyframe_key: string }[] };
     expect(out.keyframes.map((k) => k.keyframe_key)).toEqual([
-      "renders/neon_film/keyframes/shot_01.png",
-      "renders/neon_film/keyframes/shot_02.png",
+      keyframeKey("neon_film", token.job_id, "shot_01"),
+      keyframeKey("neon_film", token.job_id, "shot_02"),
     ]);
     expect(out.keyframes[0].keyframe_key).not.toBe(plateKey(token.project, token.job_id, "shot_01"));
+  });
+
+  it("two concurrent jobs of one project keep separate stills (cf#1059)", async () => {
+    genCalls.length = 0;
+    const board = ["scenes:", '  - prompt: "empty diner after close"', '    id: "shot_01"', "    character_slots: []", ""].join("\n");
+    const env = await makeKeyframeEnv(board);
+    const first = await invokeKeyframe(env, {});
+    const second = await invokeKeyframe(env, {});
+    expect(first.ok, first.error).toBe(true);
+    expect(second.ok, second.error).toBe(true);
+    const a = await drainPolls(env, first.poll!);
+    const b = await drainPolls(env, second.poll!);
+    const keyOf = (r: typeof a) => (r.output as { keyframes: { keyframe_key: string }[] }).keyframes[0].keyframe_key;
+    expect(keyOf(a)).not.toBe(keyOf(b));
+    const r2 = env.R2_RENDERS as { get: (k: string) => Promise<unknown> };
+    expect(await r2.get(keyOf(a)), "the first job's still survives the second job").toBeTruthy();
+    expect(await r2.get(keyOf(b))).toBeTruthy();
   });
 });
 
@@ -704,5 +749,123 @@ describe("cloud-keyframe film-wide reference (cp#32, pure logic)", () => {
     // when the film key IS one of the shot char keys (cast:A on a shot featuring A), it is not doubled.
     const dup = { A: ["kA"], [FILM_REF_SLOT]: ["kA"] };
     expect(planShotRefs(dup, ["A"], 4)).toEqual({ charKeys: ["kA"], filmKeys: [] });
+  });
+});
+
+describe("cloud-keyframe forbids drawn text (cf#1155)", () => {
+  it("in the plate prompt", () => {
+    expect(composePrompt("", "Wren speaks on a pier", [], {})).toContain("No written words, captions, subtitles or speech bubbles");
+  });
+  it("in the edit prompt, on both looks", () => {
+    expect(composeEditPrompt("Wren speaks on a pier")).toContain("No written words, captions, subtitles or speech bubbles");
+    expect(composeEditPrompt("Wren speaks on a pier", "anime")).toContain("No written words, captions, subtitles or speech bubbles");
+  });
+});
+
+describe("cloud-keyframe /invoke with the drawing workflow bound", () => {
+  it("starts the workflow, draws nothing, and puts its id in the poll token", async () => {
+    restoreGenOk();
+    genCalls.length = 0;
+    const env = await makeKeyframeEnv();
+    const create = vi.fn(async () => ({ id: "wf-9" }));
+    (env as unknown as { KEYFRAME_WORKFLOW: unknown }).KEYFRAME_WORKFLOW = { create };
+    const sub = await invokeKeyframe(env, { film_ref: "none" });
+    expect(sub.ok, sub.error).toBe(true);
+    expect(create).toHaveBeenCalledTimes(1);
+    expect(JSON.parse(atob(sub.poll!)).workflow_id).toBe("wf-9");
+    expect(genCalls).toHaveLength(0);
+  });
+
+  it("a re-submit for the same film and shots reaches the same run and plans nothing new", async () => {
+    const env = await makeKeyframeEnv();
+    const instance = { id: "kf-fixed" };
+    const ids: (string | undefined)[] = [];
+    (env as unknown as { KEYFRAME_WORKFLOW: unknown }).KEYFRAME_WORKFLOW = {
+      create: vi.fn(async (o: { id?: string }) => {
+        ids.push(o.id);
+        if (ids.length > 1) throw new Error("(instance.already_exists)");
+        return instance;
+      }),
+      get: vi.fn(async () => instance),
+    };
+    const submit = async () => {
+      const req = new Request("http://m/invoke", {
+        method: "POST",
+        body: JSON.stringify({
+          hook: "keyframe",
+          input: { project: "neon", bundle_key: "bundles/neon.tar.gz" },
+          config: { film_ref: "none" },
+          context: { project: "neon", job_id: "film-abc" },
+        }),
+      });
+      return (await (await worker.fetch(req, env)).json()) as { ok: boolean; poll?: string; jobId?: string; error?: string };
+    };
+    const a = await submit();
+    const b = await submit();
+    expect(a.ok, a.error).toBe(true);
+    expect(b.ok, b.error).toBe(true);
+    expect(ids[0]).toBeTruthy();
+    expect(ids[1]).toBe(ids[0]);
+    expect(b.jobId).toBe(a.jobId);
+    expect(b.poll).toBe(a.poll);
+  });
+
+  it("a different shot set for the same film is a different run", async () => {
+    const env = await makeKeyframeEnv();
+    const ids: (string | undefined)[] = [];
+    (env as unknown as { KEYFRAME_WORKFLOW: unknown }).KEYFRAME_WORKFLOW = {
+      create: vi.fn(async (o: { id?: string }) => { ids.push(o.id); return { id: o.id }; }),
+    };
+    for (const shot_ids of [["shot_01"], ["shot_02"]]) {
+      const req = new Request("http://m/invoke", {
+        method: "POST",
+        body: JSON.stringify({
+          hook: "keyframe",
+          input: { project: "neon", bundle_key: "bundles/neon.tar.gz", shot_ids },
+          config: { film_ref: "none" },
+          context: { project: "neon", job_id: "film-abc" },
+        }),
+      });
+      const r = (await (await worker.fetch(req, env)).json()) as { ok: boolean; error?: string };
+      expect(r.ok, r.error).toBe(true);
+    }
+    expect(ids[0]).not.toBe(ids[1]);
+  });
+
+  it("fails the submit when the workflow cannot start", async () => {
+    const env = await makeKeyframeEnv();
+    (env as unknown as { KEYFRAME_WORKFLOW: unknown }).KEYFRAME_WORKFLOW = {
+      create: async () => { throw new Error("no quota"); },
+    };
+    const sub = await invokeKeyframe(env, { film_ref: "none" });
+    expect(sub.ok).toBe(false);
+    expect(sub.error).toContain("no quota");
+  });
+});
+
+describe("cloud-keyframe film setting (vivijure-cf#1145, integration)", () => {
+  it("a shot with no place is drawn with the board's setting, in every pass", async () => {
+    genCalls.length = 0;
+    const yaml = STORYBOARD_YAML.replace(
+      'style_prefix: "cinematic, moody neon"',
+      'style_prefix: "cinematic, moody neon"\nsetting: "a rain-soaked night market"',
+    );
+    const env = await makeKeyframeEnv(yaml);
+    const sub = await invokeKeyframe(env, { film_ref: "none" });
+    expect(sub.ok, sub.error).toBe(true);
+    const done = await drainPolls(env, sub.poll!);
+    expect(done.ok, done.error).toBe(true);
+    const cafe = genCalls.filter((c) => c.prompt.includes("two of them in a cafe"));
+    expect(cafe.length).toBeGreaterThan(0);
+    for (const c of cafe) expect(c.prompt).toContain("Setting: a rain-soaked night market.");
+  });
+
+  it("a board with no setting draws exactly as before", async () => {
+    genCalls.length = 0;
+    const env = await makeKeyframeEnv();
+    const sub = await invokeKeyframe(env, { film_ref: "none" });
+    await drainPolls(env, sub.poll!);
+    expect(genCalls.length).toBeGreaterThan(0);
+    for (const c of genCalls) expect(c.prompt).not.toContain("Setting:");
   });
 });

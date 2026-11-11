@@ -1,3 +1,4 @@
+import { capEnhanced, MAX_SHOT_WORDS } from "../modules/plan-enhance/src/enhance";
 import { describe, it, expect } from "vitest";
 import {
   buildMessages,
@@ -118,5 +119,22 @@ describe("plan-enhance provider selection", () => {
     expect(extractAnthropicText({ content: [] })).toBeNull();
     expect(extractAnthropicText({})).toBeNull();
     expect(extractAnthropicText("nope")).toBeNull();
+  });
+});
+
+describe("the 50 word shot cap (cf#1150)", () => {
+  const over = Array.from({ length: 60 }, () => "word").join(" ");
+  it("keeps the original on a rewrite over the cap, and says how many", () => {
+    expect(capEnhanced([over, "short rewrite"], ["orig one", "orig two"])).toEqual({
+      prompts: ["orig one", "short rewrite"],
+      kept: 1,
+    });
+  });
+  it("accepts exactly the cap", () => {
+    const exact = Array.from({ length: MAX_SHOT_WORDS }, () => "word").join(" ");
+    expect(capEnhanced([exact], ["o"]).kept).toBe(0);
+  });
+  it("asks the model for a limit", () => {
+    expect(buildMessages(["a"], "medium")[0].content).toContain("under 40 words");
   });
 });

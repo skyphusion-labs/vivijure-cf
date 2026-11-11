@@ -5,7 +5,7 @@
 // route (or a rename that drops a pin) fails CI instead of compiling and passing.
 //
 // THIS IS A SNAPSHOT OF THE LIVE TABLE, not a tighter policy. Reclassifying a route is a
-// deliberate one-line change here plus the matching change in src/index.ts. Adding a route
+// deliberate one-line change here plus the matching change in src/studio.ts. Adding a route
 // requires a new line AND a bump of PINNED_ROUTE_COUNT. A list that regenerates itself from
 // API_ROUTES would absorb a slip silently, which is the defect this pin exists to catch.
 
@@ -18,10 +18,10 @@ export interface RouteScopePin {
 }
 
 /** Exact table size. Bump this when adding a route; the bidirectional check still has to agree. */
-export const PINNED_ROUTE_COUNT = 92;
+export const PINNED_ROUTE_COUNT = 103; // cf#887: GET /api/tiers/video-finish/readiness
 
 /** Exact operator-row count. Bump this when a new operator route is classified on purpose. */
-export const PINNED_OPERATOR_COUNT = 8;
+export const PINNED_OPERATOR_COUNT = 9; // cf#887: the tier readiness read
 
 export function routeScopeKey(r: { method: string; pattern: string }): string {
   return `${r.method} ${r.pattern}`;
@@ -72,10 +72,7 @@ export function diffRouteScopes(
 export const EXPECTED_ROUTE_SCOPES: readonly RouteScopePin[] = [
   { method: "GET", pattern: "/api/storage/usage", scope: "operator" },
   { method: "POST", pattern: "/api/storage/reconcile", scope: "operator" },
-  { method: "GET", pattern: "/api/demo/menu", scope: "consumer" },
-  { method: "POST", pattern: "/api/demo/render", scope: "consumer" },
-  { method: "GET", pattern: "/api/demo/render/:id", scope: "consumer" },
-  { method: "POST", pattern: "/api/demo/chat", scope: "consumer" },
+  { method: "GET", pattern: "/api/tiers/video-finish/readiness", scope: "operator" },
   { method: "GET", pattern: "/api/storyboard/projects", scope: "consumer" },
   { method: "POST", pattern: "/api/storyboard/projects", scope: "consumer" },
   { method: "GET", pattern: "/api/storyboard/projects/:id", scope: "consumer" },
@@ -102,6 +99,7 @@ export const EXPECTED_ROUTE_SCOPES: readonly RouteScopePin[] = [
   { method: "POST", pattern: "/api/cast/:id/generate-refs", scope: "consumer" },
   { method: "GET", pattern: "/api/cast/:id/refs-job/:jobId", scope: "consumer" },
   { method: "POST", pattern: "/api/cast/:id/train-lora", scope: "consumer" },
+  { method: "POST", pattern: "/api/cast/:id/voice-line", scope: "consumer" },
   { method: "POST", pattern: "/api/cast/:id/train-wan-lora", scope: "consumer" },
   { method: "GET", pattern: "/api/cast/:id/lora-status", scope: "consumer" },
   { method: "POST", pattern: "/api/cast/:id/voice-sample", scope: "consumer" },
@@ -114,6 +112,7 @@ export const EXPECTED_ROUTE_SCOPES: readonly RouteScopePin[] = [
   { method: "GET", pattern: "/api/artifact/*key", scope: "consumer" },
   { method: "HEAD", pattern: "/api/artifact/*key", scope: "consumer" },
   { method: "GET", pattern: "/api/artifact-url/*key", scope: "consumer" },
+  { method: "GET", pattern: "/api/thumb/*key", scope: "consumer" },
   { method: "POST", pattern: "/api/render/frames", scope: "consumer" },
   { method: "POST", pattern: "/api/storyboard/preflight", scope: "consumer" },
   { method: "POST", pattern: "/api/storyboard/plan", scope: "consumer" },
@@ -129,6 +128,7 @@ export const EXPECTED_ROUTE_SCOPES: readonly RouteScopePin[] = [
   { method: "POST", pattern: "/api/storyboard/markers", scope: "consumer" },
   { method: "POST", pattern: "/api/storyboard/bundle", scope: "consumer" },
   { method: "POST", pattern: "/api/storyboard/audio-upload", scope: "consumer" },
+  { method: "DELETE", pattern: "/api/storyboard/audio-upload/:name", scope: "consumer" }, // cf#1016: same scope as the upload
   { method: "POST", pattern: "/api/storyboard/character-ref", scope: "consumer" },
   { method: "POST", pattern: "/api/audio/analyze", scope: "consumer" },
   { method: "POST", pattern: "/api/storyboard/render", scope: "consumer" },
@@ -137,6 +137,17 @@ export const EXPECTED_ROUTE_SCOPES: readonly RouteScopePin[] = [
   { method: "GET", pattern: "/api/render/clips/:id", scope: "consumer" },
   { method: "POST", pattern: "/api/render/film", scope: "consumer" },
   { method: "GET", pattern: "/api/render/film/:id", scope: "consumer" },
+  { method: "POST", pattern: "/api/render/film/:id/finish-retry", scope: "consumer" },
+  { method: "POST", pattern: "/api/film", scope: "consumer" },
+  { method: "GET", pattern: "/api/film", scope: "consumer" },
+  { method: "GET", pattern: "/api/film/:id/parts/:n/shots", scope: "consumer" },
+  { method: "GET", pattern: "/api/film/:id", scope: "consumer" },
+  { method: "DELETE", pattern: "/api/film/:id", scope: "consumer" },
+  { method: "POST", pattern: "/api/film/:id/parts/:n/retry", scope: "consumer" },
+  { method: "POST", pattern: "/api/film/:id/ceiling", scope: "consumer" },
+  { method: "POST", pattern: "/api/film/:id/shots/:shot/retake", scope: "consumer" },
+  { method: "POST", pattern: "/api/film/:id/parts/:n/retake/cancel", scope: "consumer" },
+  { method: "POST", pattern: "/api/film/:id/resume", scope: "consumer" },
   { method: "POST", pattern: "/api/storyboard/renders/:id/regen-shot", scope: "consumer" },
   { method: "POST", pattern: "/api/storyboard/render-from-keyframes", scope: "consumer" },
   { method: "GET", pattern: "/api/storyboard/render/:jobId", scope: "consumer" },

@@ -37,11 +37,13 @@ keeps the credentials.
 | Route | Method | Purpose |
 |---|---|---|
 | `/health` | GET | readiness probe (`{ok:true}`); does not shell out to ffmpeg |
+| `/auth-check` | GET | cf#887: bearer-gated, does NO work. `200 {ok, serving: true, bearer: verified\|disabled, liveness_only: true}` means the process is up and accepted the bearer the caller sent; a wrong or stale token is the gate 401. Liveness only: it does not prove a finish would succeed |
 | `/finish` | POST | concat per-shot clips (cut/xfade) + mux soundtrack -> final MP4 |
 | `/overlay` | POST | **retired** (410) -- text-overlay module gone; use film-titles / subtitle |
 | `/film-titles` | POST | prepend a title card + append credit cards |
 | `/subtitle` | POST | burn time-synced captions (and/or emit a soft `.srt` sidecar) |
 | `/async/{route}` | POST | #602: submit `film-titles`, `subtitle`, or `finish` as a BACKGROUND job -> `202 {ok, jobId}` |
+| `/async/join-films` | POST | join finished films by URL into one film: video copied, one audio encode. Keyed job id, below |
 | `/async/status/{jobId}` | GET | poll a background job -> `{ok, status: pending|completed|failed, result?, error?}` (`404 {status:"not_found"}` if unknown) |
 
 Every route takes presigned R2 URLs (GET inputs, PUT output) in a small JSON body and returns
@@ -60,6 +62,100 @@ satellites). Jobs live IN-PROCESS: a container restart drops them, at which poin
 `not_found` and the core re-submits (the deterministic output key makes a re-run idempotent) or adopts
 the R2 artifact if the encode had finished. The synchronous routes are UNCHANGED, so an old core / an
 old module keeps working.
+
+### Holding a clip to its planned length (`holdToSeconds`, cf#1338)
+
+Each entry in `clips` may carry `holdToSeconds`. When the clip's video is shorter, `/finish` clones its last
+frame (`tpad=stop_mode=clone`) until the clip lasts that long, and on a talking film it pads the clip's own
+audio with silence to the same length (`apad`). The core sends it for a shot on a door that is driven by its
+line and bills by length (a per-second price, or none): that door's line is not padded, because the pad would
+be billed, so its clip can come back shorter than the plan. A door that bills per clip gets its line padded
+in the core instead, and no hold.
+
+On a talking film (`keepClipAudio`), every clip's video also runs at least as long as its own audio, by the
+same last-frame clone. A door that delivers a `4n+1` frame count rounds its video down (InfiniteTalk: 9 frames,
+0.36 s, against 0.43 s of audio), and the audio is never cut to fit the video. The join's one-frame tail-trim is
+taken from the clip's length after the hold. An absent, zero or non-numeric `holdToSeconds` holds nothing, so an
+older Worker's request assembles exactly as before. Tests: `test_hold.py` (CI, no ffmpeg) and
+`test_local_hold.py` (real ffmpeg, with a control that shows the 70 ms gap without the change).
+
+### Chunked assemble and the `partialUrls` pool (#784)
+
+`/finish` normalizes every clip through libx264 before the cheap join (video `-c copy`; on a talking
+film the per-clip dialogue is encoded once across the joins, as `/async/join-films` does, cf#1167), and the single-pass
+path keeps the downloads, the normalized copies, the concat and the muxed film in ONE work dir until
+the job ends. Peak disk is therefore 3-4x total input.
+
+#### Sizing this route: bitrate x duration x count, NOT `MAX_CLIPS x MAX_CLIP_BYTES` (cf#813)
+
+This section used to quote `MAX_CLIPS` 80 x `MAX_CLIP_BYTES` 256 MB = **20.0 GB** as "the route's
+own contracted maximum". **That product is not a payload and never was.** `MAX_CLIP_BYTES` is a
+**reject ceiling** -- the argument to `_download(s, url, dst, MAX_CLIP_BYTES)`, the size at which a
+download is REFUSED -- so 20.0 GB is the largest input the route will not reject, not one it expects.
+
+At this container's settings a 256 MB clip is **3.2 to 15.6 minutes** of video. Clips are **4 to 8
+seconds**. Measured, a 32-clip film normalizes to roughly **70-350 MB** and a full 80-clip film to
+about **750 MB**, so the product sits **23x to 120x** above a real film and nothing approaches the
+20 GB ephemeral disk.
+
+**Why this is worth correcting rather than leaving:** a disk gate written against 20 GB could never
+fire, which is the "green that cannot go red" shape. Size instead by bitrate x duration x count:
+
+| target | measured normalized bitrate | realistic band |
+|---|---|---|
+| 1080p24 crf 18 medium | 0.40 - 11.16 Mbps | ~2.3 - 9.3 Mbps |
+| 720p24 crf 18 medium | 0.17 - 4.82 Mbps | ~0.9 - 4.8 Mbps |
+
+**Provenance, because these are proxies and not real output.** Measured on slow pans over a real
+photographic still at 8.0 s / 16 fps in four complexity brackets, encoded then normalized through
+this container's exact command; **zero real rendered clips were reachable to the seat that measured
+them.** Pan brackets UNDERESTIMATE (no subject deformation, no per-frame generative shimmer) and
+injected-noise brackets OVERESTIMATE, so real generated video most likely lands in the upper half of
+the band. **The verdict does not depend on that precision:** reaching 256 MB in 8 seconds needs about
+**256 Mbps** and the worst bracket reached **11 Mbps**, so the conclusion survives a 20x proxy error.
+
+Keep `MAX_CLIP_BYTES` as what it is: a per-clip reject ceiling.
+
+Supply **`partialUrls`** and `/finish` switches to a chunked assemble that bounds peak disk to a fixed
+working set:
+
+```json
+{
+  "clips": [{ "url": "https://...r2.../shot_01.mp4" }],
+  "outputUrl": "https://...r2.../film.mp4",
+  "partialUrls": [{ "put": "https://...r2.../partial_000.mp4?sig=...",
+                    "get": "https://...r2.../partial_000.mp4?sig=..." }]
+}
+```
+
+1. Clips are partitioned into batches bounded by SOURCE BYTES (`MAX_BATCH_BYTES`, default 1 GiB, env
+   tunable). A batch closes on reaching the bound, so it may overshoot by at most one clip.
+2. Each batch is downloaded, normalized, hard-concatenated to a partial, PUT to its pool URL, and its
+   work dir deleted before the next batch starts.
+3. The final pass concatenates the partials **straight from their presigned GET URLs**, so they never
+   return to disk. Peak disk at that stage is one film.
+
+Peak disk becomes `max(3 x (MAX_BATCH_BYTES + MAX_CLIP_BYTES), one film)`.
+
+**Why a pool and not R2 credentials.** The container is credentialless on purpose, so it can only write
+to a URL it was handed; the Worker mints at most core's `ASSEMBLE_MAX_POOL_PAIRS` (80) pairs (a film that needs more fails loudly as `partialUrls pool exhausted`), and the container consumes only as
+many as its byte-batching needs. Unused presigns expire harmlessly. **Mint the GET URLs with a TTL that
+covers the WHOLE job**, not just the join: the final pass runs after every batch has encoded, so a TTL
+sized to the join alone will already have expired by the time it is used.
+
+**Behaviour worth knowing before you send a pool:**
+
+- **Omit `partialUrls` and nothing changes.** The single-pass path is untouched, so an older Worker is
+  unaffected.
+- **A film that fits in one batch uploads no partials at all** and finalizes from the local concat.
+- **Crossfade is refused with more than one batch** (`400`). A crossfade join spans two adjacent clips
+  and cannot cross a batch boundary; chunking anyway would silently drop the transition at every
+  boundary. Send `crossfade: 0` for a hard-cut film.
+- **A pool too small for the film is refused** (`400`) rather than silently truncating.
+- **The drop guard runs at BOTH levels** (see `concat_guard.py`), per batch and on the final join. A
+  lost PARTIAL is a film short by a whole batch, and the flat-ratio guard this replaced could not see
+  one once there were 7 or more parts.
+- The response carries `batches`, the number of partials the film was assembled from.
 
 ### `/finish` response + the duration honesty gate (#697/#698)
 
@@ -142,3 +238,54 @@ Response `200 { ok: true, verdict, reason, metrics, keyframe_similarity }`:
 
 `400` on missing `clipUrl` / invalid JSON, `413` on an over-cap clip, `502` on a fetch failure, `500` on an
 ffmpeg/inspect error. Thresholds + rationale live in `inspect_core.py` (unit-tested by `test_inspect.py`).
+
+## Joining finished films: `POST /async/join-films`
+
+Joins up to 64 finished films, in order, into one film. A long film can be built as several ordinary films and
+joined here. Same bearer and URL allowlist as every other route. There is no synchronous form.
+
+```json
+{ "films": [{ "url": "<presigned GET>" }, { "url": "<presigned GET>" }],
+  "outputUrl": "<presigned PUT>", "outputKey": "<echoed in the result>" }
+```
+
+`202 {ok, jobId, status}`, then poll `GET /async/status/{jobId}`. The result:
+
+```json
+{ "ok": true, "key": "...", "bytes": 0, "durationSeconds": 0, "videoSeconds": 0, "audioSeconds": 0,
+  "hasAudio": true, "films": 2, "filmSeconds": [0, 0], "filmOffsetsSeconds": [0, 0],
+  "width": 1920, "height": 1080, "elapsedMs": 0 }
+```
+
+`filmOffsetsSeconds` is where each film starts in the join, from probed film durations. Use it to shift a film's
+captions. It is not measured from the joined file.
+
+**Refusals**
+
+| Status | When |
+|---|---|
+| 400 | Bad body, more than 64 films, a URL off the allowlist, or a URL with a quote, newline or backslash. Refused at submit, so no job exists |
+| 413 | The films total more than one upload carries (5,363,466,240 bytes), or the joined film does. No upload is tried |
+| 422 | A film differs from the first in video codec, profile, frame size, pixel format, frame rate or time base, or in audio sample rate or channels, or only some films have audio |
+| 502 | A film would not read. Names the film index, never the URL |
+| 500 | ffmpeg failed or timed out, or the guard found a film missing from the join |
+
+Failures after submit arrive as `status: failed` with the error text. Films that are all silent join with no audio track.
+
+**Restarting.** Job state is in memory, so a restart loses a running join. The job id is a hash of the output and
+film object paths, not of the signatures. To recover, submit again with fresh URLs for the same objects:
+
+- Still running: you get the same job, and no second join starts.
+- Completed within the last hour: you get the same job and its result.
+- Failed, or lost to a restart (status answers `not_found`): it runs again under the same id.
+
+The output bytes are the same on every run from the same binary. Send the same `x-vivijure-finish-affinity` header on
+every submit and poll: the job lives on one instance. A completed job's id is remembered for an hour, so to redo a
+join on purpose, use a different output key.
+
+**URL lifetime.** Film URLs must stay valid through the join, and the output URL through its upload. The join runs
+up to 3x the film's length, with a 20 minute floor, plus up to 30 minutes for the upload.
+
+**Why audio is encoded.** See the comment above `JOIN_AUDIO_ARGS` in `app.py`. A plain `-c copy` measured 796 ms late
+at the last of 25 parts when counted in samples, and 0 ms when read from timestamps, so check sync by sample count.
+Sync here was measured from decoded samples, not on a hardware player.

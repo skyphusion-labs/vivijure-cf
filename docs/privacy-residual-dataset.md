@@ -59,8 +59,55 @@ Two log lines (`render.bookkeeping_deferred`, `router.error`) carry `reason: e.m
 exception message is only as content-free as the throw site that produced it. That is a property of
 the whole tree, not of these two lines, so it was censused rather than assumed:
 
-- **vivijure-cf `src/`**: exactly ONE throw interpolated upstream text (`providers/openai-image.ts`).
-  Closed in stage 1. No other throw in the studio source carries a fetched body.
+**THIS CENSUS WAS SCOPED TO `src/` AND SAID "the studio source". `modules/` WAS NEVER SWEPT.** The
+correction is recorded here rather than quietly applied, because the gap was not in the measurement,
+it was in the DENOMINATOR: every statement below was true as written and false as read, and a census
+document is the artifact a reader trusts instead of re-measuring. Three controls read as present over
+the unswept half -- a closed issue, a green test and this page -- and none of them could observe it.
+
+Method, so this is reproducible rather than asserted (run from the repo root):
+
+```
+# throws that interpolate anything
+grep -rn 'throw new Error(`' src modules --include=*.ts
+# identifiers assigned from a response body
+grep -rnE '(const|let|var) [A-Za-z_$][A-Za-z0-9_$]* = \(?await [A-Za-z0-9_.$]+\.(json|text)\(\)' src modules --include=*.ts
+```
+
+- **vivijure-cf `src/`**: **ZERO** throws carry a fetched body. 3 interpolating throws exist
+  (`access-auth.ts:93` a status code; `cast-media.ts:51,60` a client-declared MIME string and the
+  sniffed result, which is the caller's own input echoed back, not an upstream body), and the single
+  body read (`render-frames.ts:224`) never reaches a throw. The file this bullet used to name,
+  `providers/openai-image.ts`, is **deleted**: it had no production importer, so cf#223 hardened a
+  copy that nothing ran while the live path stayed unhardened. A patched file with no importer is
+  worse than no file, because it terminates a search.
+- **vivijure-cf `modules/`**: **THREE** sites carried a fetched provider body into a thrown message,
+  all now closed. `image-generate/src/image-gen.ts` twice (the OpenAI direct path interpolated
+  `error.message`; the AI Gateway path interpolated `detectProviderFailure`'s free text, lifted
+  straight out of `result.error ?? result.message`), and `plan-enhance/src/provider.ts` once (300 raw
+  characters of an Anthropic error body). All three relay OUT of the module: `image-generate`'s via
+  the returned `error` string, `plan-enhance`'s via the returned `error` AND via `output.notes`.
+  Enumerated fields (`error.code`, `error.type`) are kept because they come from the provider's own
+  fixed set; free prose is replaced by `untrustedLabel()` or dropped.
+- **Severity ordering, since it is not the obvious one:** `plan-enhance` is the worse of the two.
+  `image-generate` is published as a tenant bundle but **NOT provisioned** (held on #401), so on the
+  hosted door its jobs do not exist. `plan-enhance` **IS** in `scripts/tenant-module-catalog.txt`, and
+  two of its three relays return `ok: true` with the exception text folded into `output.notes` --
+  which is persisted and rendered in the planner, not merely logged. A leak into successful,
+  persisted output outranks one into an error string.
+- **Standing residual, and the reason the invariant above is load-bearing:**
+  `plan-enhance/src/index.ts:198` and `:252` interpolate `(e as Error).message` into `output.notes`,
+  and `:234` into the returned `error`. Those relays are UNCHANGED and are safe only because no throw
+  on that path carries a body any more. **So "no module throw carries a fetched body" is not
+  hygiene here, it is the thing keeping provider text out of persisted user-visible output.** A future
+  throw that interpolates a body re-opens the leak without touching these three lines.
+  `tests/modules-log-scrub-reexport.test.ts` holds the invariant statically and
+  `tests/log-scrub.test.ts` holds it behaviourally against all three live call sites; the static half
+  is file-scoped and says so, so it is a ratchet rather than a proof.
+- **A test was PINNING the leak.** `tests/image-generate-module.test.ts` asserted
+  `expect(body.error).toContain("content policy")` -- that the provider's prose reached the returned
+  error. Fixing the leak turned it red. Its intent (fail loud on a refusal, never soft-degrade) is
+  kept; the assertion is inverted to require the prose be absent.
 - **`vivijure-core`**: no throw interpolates a fetched body. It does, however, put upstream text into
   RETURNED error strings in four places (`runpod-submit` slices 300 chars of a non-JSON RunPod
   response; `render-mux` and `beat-analyze` slice 200 chars of an error body; `renders-db` /

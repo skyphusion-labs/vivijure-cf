@@ -8,16 +8,17 @@
 //   GET  /module.json -> manifest
 //   POST /invoke      -> read the bundle, stage each cast portrait (downscaled), plan the shots, write
 //                        run state to R2, return { ok, pending, poll }
-//   POST /poll        -> render the next shot, write its keyframe to R2, advance; pending until done
+//   POST /poll        -> report the workflow's progress from R2; pending until done
+// With KEYFRAME_WORKFLOW bound, a workflow draws one shot per step, so drawing does not depend on a
+// poll surviving and a poll returns in one R2 read. Without the binding, /poll draws one shot.
 // PollResponse carries no token, so the run state lives in R2 and the poll token is a stable pointer.
 //
 // This is a PRODUCER stage, not a polish step: a shot it cannot render is an honest HARD FAIL
 // (ok:false), never a soft-degrade and never a fake keyframe -- nothing downstream can animate a frame
 // that was never rendered. Failures are DATA, never an exception across the wire.
 
+import { withRetryingR2 } from "../../_shared/r2-retry";
 import {
-  MODULE_API,
-  type ModuleManifest,
   type InvokeRequest,
   type InvokeResponse,
   type PollRequest,
@@ -25,6 +26,10 @@ import {
   type KeyframeInput,
   type KeyframeOutput,
 } from "./contract";
+import { MANIFEST } from "./manifest";
+import { filmJobDocKey } from "@skyphusion-labs/vivijure-core/film-model";
+import { FILM_DOC_GRACE_MS } from "./film-doc";
+import { WorkflowEntrypoint, type WorkflowEvent, type WorkflowStep, type WorkflowStepConfig } from "cloudflare:workers";
 import {
   generateImage,
   maxRefsForModel,
@@ -41,16 +46,18 @@ import {
   listTarNames,
   parseScenes,
   parseStylePrefix,
+  parseSetting,
   parseRegistry,
   refsForSlot,
 } from "./bundle";
 import {
-  MODELS,
   clampModel,
   clampDim,
   clampRefsPerSlot,
   composePrompt,
   composeEditPrompt,
+  sceneWithSetting,
+  clampStyle,
   keyframeKey,
   stageRefKey,
   plateKey,
@@ -96,35 +103,47 @@ interface Env {
   GATEWAY_ID?: SecretsStoreSecret;
   R2_RENDERS: R2Bucket;
   IMAGES?: ImagesBinding;
+  /** Draws the shots outside any request. Absent on a host that has not bound it. */
+  KEYFRAME_WORKFLOW?: WorkflowBinding;
 }
 
-export const MANIFEST: ModuleManifest = {
-  name: "cloud-keyframe",
-  version: "0.1.8",
-  api: MODULE_API,
-  hooks: ["keyframe"],
-  provides: [{ id: "cloud-keyframe", label: "Cloud Keyframe (reference-conditioned, GPUless)" }],
-  config_schema: {
-    model: {
-      type: "enum",
-      values: [...MODELS],
-      default: MODELS[0],
-      label: "image model (Cloudflare Nano Banana 2)",
-    },
-    // Default to a 16:9 landscape keyframe (1344x768), matching the GPU keyframe module: image-to-video
-    // backends conform the clip to the KEYFRAME's aspect ratio, so a square keyframe forces square
-    // clips that the assembler then pillarboxes. A 16:9 keyframe keeps the whole chain 16:9.
-    width: { type: "int", default: 1344, min: 512, max: 1536, label: "width" },
-    height: { type: "int", default: 768, min: 512, max: 1536, label: "height" },
-    refs_per_slot: { type: "int", default: 1, min: 1, max: 4, label: "reference images per character" },
-    // cp#32: one film-wide reference appended to EVERY shot (character-less shots included) to lock
-    // style/realism across the film. STRING not enum: the cast anchor <slot> is per-project and a
-    // static enum cannot carry it. Grammar: none | first_keyframe | cast:<slot>. After plate-first,
-    // shot 1 is the scene lock, so the default is first_keyframe (not a portrait borrow).
-    film_ref: { type: "string", default: "first_keyframe", label: "film-wide reference lock (none | first_keyframe | cast:<slot>)" },
-  },
-  ui: { section: "keyframe", order: 5 },
-};
+interface WorkflowInstance {
+  id: string;
+  status(): Promise<{ status: string; error?: unknown }>;
+  terminate(): Promise<void>;
+}
+interface WorkflowBinding {
+  create(options?: { id?: string; params?: WorkflowParams }): Promise<WorkflowInstance>;
+  get(id: string): Promise<WorkflowInstance>;
+}
+export interface WorkflowParams {
+  project: string;
+  job_id: string;
+  /** The film this run draws for. Absent when the caller is not a film. */
+  film_id?: string;
+}
+
+/** A run for a film has one id per film and shot set, so a re-submit reaches the run already going
+ *  instead of drawing a second set. Letters, digits and hyphens only, as a Workflow id requires. */
+async function filmRunId(filmId: string, shotIds: string[]): Promise<string> {
+  const digest = await crypto.subtle.digest(
+    "SHA-256",
+    new TextEncoder().encode([...shotIds].sort().join(",")),
+  );
+  const hex = [...new Uint8Array(digest)].slice(0, 8).map((b) => b.toString(16).padStart(2, "0")).join("");
+  return "kf-" + filmId.replace(/[^A-Za-z0-9-]/g, "-").slice(0, 70) + "-" + hex;
+}
+
+/** True when the film no longer wants keyframes: failed, cancelled, or past this phase. A missing doc
+ *  counts as over only after the grace period, because a new film writes its doc after this run starts. */
+async function filmIsOver(env: Env, filmId: string, startedAtMs: number): Promise<boolean> {
+  const obj = await env.R2_RENDERS.get(filmJobDocKey(filmId));
+  if (!obj) return Date.now() - startedAtMs >= FILM_DOC_GRACE_MS;
+  const doc = JSON.parse(await obj.text()) as { phase?: unknown; cancelled?: unknown };
+  return doc.cancelled === true || (typeof doc.phase === "string" && doc.phase !== "keyframe");
+}
+
+const WORKFLOW_FINISHED = new Set(["complete", "errored", "terminated"]);
 
 // One shot rendered per /poll cycle: keeps each poll inside the Worker time budget while finishing the
 // project in a handful of polls.
@@ -240,16 +259,17 @@ async function generateImageWithFlagRetry(
 async function submit(env: Env, req: InvokeRequest<KeyframeInput>): Promise<InvokeResponse<KeyframeOutput>> {
   const input = req.input;
   if (!input || !input.project || !input.bundle_key) {
-    return { ok: false, error: "cloud-keyframe: input needs project and bundle_key" };
+    return { ok: false, error: "cloud-keyframe: input needs project and bundle_key", reason: "bad-input" };
   }
   const model = clampModel(req.config.model);
   const gatewayId = await secretValue(env.GATEWAY_ID);
-  if (model.startsWith("google/") && !gatewayId) {
-    return { ok: false, error: "cloud-keyframe: GATEWAY_ID not configured (required for the proxied model)" };
+  if ((model.startsWith("google/") || model.startsWith("pruna/")) && !gatewayId) {
+    return { ok: false, error: "cloud-keyframe: GATEWAY_ID not configured (required for the proxied model)", reason: "not-configured" };
   }
   const width = clampDim(req.config.width, 1344);
   const height = clampDim(req.config.height, 768);
   const refsPerSlot = clampRefsPerSlot(req.config.refs_per_slot);
+  const style = clampStyle(req.config.style);
 
   let tar: Uint8Array | null;
   try {
@@ -257,18 +277,19 @@ async function submit(env: Env, req: InvokeRequest<KeyframeInput>): Promise<Invo
   } catch (e) {
     return { ok: false, error: "cloud-keyframe: could not read bundle: " + (e as Error).message };
   }
-  if (!tar) return { ok: false, error: "cloud-keyframe: bundle not found at " + input.bundle_key };
+  if (!tar) return { ok: false, error: "cloud-keyframe: bundle not found at " + input.bundle_key, reason: "bad-input" };
 
   const yaml = extractTarText(tar, "storyboard.yaml");
-  if (!yaml) return { ok: false, error: "cloud-keyframe: bundle has no storyboard.yaml" };
+  if (!yaml) return { ok: false, error: "cloud-keyframe: bundle has no storyboard.yaml", reason: "bad-input" };
   const scenes = parseScenes(yaml);
   const stylePrefix = parseStylePrefix(yaml);
+  const setting = parseSetting(yaml);
   const registryJson = extractTarText(tar, "characters/registry.json");
   const registry = registryJson ? parseRegistry(registryJson) : {};
 
   const selected = selectScenes(scenes, input.shot_ids);
   if (selected.length === 0) {
-    return { ok: false, error: "cloud-keyframe: no shots to render (empty storyboard or no matching shot_ids)" };
+    return { ok: false, error: "cloud-keyframe: no shots to render (empty storyboard or no matching shot_ids)", reason: "bad-input" };
   }
 
   // Stage each used slot's reference portrait(s), downscaled, as standalone R2 objects the per-shot
@@ -276,10 +297,18 @@ async function submit(env: Env, req: InvokeRequest<KeyframeInput>): Promise<Invo
   // we cannot render with identity.
   const filmPlan = parseFilmRef(req.config.film_ref);
   if (!filmPlan) {
-    return { ok: false, error: "cloud-keyframe: unknown film_ref (use none | first_keyframe | cast:<slot>)" };
+    return { ok: false, error: "cloud-keyframe: unknown film_ref (use none | first_keyframe | cast:<slot>)", reason: "bad-input" };
   }
 
-  const job_id = crypto.randomUUID();
+  const contextId = req.context?.job_id;
+  const filmId = typeof contextId === "string" && contextId.startsWith("film-") ? contextId : undefined;
+  // A film run has a fixed id. Its state doc doubles as the record that the run was already planned.
+  const job_id = env.KEYFRAME_WORKFLOW && filmId
+    ? await filmRunId(filmId, selected.map((s) => s.shot_id))
+    : crypto.randomUUID();
+  if (env.KEYFRAME_WORKFLOW && filmId && (await env.R2_RENDERS.get(stateKey(input.project, job_id)))) {
+    return startDrawing(env.KEYFRAME_WORKFLOW, { project: input.project, job_id, film_id: filmId }, job_id);
+  }
   const tarNames = listTarNames(tar);
   const slot_refs: Record<string, string[]> = {};
   // Stage every used slot; for film_ref=cast:<slot> also stage the anchor slot even if no selected
@@ -312,7 +341,7 @@ async function submit(env: Env, req: InvokeRequest<KeyframeInput>): Promise<Invo
       // Scatter shards often get one empty-slot shot. Skip unused registry
       // slots that have no file. Still fail if this shard NAMED the slot.
       if (namedSlots.includes(slot)) {
-        return { ok: false, error: "cloud-keyframe: slot " + slot + " has no portrait in the bundle (cannot render its shots)" };
+        return { ok: false, error: "cloud-keyframe: slot " + slot + " has no portrait in the bundle (cannot render its shots)", reason: "bad-input" };
       }
       continue;
     }
@@ -330,8 +359,8 @@ async function submit(env: Env, req: InvokeRequest<KeyframeInput>): Promise<Invo
 
   const shots: ShotPlan[] = selected.map((s) => ({
     shot_id: s.shot_id,
-    prompt: composePrompt(stylePrefix, s.prompt, s.slots, registry),
-    plate_prompt: composePrompt(stylePrefix, s.prompt, [], registry),
+    prompt: composePrompt(stylePrefix, sceneWithSetting(s.prompt, setting, stylePrefix), s.slots, registry, style),
+    plate_prompt: composePrompt(stylePrefix, sceneWithSetting(s.prompt, setting, stylePrefix), [], registry, style),
     slots: s.slots,
   }));
 
@@ -346,6 +375,7 @@ async function submit(env: Env, req: InvokeRequest<KeyframeInput>): Promise<Invo
     done: [],
     total: shots.length,
     film_ref: filmPlan,
+    style,
   };
   try {
     await env.R2_RENDERS.put(stateKey(input.project, job_id), JSON.stringify(state), {
@@ -354,15 +384,80 @@ async function submit(env: Env, req: InvokeRequest<KeyframeInput>): Promise<Invo
   } catch (e) {
     return { ok: false, error: "cloud-keyframe: could not persist run state: " + (e as Error).message };
   }
+  if (env.KEYFRAME_WORKFLOW) {
+    return startDrawing(
+      env.KEYFRAME_WORKFLOW,
+      { project: input.project, job_id, ...(filmId ? { film_id: filmId } : {}) },
+      filmId ? job_id : undefined,
+    );
+  }
   return { ok: true, pending: true, poll: encodePoll({ project: input.project, job_id }), jobId: job_id };  // #318 (additive); cloud-keyframe writes no progress snapshot -> core gets no sub-progress, degrades gracefully
 }
 
-/** /poll: load the run state, render the next shot (gen -> normalize -> store), advance, and return
- *  pending until the shot queue drains -> the KeyframeOutput with every keyframe key. Any failure to
- *  render or store a shot is a HARD FAIL. */
+/** Start the run, or reach the one already going when a fixed id is taken. */
+async function startDrawing(
+  workflows: WorkflowBinding,
+  params: WorkflowParams,
+  id: string | undefined,
+): Promise<InvokeResponse<KeyframeOutput>> {
+  let workflowId: string;
+  try {
+    workflowId = (await workflows.create({ ...(id ? { id } : {}), params })).id;
+  } catch (e) {
+    let existing: WorkflowInstance | undefined;
+    if (id) {
+      try {
+        existing = await workflows.get(id);
+      } catch {
+        /* no such run: the create error below is the real one */
+      }
+    }
+    if (!existing) {
+      return { ok: false, error: "cloud-keyframe: could not start drawing workflow: " + (e as Error).message };
+    }
+    workflowId = existing.id;
+  }
+  return {
+    ok: true,
+    pending: true,
+    poll: encodePoll({ project: params.project, job_id: params.job_id, workflow_id: workflowId }),
+    jobId: params.job_id,
+  };
+}
+
+/** /poll. A workflow run only reads state, so the caller never waits on a provider. A token with no
+ *  workflow draws one shot here. */
 async function poll(env: Env, body: PollRequest): Promise<PollResponse<KeyframeOutput>> {
   const token = decodePoll(body.poll);
   if (!token) return { ok: false, error: "cloud-keyframe: bad poll token" };
+  if (!token.workflow_id) return drawNextShot(env, token);
+  const obj = await env.R2_RENDERS.get(stateKey(token.project, token.job_id));
+  if (!obj) return { ok: false, error: "cloud-keyframe: run state not found (expired or bad token)" };
+  const state = JSON.parse(await obj.text()) as CloudKeyframeState;
+  if (state.workflow_error) return { ok: false, error: state.workflow_error };
+  if (state.shots.length === 0) return { ok: true, output: readOutput(state) };
+  if (env.KEYFRAME_WORKFLOW) {
+    try {
+      const { status } = await (await env.KEYFRAME_WORKFLOW.get(token.workflow_id)).status();
+      if (status === "errored" || status === "terminated") {
+        return { ok: false, error: "cloud-keyframe: drawing workflow " + status };
+      }
+    } catch (e) {
+      // State is the record. A failed status read is not a failed render.
+      console.warn("cloud-keyframe: workflow status read failed: " + (e as Error).message);
+    }
+  }
+  return { ok: true, pending: true };
+}
+
+/** Load the run state, render the next shot (gen -> normalize -> store), advance, and return pending
+ *  until the shot queue drains -> the KeyframeOutput with every keyframe key. Any failure to render
+ *  or store a shot is a HARD FAIL. */
+async function drawNextShot(
+  env: Env,
+  token: { project: string; job_id: string },
+  opts: { mustPersist?: boolean } = {},
+): Promise<PollResponse<KeyframeOutput>> {
   const sk = stateKey(token.project, token.job_id);
   const obj = await env.R2_RENDERS.get(sk);
   if (!obj) return { ok: false, error: "cloud-keyframe: run state not found (expired or bad token)" };
@@ -389,7 +484,8 @@ async function poll(env: Env, body: PollRequest): Promise<PollResponse<KeyframeO
     const shot = state.shots[0];
     const characterShot = shot.slots.length > 0;
     // New jobs always set plate_prompt. Pre-plate-then-edit state docs omit it and stay one-pass.
-    const twoPass = characterShot && shot.plate_prompt !== undefined;
+    // p-image-edit schema requires 1-5 images, so it has no text-only plate.
+    const twoPass = characterShot && shot.plate_prompt !== undefined && state.model !== "pruna/p-image-edit";
     const cap = maxRefsForModel(state.model);
 
     // Gather this shot own character refs first, then the film-wide reference into the leftover
@@ -414,6 +510,12 @@ async function poll(env: Env, body: PollRequest): Promise<PollResponse<KeyframeO
       if (r) filmBlobs.push(await r.blob());
     }
     // Empty refBlobs stays empty. Do not steal a staged portrait onto an empty-slot shot.
+    if (state.model === "pruna/p-image-edit" && charBlobs.length + filmBlobs.length < 1) {
+      return {
+        ok: false,
+        error: "cloud-keyframe: shot " + shot.shot_id + " needs 1 to 5 reference images for p-image-edit",
+      };
+    }
 
     let gen: { bytes: ArrayBuffer; mime: string };
     let plateBytes: ArrayBuffer | undefined;
@@ -443,7 +545,7 @@ async function poll(env: Env, body: PollRequest): Promise<PollResponse<KeyframeO
         editRefs.push(b);
       }
       const editRes = await generateImageWithFlagRetry(
-        env, gatewayId, state.model, composeEditPrompt(shot.prompt), editRefs, state.width, state.height, shot.shot_id,
+        env, gatewayId, state.model, composeEditPrompt(shot.prompt, state.style), editRefs, state.width, state.height, shot.shot_id,
       );
       if (!editRes.ok) return editRes.retryable ? holdForRate(shot, editRes.error) : editRes;
       gen = editRes.gen;
@@ -463,7 +565,7 @@ async function poll(env: Env, body: PollRequest): Promise<PollResponse<KeyframeO
       return { ok: false, error: "cloud-keyframe: shot " + shot.shot_id + " normalize failed: " + (e as Error).message };
     }
 
-    const key = keyframeKey(state.project, shot.shot_id);
+    const key = keyframeKey(state.project, state.job_id, shot.shot_id);
     try {
       await env.R2_RENDERS.put(key, norm.bytes, { httpMetadata: { contentType: norm.mime } });
     } catch (e) {
@@ -492,14 +594,78 @@ async function poll(env: Env, body: PollRequest): Promise<PollResponse<KeyframeO
 
   try {
     await env.R2_RENDERS.put(sk, JSON.stringify(state), { httpMetadata: { contentType: "application/json" } });
-  } catch {
-    /* best-effort: the next poll re-reads the prior state and continues */
+  } catch (e) {
+    // A poll can re-read the prior state. A workflow would read that as a rate hold and buy the shot
+    // again on every pass, so there the step fails and its retry limit bounds the cost.
+    if (opts.mustPersist) throw e;
   }
   return state.shots.length === 0 ? { ok: true, output: readOutput(state) } : { ok: true, pending: true };
 }
 
+/** One step per shot, so a shot recorded in run state is never bought again. A step that dies between
+ *  buying a shot and recording it redraws that one shot on its retry. */
+const DRAW_STEP_CONFIG: WorkflowStepConfig = {
+  retries: { limit: 1, delay: "30 seconds", backoff: "constant" },
+  timeout: "10 minutes",
+};
+const RATE_HOLD_SLEEP = "30 seconds";
+
+export class CloudKeyframeWorkflow extends WorkflowEntrypoint<Env, WorkflowParams> {
+  async run(event: WorkflowEvent<WorkflowParams>, step: WorkflowStep): Promise<void> {
+    withRetryingR2(this.env);
+    const token = event.payload;
+    const sk = stateKey(token.project, token.job_id);
+    const shotsLeft = async (): Promise<number> => {
+      const obj = await this.env.R2_RENDERS.get(sk);
+      return obj ? (JSON.parse(await obj.text()) as CloudKeyframeState).shots.length : 0;
+    };
+    const fail = async (error: string): Promise<void> => {
+      await step.do("record failure", async () => {
+        const obj = await this.env.R2_RENDERS.get(sk);
+        if (!obj) return;
+        const state = JSON.parse(await obj.text()) as CloudKeyframeState;
+        state.workflow_error = error.slice(0, 500);
+        await this.env.R2_RENDERS.put(sk, JSON.stringify(state), {
+          httpMetadata: { contentType: "application/json" },
+        });
+      });
+    };
+    try {
+      // Each pass finishes a shot, holds for a rate limit, or fails. drawNextShot caps the holds per
+      // shot, so this bound is never what ends a healthy run.
+      // Read through a step so a replay keeps the original start time.
+      const startedAtMs = await step.do("start time", async () => Date.now());
+      let remaining = await step.do("read plan", shotsLeft);
+      const maxPasses = remaining * (KEYFRAME_RATE_MAX + 1);
+      for (let pass = 0; pass < maxPasses && remaining > 0; pass++) {
+        const r = await step.do("draw " + pass, DRAW_STEP_CONFIG, async () => {
+          // Checked inside the step, right before the spend, so a film that ended without a /cancel
+          // reaching us stops buying here.
+          if (token.film_id && (await filmIsOver(this.env, token.film_id, startedAtMs))) return { over: true };
+          const res = await drawNextShot(this.env, token, { mustPersist: true });
+          return res.ok ? { left: await shotsLeft() } : { error: res.error };
+        });
+        if ("over" in r) {
+          await fail("cloud-keyframe: stopped drawing because the film is over");
+          return;
+        }
+        if ("error" in r) {
+          await fail(String(r.error));
+          return;
+        }
+        if (r.left === remaining) await step.sleep("rate hold " + pass, RATE_HOLD_SLEEP);
+        remaining = r.left;
+      }
+      if (remaining > 0) await fail("cloud-keyframe: drawing stopped with " + remaining + " shots left");
+    } catch (e) {
+      await fail("cloud-keyframe: drawing workflow failed: " + (e as Error).message);
+    }
+  }
+}
+
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
+    withRetryingR2(env);
     const url = new URL(request.url);
     if (request.method === "GET" && url.pathname === "/module.json") return json(MANIFEST);
 
@@ -523,10 +689,10 @@ export default {
       try {
         req = (await request.json()) as InvokeRequest<KeyframeInput>;
       } catch {
-        return json({ ok: false, error: "invalid JSON body" } as InvokeResponse);
+        return json({ ok: false, error: "invalid JSON body", reason: "bad-input" } as InvokeResponse);
       }
       if (req.hook !== "keyframe") {
-        return json({ ok: false, error: "unsupported hook " + String(req.hook) } as InvokeResponse);
+        return json({ ok: false, error: "unsupported hook " + String(req.hook), reason: "unsupported" } as InvokeResponse);
       }
       return json(await submit(env, req));
     }
@@ -542,6 +708,32 @@ export default {
         return json({ ok: false, error: "poll token required" } as PollResponse);
       }
       return json(await poll(env, body));
+    }
+
+    if (request.method === "POST" && url.pathname === "/cancel") {
+      let body: PollRequest;
+      try {
+        body = (await request.json()) as PollRequest;
+      } catch {
+        return json({ ok: false, error: "invalid JSON body" });
+      }
+      const token = body && typeof body.poll === "string" ? decodePoll(body.poll) : null;
+      if (!token) return json({ ok: false, error: "cloud-keyframe: bad poll token" });
+      // A token with no workflow has nothing running: drawing only happens inside its polls.
+      if (!token.workflow_id || !env.KEYFRAME_WORKFLOW) return json({ ok: true });
+      try {
+        await (await env.KEYFRAME_WORKFLOW.get(token.workflow_id)).terminate();
+        return json({ ok: true });
+      } catch (e) {
+        // A finished run is not running on our account, which is what ok:true means here.
+        try {
+          const { status } = await (await env.KEYFRAME_WORKFLOW.get(token.workflow_id)).status();
+          if (WORKFLOW_FINISHED.has(status)) return json({ ok: true });
+        } catch {
+          /* the status read failed too: report the terminate error */
+        }
+        return json({ ok: false, error: "cloud-keyframe: could not stop drawing workflow: " + (e as Error).message });
+      }
     }
 
     return json({ ok: false, error: "not found" }, 404);

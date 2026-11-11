@@ -23,10 +23,6 @@
 // already returned the field before this change, contrary to the issue's table.
 import { describe, it, expect, vi, afterEach } from "vitest";
 
-import seedanceWorker from "../modules/seedance/src/index";
-import klingWorker from "../modules/kling/src/index";
-import viduWorker from "../modules/vidu-q3/src/index";
-import veoWorker from "../modules/google-veo/src/index";
 import hailuoWorker from "../modules/minimax-hailuo/src/index";
 import wanWorker from "../modules/alibaba-wan/src/index";
 import wanLoraWorker from "../modules/alibaba-wan-lora/src/index";
@@ -37,8 +33,11 @@ import cfSeedanceWorker from "../modules/cf-seedance/src/index";
 import cfGrokWorker from "../modules/cf-grok-video/src/index";
 import cfFluxWorker from "../modules/cf-flux-3-video/src/index";
 import cfHailuoWorker from "../modules/cf-hailuo/src/index";
+import cfKlingV4Worker from "../modules/cf-kling-v4/src/index";
+import cfMinimaxH3Worker from "../modules/cf-minimax-h3/src/index";
 import cfVeoWorker from "../modules/cf-veo/src/index";
-import klingO1Worker from "../modules/kling-o1-r2v/src/index";
+import cfPVideoAvatarWorker from "../modules/cf-p-video-avatar/src/index";
+import cfViduWorker from "../modules/cf-vidu-q3-turbo/src/index";
 import infinitetalkWorker from "../modules/infinitetalk/src/index";
 
 type Worker = { fetch(request: Request, env: never): Promise<Response> };
@@ -52,12 +51,8 @@ const STUB_JOB_ID_ALNUM = "b7c1f0e200004aaa9bbb5cd0e1f23456";
 const INPUT = { shot_id: "shot_01", prompt: "a slow push in", keyframe_url: "https://example.invalid/kf.png", seconds: 5, audio_url: "https://example.invalid/line.wav" };
 
 const MODULES: { name: string; worker: Worker; env: Record<string, unknown>; jobId?: string }[] = [
-  { name: "seedance", worker: seedanceWorker as unknown as Worker, env: { RUNPOD_API_KEY: "rpa_stub" } },
-  { name: "kling", worker: klingWorker as unknown as Worker, env: { RUNPOD_API_KEY: "rpa_stub" } },
-  { name: "kling-o1-r2v", worker: klingO1Worker as unknown as Worker, env: { RUNPOD_API_KEY: "rpa_stub" } },
+  // cf#921: `kling` is RETIRED. cf#1075 retired seedance, google-veo, and vidu-q3.
   { name: "infinitetalk", worker: infinitetalkWorker as unknown as Worker, env: { RUNPOD_API_KEY: "rpa_stub" } },
-  { name: "vidu-q3", worker: viduWorker as unknown as Worker, env: { RUNPOD_API_KEY: "rpa_stub" } },
-  { name: "google-veo", worker: veoWorker as unknown as Worker, env: { RUNPOD_API_KEY: "rpa_stub" } },
   { name: "minimax-hailuo", worker: hailuoWorker as unknown as Worker, env: { RUNPOD_API_KEY: "rpa_stub" } },
   { name: "alibaba-wan", worker: wanWorker as unknown as Worker, env: { RUNPOD_API_KEY: "rpa_stub" } },
   { name: "alibaba-wan-lora", worker: wanLoraWorker as unknown as Worker, env: { RUNPOD_API_KEY: "rpa_stub" } },
@@ -107,7 +102,11 @@ const CF_MODULES: { name: string; worker: Worker }[] = [
   { name: "cf-grok-video", worker: cfGrokWorker as unknown as Worker },
   { name: "cf-flux-3-video", worker: cfFluxWorker as unknown as Worker },
   { name: "cf-hailuo", worker: cfHailuoWorker as unknown as Worker },
+  { name: "cf-kling-v4", worker: cfKlingV4Worker as unknown as Worker },
+  { name: "cf-minimax-h3", worker: cfMinimaxH3Worker as unknown as Worker },
   { name: "cf-veo", worker: cfVeoWorker as unknown as Worker },
+  { name: "cf-p-video-avatar", worker: cfPVideoAvatarWorker as unknown as Worker },
+  { name: "cf-vidu-q3-turbo", worker: cfViduWorker as unknown as Worker },
 ];
 
 /** Answers the vendor /run with a job id and everything else with something harmless. Records the
@@ -233,7 +232,7 @@ describe("the population under test is the whole one (cf#296)", () => {
     // CONTROL: the scan found real modules. A path or parse regression would otherwise turn this
     // assertion into a pass generator that agrees with any coverage list at all.
     expect(motion.length).toBeGreaterThanOrEqual(9);
-    expect(motion).toContain("seedance");
+    expect(motion).toContain("minimax-hailuo");
     expect(motion).toContain("own-gpu");
     // The module the exact-string matcher missed. Pinned by name so the widened pattern cannot
     // narrow back without this failing.

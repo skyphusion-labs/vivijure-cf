@@ -25,8 +25,9 @@ This repository is where the promise is most load-bearing, because it holds the 
 runs. The commitment names two facts about this repo specifically:
 
 - **Vivijure self-hosted:** we operate nothing and hold nothing. Your instance never talks to us.
-- **The Vivijure demo** (`demo.vivijure.com`): we operate it, and it holds nothing you submit. No
-  account, no identity cookie, no analytics beacon, and it renders nothing.
+- **The Vivijure demo** (`demo.vivijure.com`): the custom domain was removed on purpose on
+  2026-10-08. It is not a live site. The deployment was deleted on 2026-10-19 (both Worker scripts,
+  the D1 database, the R2 bucket, the AI Gateway) and no configuration change brings it back.
 
 `PRIVACY.md` is the detailed policy and remains canonical for this host. The commitment is the
 standard that policy is written against; if the two ever disagree, that is a defect in one of them,

@@ -1,7 +1,7 @@
 // Vivijure studio -- the abuse-report link (control-plane#130). A GATE, not a feature, in the same
-// family as readonly-gate.js and hook-availability.js: no nav entry, no page of its own, and a pure
+// family as hook-availability.js: no nav entry, no page of its own, and a pure
 // PROJECTION of the registry. The sole signal is host.abuse_report_url on GET /api/modules, the
-// core describing itself, sibling of host.dispatch / host.readonly / host.hooks_unavailable.
+// core describing itself, sibling of host.dispatch / host.hooks_unavailable.
 //
 // WHY IT IS A PROJECTION AND NOT A LINK IN THE MARKUP: this bundle is what a self-hoster installs.
 // Our abuse address must never ship inside it, because we are not the provider for a self-hosted

@@ -35,10 +35,31 @@ export interface InvokeRequest<I = unknown> {
   context: InvokeContext;
 }
 
+/** VENDORED from core's `InvokeFailureReason` (vivijure-module/2, core#291). CLOSED set.
+ *
+ *  DO NOT HAND-EDIT. `tests/invoke-failure-reason-vendored.test.ts` derives this block from core's
+ *  `INVOKE_FAILURE_REASONS` and fails if any of the 34 vendored copies drifts from it. Copied rather
+ *  than imported because this file is deliberately import-free (a module must build without the core
+ *  package); the test is what makes 34 copies safe.
+ *
+ *  ABSENT means the module has not adopted the field. It is never defaulted to a class. */
+export type InvokeFailureReason =
+  | "bad-input"
+  | "unsupported"
+  | "not-configured"
+  | "unauthorized"
+  | "quota-exceeded"
+  | "rate-limited"
+  | "upstream-unavailable"
+  | "backend-error"
+  | "cancelled"
+  | "timeout"
+  | "internal";
+
 export type InvokeResponse<O = unknown> =
   | { ok: true; output: O }
   | { ok: true; pending: true; poll: string }
-  | { ok: false; error: string };
+  | { ok: false; error: string; reason?: InvokeFailureReason };
 
 // master (v1) -----------------------------------------------------------------------------------
 
@@ -58,5 +79,6 @@ export interface MasterInput {
 export interface MasterOutput {
   audio_key: string;   // R2 key of the MASTERED bed (may equal the input if it passed through)
   applied: string[];   // ["music-upscale:soxr48k", "loudnorm:-14LUFS"] on success; ["passthrough:<reason>"] otherwise
+  failure?: { kind: "transient" | "permanent"; code: string; detail?: string }; // core#377: why the step did not run
   degraded?: string;   // reason, set ONLY on a real passthrough degrade (never on success); see #77
 }

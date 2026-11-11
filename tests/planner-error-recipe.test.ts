@@ -119,7 +119,7 @@ describe("first-sitting UX pins (cf#644 #645 #649)", () => {
 
   it("lede is filmmaker language, not a training-bundle console", () => {
     expect(html).not.toMatch(/assemble the training bundle/);
-    expect(html).toMatch(/Write the storyboard/);
+    expect(html).toMatch(/Plan my scenes/);
   });
 
   it("bundle success goes to render, not Audio", () => {

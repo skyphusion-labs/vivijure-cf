@@ -1,5 +1,6 @@
 // cf-seedance: a motion.backend module worker (vivijure-module/2).
-// Cloudflare AI Gateway / Unified Billing model `bytedance/seedance-2.0` (i2v).
+// Cloudflare AI Gateway / Unified Billing. Default model `bytedance/seedance-2.5`.
+// Also 2.0, 2.0-fast, and 2.0-mini. Each model has its own input schema.
 //
 // ASYNC vs RunPod: RunPod POST /run returns a job id immediately and /status polls a remote
 // queue. CF env.AI.run is SYNCHRONOUS-only (no job handle) and video gens run minutes -- far
@@ -12,6 +13,7 @@
 //
 // Failures are DATA (ok:false), never thrown across the wire.
 
+import { withRetryingR2 } from "../../_shared/r2-retry";
 import {
   MODULE_API,
   type ModuleManifest,
@@ -24,6 +26,12 @@ import {
 } from "./contract";
 import {
   OUT_FPS,
+  MODELS,
+  DEFAULT_MODEL,
+  RESOLUTIONS,
+  DEFAULT_RESOLUTION,
+  ASPECT_RATIOS,
+  DEFAULT_ASPECT,
   buildParams,
   parseVideoUrl,
   clampDuration,
@@ -36,6 +44,7 @@ import {
   type RunState,
   type ModuleConfig,
 } from "./params";
+import { requireVideoUrl, runPaidGeneration } from "../../_shared/paid-generation";
 import { WorkflowEntrypoint, type WorkflowEvent, type WorkflowStep, type WorkflowStepConfig } from "cloudflare:workers";
 
 interface R2Bucket {
@@ -74,19 +83,19 @@ export interface WorkflowParams {
 
 const MANIFEST: ModuleManifest = {
   name: "cf-seedance",
-  version: "0.1.2",
+  version: "0.1.3",
   api: MODULE_API,
   hooks: ["motion.backend"],
   provides: [{ id: "i2v-cloud", label: "Talking clips (Seedance)" }],
   config_schema: {
     model: {
       type: "enum",
-      values: ["bytedance/seedance-2.5", "bytedance/seedance-2.0", "bytedance/seedance-2.0-fast", "bytedance/seedance-2.0-mini"],
-      default: "bytedance/seedance-2.5",
+      values: [...MODELS],
+      default: DEFAULT_MODEL,
       label: "Seedance model",
     },
-    resolution: { type: "enum", values: ["480p", "720p", "1080p", "4k"], default: "720p", label: "resolution" },
-    aspect_ratio: { type: "enum", values: ["16:9", "4:3", "1:1", "3:4", "9:16", "21:9", "9:21"], default: "16:9", label: "aspect ratio" },
+    resolution: { type: "enum", values: [...RESOLUTIONS], default: DEFAULT_RESOLUTION, label: "resolution" },
+    aspect_ratio: { type: "enum", values: [...ASPECT_RATIOS], default: DEFAULT_ASPECT, label: "aspect ratio" },
     camera_fixed: { type: "bool", default: false, label: "lock camera" },
     generate_audio: { type: "bool", default: true, label: "keep the model's talking audio (off: silent clip)" },
     seed: { type: "int", default: -1, min: -1, label: "seed (-1 = random)" },
@@ -98,15 +107,17 @@ const MANIFEST: ModuleManifest = {
     cost: "Pay per render",
     blurb: "Fast talking clips. Seedance 2.5 goes to 30 seconds. Same seed keeps the voice closer.",
     limits: [
-      "4-12 second clips on 2.0; up to 30 seconds on 2.5",
+      "4-12 second clips on 2.0, Fast, and Mini. Up to 30 seconds on 2.5.",
       "Same seed and same voice lock",
       "Last still is the next start",
-      "One film, no scatter",
-      "Uses the Cast voice sample as reference video. Same voice as the clip you kept.",
-      "Generate a 5 or 10 second sample on Cast first",
+      "Same description and seed on every shot. The voice can still vary.",
+      "1080p and 4k are Seedance 2.0 only. 2.5, Fast, and Mini stay at 480p or 720p.",
+      "9:21 is not on 2.5. With a first and last still, 2.5 uses adaptive ratio: a vertical clip needs a 9:16 keyframe.",
+      "No price shown: the Cloudflare model page lists none (read 2026-11-05). A price from another provider is not ours.",
     ],
   },
   usage: {
+    face_hold: "two",
     native_audio: true,
     voice: "seed_and_prompt",
     scatter_native_audio: false,
@@ -149,14 +160,16 @@ async function readState(env: Env, jobId: string): Promise<RunState | null> {
   }
 }
 
-/** Blocking env.AI.run -> download video -> R2 clip + done state. Runs inside a Workflow step. */
-async function runGeneration(env: Env, params: WorkflowParams): Promise<void> {
+/** The provider call. Its own workflow step, so nothing after it can buy it again (cf#1105). */
+async function generateClip(env: Env, params: WorkflowParams): Promise<unknown> {
   const gatewayId = await secretValue(env.GATEWAY_ID);
   if (!gatewayId) throw new Error("GATEWAY_ID not configured");
   const modelParams = buildParams(params.input, params.config);
-  const result = await env.AI.run(selectedModel(params.config), modelParams, { gateway: { id: gatewayId } });
-  const url = parseVideoUrl(result);
-  if (!url) throw new Error("model completed but returned no video URL");
+  return env.AI.run(selectedModel(params.config), modelParams, { gateway: { id: gatewayId } });
+}
+
+/** Download and write. Retries on its own step, and never reaches the provider. */
+async function storeClip(env: Env, params: WorkflowParams, url: string): Promise<void> {
   const vresp = await fetch(url);
   if (!vresp.ok) throw new Error("video fetch " + vresp.status);
   const bytes = await vresp.arrayBuffer();
@@ -179,10 +192,13 @@ const GENERATE_STEP_CONFIG: WorkflowStepConfig = {
 
 export class CfSeedanceWorkflow extends WorkflowEntrypoint<Env, WorkflowParams> {
   async run(event: WorkflowEvent<WorkflowParams>, step: WorkflowStep): Promise<void> {
+    withRetryingR2(this.env);
     const p = event.payload;
     try {
-      await step.do("generate", GENERATE_STEP_CONFIG, async () => {
-        await runGeneration(this.env, p);
+      await runPaidGeneration(step, GENERATE_STEP_CONFIG, {
+        generate: () => generateClip(this.env, p),
+        parse: (raw) => requireVideoUrl(parseVideoUrl(raw)),
+        store: (url) => storeClip(this.env, p, url),
       });
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
@@ -200,13 +216,13 @@ async function submit(
 ): Promise<InvokeResponse<MotionBackendOutput>> {
   const input = req.input;
   if (!input || !input.keyframe_url || !input.prompt || !input.shot_id) {
-    return { ok: false, error: "motion.backend: input needs shot_id, keyframe_url, and prompt" };
+    return { ok: false, error: "motion.backend: input needs shot_id, keyframe_url, and prompt", reason: "bad-input" };
   }
   const gatewayId = await secretValue(env.GATEWAY_ID);
-  if (!gatewayId) return { ok: false, error: "cf-seedance: GATEWAY_ID not configured" };
+  if (!gatewayId) return { ok: false, error: "cf-seedance: GATEWAY_ID not configured", reason: "not-configured" };
 
   const config = normalizeConfig(req.config ?? {});
-  const seconds = clampDuration(input.seconds);
+  const seconds = clampDuration(input.seconds, config.model);
   const project = req.context?.project || "project";
   const jobId = (req.context?.job_id || crypto.randomUUID()) + "-" + input.shot_id;
 
@@ -281,6 +297,7 @@ async function poll(env: Env, body: PollRequest): Promise<PollResponse<MotionBac
 
 export default {
   async fetch(request: Request, env: Env, _ctx: ExecutionContext): Promise<Response> {
+    withRetryingR2(env);
     const url = new URL(request.url);
     if (request.method === "GET" && url.pathname === "/module.json") return json(MANIFEST);
 
@@ -298,10 +315,10 @@ export default {
       try {
         req = (await request.json()) as InvokeRequest<MotionBackendInput>;
       } catch {
-        return json({ ok: false, error: "invalid JSON body" } as InvokeResponse);
+        return json({ ok: false, error: "invalid JSON body", reason: "bad-input" } as InvokeResponse);
       }
       if (req.hook !== "motion.backend") {
-        return json({ ok: false, error: "unsupported hook " + String(req.hook) } as InvokeResponse);
+        return json({ ok: false, error: "unsupported hook " + String(req.hook), reason: "unsupported" } as InvokeResponse);
       }
       return json(await submit(env, req));
     }

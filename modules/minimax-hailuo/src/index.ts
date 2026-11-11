@@ -7,8 +7,9 @@
 // fast (a status check; only the final one downloads), so nothing holds a multi-minute request.
 //
 // Phase 1 (#171): video-only. Hailuo 2.3 Fast does not emit its own audio, so the clip is silent and
-// the core's score/mux chain owns audio, exactly like the seedance reference. Failures are DATA.
+// the core's score/mux chain owns audio, exactly like the alibaba-wan door. Failures are DATA.
 
+import { withRetryingR2 } from "../../_shared/r2-retry";
 import {
   MODULE_API,
   type ModuleManifest,
@@ -23,6 +24,7 @@ import { buildHailuoBody, extractVideoUrl, clipKey, clampDuration, encodePoll, d
 
 import { recordRunpodJob, probeRunpodJobLog, parseRunpodErrorType, runpodWalkedPastOutcome } from "../../_shared/runpod-job-log";
 import { planeRefusalReason, planeRefusalError, runpodRoute, runpodEndpointUrl, runpodHeaders, runpodCredentialName, type RunpodRoute } from "../../_shared/runpod-route";
+import { runpodSubmitFailure } from "../../_shared/runpod-submit-error";
 
 interface Env {
   RUNPOD_API_KEY: SecretsStoreSecret;
@@ -43,7 +45,7 @@ const OUT_FPS = 24;
 
 const MANIFEST: ModuleManifest = {
   name: "minimax-hailuo",
-  version: "0.1.1",
+  version: "0.1.2",
   api: MODULE_API,
   hooks: ["motion.backend"],
   provides: [{ id: "i2v-cloud", label: "Silent physical (Hailuo)" }],
@@ -55,15 +57,19 @@ const MANIFEST: ModuleManifest = {
     section: "motion",
     order: 40,
     locality: "cloud",
-    cost: "Pay per render",
-    blurb: "Physical motion, silent. 6 or 10 seconds. Cast voice muxed if they speak.",
+    // cf#1246: provider cost, no markup. Source and date: docs/motion-door-prices.md.
+    cost: "$0.19/s",
+    cost_as_of: "2026-11-05",
+    cost_usd_per_second: [0.19, 0.19],
+    blurb: "Physical motion, silent. 6 or 10 seconds. No spoken lines.",
     limits: [
       "6 or 10 second clips",
       "Silent motion",
-      "Speaking is the Cast voice, muxed; a synced mouth is the InfiniteTalk door",
+      "No spoken lines. A board with a line needs a talking door",
     ],
   },
   usage: {
+    face_hold: "one",
     native_audio: false,
     voice: "cast_tts",
     scatter_native_audio: true,
@@ -108,17 +114,17 @@ async function cancelRunpodJobBestEffort(route: RunpodRoute, jobId: string): Pro
 async function submit(env: Env, req: InvokeRequest<MotionBackendInput>): Promise<InvokeResponse<MotionBackendOutput>> {
   const input = req.input;
   if (!input || !input.keyframe_url || !input.prompt || !input.shot_id) {
-    return { ok: false, error: "motion.backend: input needs shot_id, keyframe_url, and prompt" };
+    return { ok: false, error: "motion.backend: input needs shot_id, keyframe_url, and prompt", reason: "bad-input" };
   }
   const route = await runpodRoute(env);
-  if (!route.credential) return { ok: false, error: "minimax-hailuo: " + runpodCredentialName(route) + " not configured" };
+  if (!route.credential) return { ok: false, error: "minimax-hailuo: " + runpodCredentialName(route) + " not configured", reason: "not-configured" };
   try {
     const r = await fetch(endpoint(route) + "/run", {
       method: "POST",
       headers: { ...auth(route), "content-type": "application/json" },
       body: JSON.stringify(buildHailuoBody(input, req.config)),
     });
-    if (!r.ok) return { ok: false, error: "minimax-hailuo /run -> " + r.status };
+    if (!r.ok) return await runpodSubmitFailure("minimax-hailuo", r);
     const jobId = ((await r.json()) as { id?: string }).id;
     if (!jobId) return { ok: false, error: "minimax-hailuo /run returned no job id" };
     const submittedAt = Date.now();
@@ -228,6 +234,7 @@ async function poll(env: Env, body: PollRequest): Promise<PollResponse<MotionBac
 
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
+    withRetryingR2(env);
     const url = new URL(request.url);
     if (request.method === "GET" && url.pathname === "/module.json") return json(MANIFEST);
 
@@ -259,10 +266,10 @@ export default {
       try {
         req = (await request.json()) as InvokeRequest<MotionBackendInput>;
       } catch {
-        return json({ ok: false, error: "invalid JSON body" } as InvokeResponse);
+        return json({ ok: false, error: "invalid JSON body", reason: "bad-input" } as InvokeResponse);
       }
       if (req.hook !== "motion.backend") {
-        return json({ ok: false, error: "unsupported hook " + String(req.hook) } as InvokeResponse);
+        return json({ ok: false, error: "unsupported hook " + String(req.hook), reason: "unsupported" } as InvokeResponse);
       }
       return json(await submit(env, req));
     }

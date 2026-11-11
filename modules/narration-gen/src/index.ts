@@ -1,5 +1,5 @@
 // narration-gen: a `score` module worker (vivijure-module/2). Synthesizes narration via MiniMax
-// Speech 02 HD on RunPod's hosted endpoint, using the SAME async submit+poll transport as seedance/kling.
+// Speech 02 HD on RunPod's hosted endpoint, using the SAME async submit+poll transport as alibaba-wan.
 //
 // ASYNC: a synth takes tens of seconds, longer than a Worker request can hold, so (NOT Workers AI /
 // ctx.waitUntil, which the runtime cancels ~30s after the response -> pending forever, #155):
@@ -11,6 +11,7 @@
 //
 // Failures are DATA (ok:false), never thrown across the wire. Muxing onto the film is video-finish's job.
 
+import { withRetryingR2 } from "../../_shared/r2-retry";
 import {
   MODULE_API,
   type ModuleManifest,
@@ -44,6 +45,7 @@ import {
 
 import { recordRunpodJob, probeRunpodJobLog, parseRunpodErrorType, runpodWalkedPastOutcome } from "../../_shared/runpod-job-log";
 import { planeRefusalReason, planeRefusalError, runpodRoute, runpodEndpointUrl, runpodHeaders, runpodCredentialName, type RunpodRoute } from "../../_shared/runpod-route";
+import { runpodSubmitFailure } from "../../_shared/runpod-submit-error";
 
 interface R2Bucket {
   put(key: string, value: ArrayBuffer, opts?: { httpMetadata?: { contentType?: string } }): Promise<unknown>;
@@ -67,9 +69,10 @@ const ENDPOINT_ID = MODEL;
 
 const MANIFEST: ModuleManifest = {
   name: "narration-gen",
-  version: "0.2.1",
+  version: "0.2.2",
   api: MODULE_API,
   hooks: ["score"],
+  score_kind: "narration", // vivijure-cf#878: the host selects by this, never by config keys
   // Tier-honest identity + knob labels (cf#211): this manifest is canonical + drift-locked (synced
   // into vivijure-local/dev/manifests/ by scripts/sync-module-manifests.ts, checked by
   // check-module-manifest-drift.sh), so it has to read true on BOTH panels. Hosted (vivijure-cf)
@@ -145,9 +148,9 @@ async function cancelRunpodJobBestEffort(route: RunpodRoute, jobId: string): Pro
 async function submit(env: Env, req: InvokeRequest<ScoreInput>): Promise<InvokeResponse<ScoreOutput>> {
   const input = req.input;
   const filmKey = typeof input?.film_key === "string" ? input.film_key.trim() : "";
-  if (!filmKey) return { ok: false, error: "score: input.film_key required" };
+  if (!filmKey) return { ok: false, error: "score: input.film_key required", reason: "bad-input" };
   const route = await runpodRoute(env);
-  if (!route.credential) return { ok: false, error: "narration-gen: " + runpodCredentialName(route) + " not configured" };
+  if (!route.credential) return { ok: false, error: "narration-gen: " + runpodCredentialName(route) + " not configured", reason: "not-configured" };
 
   const config = normalizeConfig(req.config ?? {});
   let body: { input: Record<string, unknown> };
@@ -166,7 +169,7 @@ async function submit(env: Env, req: InvokeRequest<ScoreInput>): Promise<InvokeR
       headers: { ...auth(route), "content-type": "application/json" },
       body: JSON.stringify(body),
     });
-    if (!r.ok) return { ok: false, error: "narration-gen /run -> " + r.status };
+    if (!r.ok) return await runpodSubmitFailure("narration-gen", r);
     const runpodJobId = ((await r.json()) as { id?: string }).id;
     if (!runpodJobId) return { ok: false, error: "narration-gen /run returned no job id" };
     const submittedAt = Date.now();
@@ -287,6 +290,7 @@ async function poll(env: Env, body: PollRequest): Promise<PollResponse<ScoreOutp
 
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
+    withRetryingR2(env);
     const url = new URL(request.url);
     if (request.method === "GET" && url.pathname === "/module.json") return json(MANIFEST);
 
@@ -318,10 +322,10 @@ export default {
       try {
         req = (await request.json()) as InvokeRequest<ScoreInput>;
       } catch {
-        return json({ ok: false, error: "invalid JSON body" } as InvokeResponse);
+        return json({ ok: false, error: "invalid JSON body", reason: "bad-input" } as InvokeResponse);
       }
       if (req.hook !== "score") {
-        return json({ ok: false, error: "unsupported hook " + String(req.hook) } as InvokeResponse);
+        return json({ ok: false, error: "unsupported hook " + String(req.hook), reason: "unsupported" } as InvokeResponse);
       }
       return json(await submit(env, req));
     }

@@ -27,11 +27,11 @@ import { reconcileRunpodEndpointWorkersMax } from "@skyphusion-labs/vivijure-cor
 import { recordRunpodJob, probeRunpodJobLog, parseRunpodErrorType, runpodWalkedPastOutcome, timingFromStatus, reconcileOpenRunpodJobsBestEffort } from "../../_shared/runpod-job-log";
 import { planeRefusalReason, planeRefusalError, runpodRoute, runpodEndpointUrl, runpodHeaders, runpodCredentialProblem, type RunpodRoute } from "../../_shared/runpod-route";
 import { withTenantR2Body } from "../../_shared/tenant-r2-body";
+import { runpodSubmitFailure } from "../../_shared/runpod-submit-error";
 import { takeTenantR2 } from "@skyphusion-labs/vivijure-core/modules/tenant-r2";
 // MANIFEST is data-only in ./manifest (cf#285) so quality-tier-drift can import it without
 // this entrypoint's runpod-job-log graph. Re-exported for callers that still load index.
 import { MANIFEST } from "./manifest";
-export { MANIFEST };
 
 interface Env {
   RUNPOD_API_KEY: SecretsStoreSecret;
@@ -153,14 +153,14 @@ async function submit(
 ): Promise<InvokeResponse<MotionBackendOutput>> {
   const input = req.input;
   if (!input || !input.prompt || !input.shot_id) {
-    return { ok: false, error: "motion.backend: input needs shot_id and prompt" };
+    return { ok: false, error: "motion.backend: input needs shot_id and prompt", reason: "bad-input" };
   }
   const { route, apiKey, endpointId } = await runpodCreds(env);
   const credProblem = credentialProblem(route, endpointId);
   if (credProblem) return { ok: false, error: "own-gpu: " + credProblem };
   const workersMax = Number(env.RUNPOD_WORKERS_MAX);
   // cf#394: NOT on the proxied route. This reconcile targets the RunPod MANAGEMENT API
-  // (rest.runpod.io/v1), which the plane proxy does not carry, and endpoint capacity on a
+  // (api.runpod.io/v2), which the plane proxy does not carry, and endpoint capacity on a
   // shared pool is an operator property a tenant must neither set nor need. Skipped, not
   // failed: the render is unaffected and the pool is sized by whoever owns it.
   if (!route.proxied && Number.isFinite(workersMax) && workersMax > 0) {
@@ -182,7 +182,7 @@ async function submit(
         withTenantR2Body(buildI2vBody(input, req.config, req.context.project), tenantR2),
       ),
     });
-    if (!r.ok) return { ok: false, error: "own-gpu /run -> " + r.status };
+    if (!r.ok) return await runpodSubmitFailure("own-gpu", r);
     const jobId = ((await r.json()) as { id?: string }).id;
     if (!jobId) return { ok: false, error: "own-gpu /run returned no job id" };
     // cf#279: RunPod cannot enumerate jobs, so an id not recorded at submit is unreachable
@@ -341,7 +341,7 @@ export default {
       try {
         req = (await request.json()) as InvokeRequest<MotionBackendInput>;
       } catch {
-        return json({ ok: false, error: "invalid JSON body" } as InvokeResponse);
+        return json({ ok: false, error: "invalid JSON body", reason: "bad-input" } as InvokeResponse);
       }
       // cp#270: STRIP AT THE BOUNDARY. Reads the tenant credential and REMOVES it from `req` in
       // one call, so nothing below this line holds an object that still contains it -- the
@@ -350,7 +350,7 @@ export default {
       // this one should be unable to leak it even by accident.
       const tenantR2 = takeTenantR2(req);
       if (req.hook !== "motion.backend") {
-        return json({ ok: false, error: "unsupported hook " + String(req.hook) } as InvokeResponse);
+        return json({ ok: false, error: "unsupported hook " + String(req.hook), reason: "unsupported" } as InvokeResponse);
       }
       return json(await submit(env, req, tenantR2));
     }

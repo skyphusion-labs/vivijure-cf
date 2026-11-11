@@ -12,7 +12,7 @@ import { MODULE_API, type ModuleManifest } from "./contract";
 // the Wan datacenter backend maps the tiers to its steps.
 export const MANIFEST: ModuleManifest = {
   name: "local-gpu",
-  version: "0.2.0",
+  version: "0.2.2",
   api: MODULE_API,
   hooks: ["motion.backend", "keyframe"],
   provides: [
@@ -30,6 +30,12 @@ export const MANIFEST: ModuleManifest = {
     steps: { type: "int", default: 30, min: 1, max: 60, label: "keyframe diffusion steps" },
     guidance_scale: { type: "float", default: 6.5, min: 0, max: 20, label: "keyframe guidance scale" },
     seed: { type: "int", default: -1, min: -1, label: "seed (-1 = random)" },
+    style: {
+      type: "enum",
+      values: ["photoreal", "anime"],
+      default: "photoreal",
+      label: "keyframe still look",
+    },
   },
   ui: {
     section: "motion",
@@ -38,18 +44,18 @@ export const MANIFEST: ModuleManifest = {
     // local#278: self-host CogVideoX may need registration; commercial product use is via
     // vivijure-cf / Cloudflare partner channels. No cloud API bill on this door.    // local#278: self-host/vivijure-local = hobby + non-commercial; commercial = vivijure-cf.
     cost: "Hardware; self-host non-commercial",
-    blurb: "Best look you can keep on your own GPU. Silent clips; add a Cast voice if they speak (muxed, not mouth-synced). Self-host only: hobby and non-commercial (vivijure-local). Commercial use is the hosted studio, not this door. Weights carry their own licences (CogVideoX on 16GB, LTX on 12GB).",
+    blurb: "Best look you can keep on your own GPU. Silent clips, no spoken lines. Self-host only: hobby and non-commercial (vivijure-local). Commercial use is the hosted studio, not this door. Weights carry their own licences (CogVideoX on 16GB, LTX on 12GB).",
     limits: [
       "About 2-8 second silent clips (your door may pin a tighter grid)",
-      "Speaking is the Cast voice, muxed; a synced mouth is the InfiniteTalk door",
+      "No spoken lines. A board with a line needs a talking door",
       "Runs whichever local backend you point it at: LTX (12GB floor) or CogVideoX (16GB floor); bigger cards add headroom",
       "Keyframes (SDXL preview) and short motion clips share the same card serially",
-      "One film, no scatter (look door)",
       "One GPU job at a time (a consumer card runs a single preview or motion job)",
       "Self-host / vivijure-local: hobby and non-commercial only (local#278). Commercial product use: vivijure-cf",
     ],
   },
   usage: {
+    face_hold: "one",
     native_audio: false,
     voice: "cast_tts",
     scatter_native_audio: false,

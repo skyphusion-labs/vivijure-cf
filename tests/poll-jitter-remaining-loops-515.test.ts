@@ -4,7 +4,6 @@
 // policy. It did not fix the rest of the herd. Measured at cf 4d73292, identical at
 // tag v1.27.0, so this was never a main-vs-tag artifact:
 //
-//   demo-steer.js            POLL_MS 8000   -> GET /api/demo/render/<jobId>
 //   cast.js                  LORA 5000      -> GET /api/cast/<id>/lora-status
 //   planner-audio.js         MUSIC 5000     -> GET /api/job/<id>            (2 arm sites)
 //   planner-history-row.js   flat 4000      -> GET /api/storyboard/render/<jobId>  (2 arm sites)
@@ -30,34 +29,17 @@ const codeLines = (src: string) =>
   src.split("\n").filter((l) => !/^\s*(\/\/|\*|\/\*)/.test(l)).join("\n");
 
 describe("cf#515: every remaining poll loop arms through the shared policy", () => {
-  it("demo-steer.js no longer arms at a flat POLL_MS", () => {
-    const code = codeLines(readPublic("demo-steer.js"));
-    // POSITIVE CONTROL FIRST: plant the old pattern and prove the matcher sees it,
-    // or the null below is a statement about the regex and not about the file.
-    expect((code + "\n    }, POLL_MS);").match(/\}, POLL_MS\);/g)?.length).toBe(1);
-    expect(code.match(/\}, POLL_MS\);/g)).toBe(null);
-    // cf#581: the delay call moved INSIDE the shared loop primitive, so what is
-    // asserted here is that the base is still handed to the policy, and that the
-    // loop now owns the lifecycle too.
-    expect(code).toContain("baseMs: POLL_MS");
-    expect(code).toContain("createLoop({");
-  });
-
   it("cast.js arms the LoRA poll through the policy and backs off on error", () => {
     const code = codeLines(readPublic("cast.js"));
     expect((code + "\n    loraPollTimer = setTimeout(() => pollLoraStatus(id), LORA_POLL_MS);")
       .match(/setTimeout\(\(\) => pollLoraStatus\(id\), LORA_POLL_MS\)/g)?.length).toBe(1);
     expect(code.match(/setTimeout\(\(\) => pollLoraStatus\(id\), LORA_POLL_MS\)/g)).toBe(null);
     expect(code).toContain("baseMs: LORA_POLL_MS");
-    // cf#581: the per-file error streak moved INTO the shared primitive, which owns
-    // the timer, the streak and the paused flag together. Backoff is still a
-    // SEPARATE property from jitter, so both directions are still asserted; they are
-    // now named calls rather than a hand-rolled counter, which is what removed the
-    // declaration-satisfies-the-assertion trap this test used to have to dodge.
-    // Two loops: LoRA training + Cast voice-sample preview. Each has one error arm
-    // and one success arm. A drop to 1 means a loop went flat again.
-    expect((code.match(/armAfterError\(\)/g) || []).length).toBe(2);
-    expect((code.match(/armAfterSuccess\(\)/g) || []).length).toBe(2);
+    // The cast page no longer polls a voice-sample clip. One loop remains: LoRA
+    // training. It still has one error arm and one success arm. Zero means that
+    // loop went flat again.
+    expect((code.match(/armAfterError\(\)/g) || []).length).toBe(1);
+    expect((code.match(/armAfterSuccess\(\)/g) || []).length).toBe(1);
   });
 
   it("planner-audio.js routes BOTH arms through one scheduler and backs off", () => {

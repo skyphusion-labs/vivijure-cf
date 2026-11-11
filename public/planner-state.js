@@ -46,6 +46,9 @@ const planState = {
   activeProjectId: null,
 };
 
+// Top-level const is not a window property. planner-render-config.js reads it through its IIFE global.
+if (typeof window !== "undefined") window.planState = planState;
+
 const bundleState = {
   // perSlotUploads[slot] = [{filename, size, mime, key, status, error}]
   perSlotUploads: {},
@@ -301,7 +304,7 @@ function startNewSession(opts) {
   if (!opts || !opts.skipConfirm) {
     const hasWork = planState.storyboard || $("#planner-brief").value.trim() ||
       bundleState.bundleKey || renderState.jobId;
-    if (hasWork && !window.confirm("Start a new session? Unsaved work on this page will be cleared.")) {
+    if (hasWork && !window.confirm("Start over? Unsaved work on this page will be cleared.")) {
       return;
     }
   }

@@ -31,19 +31,53 @@ export interface Env {
   GATEWAY_ID: SecretsStoreSecret | string;
   // Planner LLM auth: authenticated AI Gateway token + xAI BYOK (secrets, optional).
   CF_AIG_TOKEN?: SecretsStoreSecret | string;
-  XAI_API_KEY?: string;
 
   // Storage. R2_RENDERS = the `vivijure` bucket (bundles, keyframes, clips, MP4s, project state).
   // R2 = the chat-side bucket; the render flow copies a staged audio bed across from it.
   R2: R2Bucket;
   R2_RENDERS: R2Bucket;
+  // Cloudflare Images, for GET /api/thumb. Optional: without it that route answers 503 and nothing else changes.
+  IMAGES?: {
+    input(stream: ReadableStream): {
+      transform(options: { width?: number; fit?: string }): {
+        output(options: { format: string; quality?: number }): Promise<{ response(): Response }>;
+      };
+    };
+  };
   DB: D1Database;
+  // Per-shot workflow (still, wav, clip). Optional so a deploy that has not
+  // applied the [[workflows]] binding still typechecks. The class is exported
+  // from the entrypoint as ShotWorkflow.
+  SHOT_WORKFLOW?: {
+    create(options?: { id?: string; params?: unknown }): Promise<{ id: string }>;
+    get(id: string): Promise<{ id: string; status(): Promise<{ status: string }> }>;
+  };
+
+  // The video-finish Cloudflare Container, fronted by its Durable Object (#797).
+  // Mirrors [[containers]] class_name "FinishContainer" plus the matching
+  // [[durable_objects.bindings]] in wrangler.toml, and the class exported from src/index.ts.
+  // ADDRESSING IS LOAD-BEARING: /async/finish submits and GET /async/status/{jobId} polls, and
+  // every container instance sits behind its OWN Durable Object, so a poll that lands on a
+  // different instance than the encode does not find the job at all. Derive the id from the JOB
+  // ID (idFromName(jobId)) and NEVER from getRandom(). That is not a substitute for externalised
+  // job state (#784): state surviving a restart and the poll reaching the right box are
+  // different problems, and both are required.
+  FINISH_CONTAINER: DurableObjectNamespace<import("./finish-container").FinishContainer>;
+
+  // FIFO admission to the finish tier (core src/finish-queue.ts). Both optional plain vars.
+  // FINISH_QUEUE_SLOTS: jobs the door can run at once, default RESERVED_JOB_INSTANCES.
+  // FINISH_QUEUE_PER_KEY_CAP: most slots one project may hold, so a batch or a heavy project cannot
+  // take them all while others wait. Unset means no cap, which is plain FIFO.
+  FINISH_QUEUE_SLOTS?: string;
+  FINISH_QUEUE_PER_KEY_CAP?: string;
 
   // R2 S3-compatible creds for SigV4 presigning (r2-presign.ts): the CPU containers have no R2
   // binding, so the Worker presigns short-lived GET/PUT URLs. ACCESS/SECRET are secrets; ENDPOINT +
   // BUCKET are vars. Optional so a presign-free deploy still typechecks.
   R2_S3_ACCESS_KEY_ID?: SecretsStoreSecret | string;
   R2_S3_SECRET_ACCESS_KEY?: SecretsStoreSecret | string;
+  // Optional session token, set only when ACCESS/SECRET are an R2 temporary credential. Secret.
+  R2_S3_SESSION_TOKEN?: SecretsStoreSecret | string;
   R2_S3_ENDPOINT?: string;
   R2_S3_BUCKET?: string;
 
@@ -85,12 +119,10 @@ export interface Env {
   FINISH_UPSCALE_DOORS?: string;
   FINISH_BLENDER_DOORS?: string;
   /** Optional cap for omitted shard_count (default 20, the hosted backend workersMax). */
-  RENDER_SHARD_MAX?: string;
-  // OPTIONAL var (cf#240 lane D), NOT a binding: which absent-state this studio is in when
-  // VIDEO_FINISH_URL is empty. "unprovisionable" = provisioned before the tier existed, with no
-  // operator action that can reach it (the cp#112 population). Absent -> the conservative default,
-  // "provisionable". Nothing sets this today; the plane-side half is a control-plane decision.
-  // A configured URL always wins over this var: see videoFinishState (an observation beats a label).
+  // OPTIONAL var (cf#240 lane D), NOT a binding: which absent-state this studio is in.
+  // "unprovisionable" = no operator action reaches this studio. Absent -> the conservative
+  // default, "provisionable". The control plane writes it. A configured URL always wins
+  // over this var: see videoFinishState (an observation beats a label).
   VIDEO_FINISH_TIER_STATE?: string;
 
   // OPTIONAL var (control-plane#130), NOT a binding: where a reporter should be sent to report
@@ -119,29 +151,24 @@ export interface Env {
   // #423 built-in token auth (src/auth-gate.ts). AUTH_MODE selects the /api/* gate: "token" ->
   // Authorization: Bearer checked against STUDIO_API_TOKEN with a constant-time compare (no Zero
   // Trust needed); "access" or unset -> the CF Access path above (unset keeps the legacy
-  // resolution, so pre-#423 deploys are untouched); "demo" (#625) -> the public demo studio
-  // (GET/HEAD open to everyone, every mutation 403, no credential honored). Any other value
-  // denies everything (fail closed). AUTH_MODE is a [vars] entry; STUDIO_API_TOKEN is a worker SECRET deploy.sh mints
+  // resolution, so pre-#423 deploys are untouched). Any other value denies everything (fail
+  // closed). AUTH_MODE is a [vars] entry; STUDIO_API_TOKEN is a worker SECRET deploy.sh mints
   // (openssl rand -hex 32 | wrangler secret put STUDIO_API_TOKEN). See docs/SECURITY.md.
   AUTH_MODE?: string;
   STUDIO_API_TOKEN?: string;
-
-  // #631 Phase B public demo render + assistant (demo deploys ONLY; UNBOUND/absent on prod + self-host,
-  // so no code path here can reach the box or the model off-demo). DEMO_RENDER_ENABLED "true" arms the
-  // seeded click-to-render menu (also needs MODULE_LOCAL_GPU bound to the demo-scoped local-gpu door);
-  // unset/"false" => renders paused (the swappable-backend HORIZON state, box dies ~2026-08-04).
-  DEMO_RENDER_ENABLED?: string;
-  // The isolated demo R2 PUBLIC origin the box writes rendered clips under; the demo builds the artifact
-  // URL as <origin>/<clip_key> (the demo worker binds NO R2). Enumerated in the demo media CSP (no wildcard).
-  DEMO_ARTIFACT_ORIGIN?: string;
-  // The OSS assistant model id (Workers AI llama-3.3-70b class) + optional cap overrides. Numeric strings
-  // parsed with the shipped defaults (demo-render.ts / demo-chat.ts) when unset/garbage.
-  DEMO_ASSISTANT_MODEL?: string;
-  DEMO_RENDER_PER_IP_DAILY?: string;
-  DEMO_RENDER_GLOBAL_DAILY?: string;
-  DEMO_RENDER_QUEUE_DEPTH?: string;
-  DEMO_CHAT_PER_IP_DAILY?: string;
-  DEMO_CHAT_GLOBAL_DAILY?: string;
+  // Optional worker SECRET for POST /api/internal/sweep (src/sweep-route.ts): the route an external
+  // scheduler calls to run the cron sweep pass on a deployment that cannot attach a cron trigger. Unset or
+  // empty -> the route does not exist (it answers like any unknown /api path). Must differ from
+  // STUDIO_API_TOKEN and every consumer token, or the route refuses it. Mint:
+  // openssl rand -hex 32 | npx wrangler secret put SWEEP_TOKEN
+  SWEEP_TOKEN?: string;
+  // cf#1242: the landing page, a [vars] entry. "simple" puts the one-screen Make a video page
+  // (public/make.html) at "/" and the nav, with the planner kept as "Advanced". Unset, or any other
+  // value, keeps today's behaviour exactly. See src/panel-home.ts and docs/DEPLOYMENT.md.
+  PANEL_HOME?: string;
+  // cf#1249: keyframe fan-out per film, a [vars] entry read by vivijure-core (resolveKeyframeParallel).
+  // Unset, empty or non-numeric -> 4. Rendered by deploy.sh and the CI deploy from the deploy env.
+  KEYFRAME_PARALLEL?: string;
 
   // Dev-only planner AI mock (#411 dev-parity). When "1"/"true", planStoryboard/refineStoryboard
   // return deterministic canned completions instead of a live model call, so the planner re-prompt
@@ -175,14 +202,14 @@ export interface Env {
   FILM_CLIP_DURATION_FLOOR?: string;
 
   // cf#287: studio release / build identity projected on GET /api/modules as top-level
-  // `studio_release` (+ optional `git_sha`). Unset => the baked package.json version is projected
+  // `studio_release`, plus `core_version` and `git_sha` (null when unstamped, cf#1347). Unset => the baked package.json version is projected
   // so two tag deploys are still distinguishable. The control plane may bind STUDIO_RELEASE to the
   // tenant's live tag (the value it already stores as tenants.studio_release); self-host can leave
   // both unset. See src/studio-release.ts.
   STUDIO_RELEASE?: string;
   STUDIO_GIT_SHA?: string;
 
-  // BYOK OpenAI image gen (transparent PNG for gpt-image-1.5). Optional.
+  // BYOK OpenAI image gen. Transparent PNG is the legacy gpt-image-1.5 path. Optional.
   OPENAI_API_KEY?: string;
 
   // Opt-in module workers: `MODULE_<NAME>` service bindings (Fetcher), discovered by the registry.

@@ -2,6 +2,9 @@ import { describe, it, expect } from "vitest";
 import {
   selectSeedKeys,
   summarizeCastRefs,
+  sdxlTrainDue,
+  CAST_SDXL_TRAIN_BODY,
+  SDXL_TRAIN_MIN_REFS,
   castRefsJobKey,
   freshCastRefImages,
   pendingImagesViolation,
@@ -102,5 +105,30 @@ describe("cast-image orchestrator pure logic", () => {
 
   it("castRefsJobKey is per cast + job", () => {
     expect(castRefsJobKey(7, "refs-abc")).toBe("cast-gen/7/refs-abc.refs-job.json");
+  });
+
+  it("summarizeCastRefs carries the SDXL train result only when one exists", () => {
+    const job: CastRefsJob = {
+      job_id: "refs-3", cast_id: 7, cast_public_id: "a7000000-0000-4000-8000-000000000007",
+      module_name: "cast-image", binding: "MODULE_CAST_IMAGE", phase: "done",
+      images: [], applied: [], registered: 4, created_at: 0,
+      lora_job_id: "lora-9",
+    };
+    expect(summarizeCastRefs(job).lora_job_id).toBe("lora-9");
+    expect(summarizeCastRefs(job).lora_error).toBeUndefined();
+  });
+
+  it("sdxlTrainDue fires once four refs have landed and the LoRA is not already training or ready", () => {
+    expect(SDXL_TRAIN_MIN_REFS).toBe(4);
+    expect(sdxlTrainDue("done", 4, null)).toBe(true);
+    expect(sdxlTrainDue("done", 4, "failed")).toBe(true);
+    expect(sdxlTrainDue("done", 3, null)).toBe(false);
+    expect(sdxlTrainDue("generating", 4, null)).toBe(false);
+    expect(sdxlTrainDue("done", 4, "training")).toBe(false);
+    expect(sdxlTrainDue("done", 10, "ready")).toBe(false);
+  });
+
+  it("the cast-time train body names SDXL, so an absent family cannot fall through to Wan", () => {
+    expect(JSON.parse(CAST_SDXL_TRAIN_BODY)).toEqual({ model_family: "sdxl" });
   });
 });

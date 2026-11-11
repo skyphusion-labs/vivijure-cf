@@ -12,15 +12,24 @@
   const DEFAULT_NAV = [
     { id: "planner", label: "Planner", href: "planner" },
     { id: "cast", label: "Cast", href: "cast" },
+    { id: "films", label: "Films", href: "films" },
   ];
   const OPERATOR_NAV = [
     { id: "pipeline", label: "Modules", href: "modules" },
     { id: "settings", label: "Settings", href: "settings" },
   ];
 
-  const nav = Array.isArray(window.VIVIJURE_STUDIO_NAV)
-    ? window.VIVIJURE_STUDIO_NAV
-    : DEFAULT_NAV;
+  // cf#1242: with PANEL_HOME=simple the first item is Make a video and the planner is "Advanced".
+  // The setting reaches the page as panel_home on GET /api/whoami, which only carries it when set,
+  // so an unset deployment renders DEFAULT_NAV and never re-renders.
+  const SIMPLE_NAV = [
+    { id: "make", label: "Make a video", href: "make" },
+    { id: "planner", label: "Advanced", href: "planner" },
+    { id: "cast", label: "Cast", href: "cast" },
+    { id: "films", label: "Films", href: "films" },
+  ];
+  const deployerNav = Array.isArray(window.VIVIJURE_STUDIO_NAV);
+  const nav = deployerNav ? window.VIVIJURE_STUDIO_NAV : DEFAULT_NAV;
 
   function currentPage() {
     const tagged = document.body.dataset.studioPage;
@@ -41,9 +50,10 @@
 
   const page = currentPage();
 
+  function renderNav(items) {
   document.querySelectorAll("[data-studio-nav]").forEach((host) => {
     host.replaceChildren();
-    for (const item of nav) {
+    for (const item of items) {
       if (!item || !item.href) continue;
       const a = document.createElement("a");
       a.className = "studio-nav-link";
@@ -56,6 +66,14 @@
       host.appendChild(a);
     }
   });
+  }
+  renderNav(nav);
+  if (!deployerNav && typeof fetch === "function") {
+    fetch("/api/whoami", { headers: { accept: "application/json" } })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => { if (d && d.panel_home === "simple") renderNav(SIMPLE_NAV); })
+      .catch(() => {});
+  }
 
   // Rewrite static brand links that use the pretty studio paths.
   document.querySelectorAll('.brand-vivijure[href="planner"]').forEach((el) => {

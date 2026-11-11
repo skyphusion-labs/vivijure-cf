@@ -437,7 +437,8 @@ def core_worker_name(repo: Path) -> str:
 
 
 def render_core_toml(text: str, *, account_id: str, d1_id: str, store_id: str,
-                     primary_bucket: str = None, prefix: str = "", module_service_names=()) -> str:
+                     primary_bucket: str = None, prefix: str = "", module_service_names=(),
+                     git_sha: str = "") -> str:
     """PURE render of a DEPLOYABLE core wrangler.toml from wrangler.toml.example (F1). ALWAYS does the
     base-install render; the prefix branch adds instance isolation on top. account_id is NEVER hardcoded
     -- the caller passes CLOUDFLARE_ACCOUNT_ID.
@@ -466,6 +467,8 @@ def render_core_toml(text: str, *, account_id: str, d1_id: str, store_id: str,
         "${R2_S3_BUCKET}": pfx(pb),
         "${SPEND_RATE_LIMITER_NS_ID}": "1001",
         "${D1_DATABASE_ID}": d1_id or "",
+        # cf#1347: the commit this install deploys, projected as git_sha. Empty projects as null.
+        "${STUDIO_GIT_SHA}": git_sha or "",
     }.items():
         text = text.replace(k, v)
     if store_id:
@@ -1105,6 +1108,17 @@ def run_migrations(repo: Path, s: Secrets) -> None:
     wrangler(["d1", "migrations", "apply", prefixed(D1_DATABASE), "--remote"], cwd=repo, cf_env=cf_env_for(s))
 
 
+def repo_git_sha(repo: Path) -> str:
+    """cf#1347: `git rev-parse HEAD` of the working tree being deployed, or "" when it is not a git tree
+    or git is absent. Never a guess: an empty value renders STUDIO_GIT_SHA = "" and projects as null."""
+    try:
+        out = subprocess.run(["git", "rev-parse", "HEAD"], cwd=str(repo), capture_output=True, text=True, timeout=10)
+    except (OSError, subprocess.SubprocessError):
+        return ""
+    sha = out.stdout.strip() if out.returncode == 0 else ""
+    return sha if re.fullmatch(r"[0-9a-f]{7,40}", sha) else ""
+
+
 def render_and_write_core_toml(repo: Path, s: Secrets, st: State) -> None:
     """Render a DEPLOYABLE wrangler.toml from wrangler.toml.example (F1), BEFORE migrations + deploy --
     `wrangler d1 migrations apply` AND `wrangler deploy` both need it present. Uses the D1 + Secrets
@@ -1114,7 +1128,8 @@ def render_and_write_core_toml(repo: Path, s: Secrets, st: State) -> None:
     rendered = render_core_toml((repo / "wrangler.toml.example").read_text(),
         account_id=s.cf_account_id, d1_id=str(st.resource_id("d1_id") or ""), store_id=str(st.resource_id("store_id") or ""),
         primary_bucket=R2_BUCKETS[0], prefix=DEPLOY_PREFIX.strip(),
-        module_service_names=[module_worker_name(repo, m) for m in mods])
+        module_service_names=[module_worker_name(repo, m) for m in mods],
+        git_sha=repo_git_sha(repo))
     (repo / "wrangler.toml").write_text(rendered)
     log(f"  rendered wrangler.toml from the example ({'isolated' if DEPLOY_PREFIX.strip() else 'verbatim'}, media-less)")
 
@@ -1130,7 +1145,6 @@ def deploy_workers(repo: Path, s: Secrets, st: State) -> None:
     log(f"deploying {len(mods)} module workers, then the core (media-less base install)"
         f"{' (isolated: ' + DEPLOY_PREFIX.strip() + ')' if isolate else ''} ...")
     env = cf_env_for(s)
-    acct, d1_id, store_id = s.cf_account_id, str(st.resource_id("d1_id") or ""), str(st.resource_id("store_id") or "")
     for m in mods:
         mp = repo / "modules" / m / "wrangler.toml"
         text = mp.read_text()

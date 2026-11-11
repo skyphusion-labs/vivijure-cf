@@ -14,6 +14,24 @@ const INTENSITY_GUIDE: Record<Intensity, string> = {
     "Direct each shot vividly: camera framing and movement, lens, lighting, mood, and a sense of motion, while keeping the original subject and action.",
 };
 
+/** vivijure-core SCENE_PROMPT_MAX_WORDS: the validator refuses a longer shot prompt. The model is asked for
+ *  fewer, because it counts loosely, and the merge still checks the reply. */
+export const MAX_SHOT_WORDS = 50;
+const ASKED_SHOT_WORDS = 40;
+
+const wordCount = (s: string): number => s.trim().split(/\s+/).filter((w) => w.length > 0).length;
+
+/** Keep the original prompt for any rewrite over the cap. Returns how many were kept, so the note can say. */
+export function capEnhanced(enhanced: string[], originals: string[]): { prompts: string[]; kept: number } {
+  let kept = 0;
+  const prompts = enhanced.map((p, i) => {
+    if (wordCount(p) <= MAX_SHOT_WORDS) return p;
+    kept++;
+    return originals[i] ?? p;
+  });
+  return { prompts, kept };
+}
+
 export interface ChatMessage {
   role: "system" | "user";
   content: string;
@@ -31,6 +49,7 @@ export function buildMessages(prompts: string[], intensity: Intensity): ChatMess
         "You are a film director doing a pass over a storyboard's shot descriptions. " +
         guide +
         " Preserve each shot's subject, action, and meaning; do not add or remove shots; do not change who appears. " +
+        `Keep each rewritten shot under ${ASKED_SHOT_WORDS} words. ` +
         "Reply with ONLY a JSON array of strings: the rewritten shot descriptions, in the same order, the same length as the input. No prose, no keys, no markdown fences.",
     },
     { role: "user", content: `Rewrite these ${prompts.length} shot descriptions:\n${numbered}` },

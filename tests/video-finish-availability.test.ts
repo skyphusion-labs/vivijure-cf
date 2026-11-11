@@ -153,7 +153,8 @@ describe("GET /api/modules projection", () => {
     const body = await modulesBody(env());
     const host = body.host as { hooks_unavailable?: Record<string, string> };
     expect(Object.keys(host.hooks_unavailable ?? {}).sort()).toEqual(
-      ["capability:video-finish", "film.finish", "master", "notify", "plan.enhance"],
+      // `speech` is cf#904's providerless-hook entry: nothing in this env serves it.
+      ["capability:video-finish", "film.finish", "master", "notify", "plan.enhance", "speech"],
     );
   });
 });
@@ -180,12 +181,13 @@ describe("the third state (cf#240 lane D, input cp#112; copy swapped cf#243)", (
     ).toBe("unprovisionable");
   });
 
-  it("an OBSERVATION beats a label: a bound tier is available whatever the var says", () => {
-    // The failure this forbids is a stale var outliving the provisioning it described, with the
-    // panel then telling a studio that HAS a working tier that it has none.
+  it("cf#871: a typed URL is a LABEL, so the explicit declaration beats it", () => {
+    // This case used to assert "available": the URL was read as the observation. It is not one, a
+    // URL is a string someone typed. The observation is the bound door, asserted in the cf#810
+    // block below, and the door still wins over the declaration.
     expect(
-      videoFinishState({ VIDEO_FINISH_URL: "https://video-finish.skyphusion.org", VIDEO_FINISH_TIER_STATE: "unprovisionable" } as never),
-    ).toBe("available");
+      videoFinishState({ VIDEO_FINISH_URL: "https://video-finish.example", VIDEO_FINISH_TIER_STATE: "unprovisionable" } as never),
+    ).toBe("unprovisionable");
   });
 
   it("an unrecognised var value falls back to the default rather than inventing a state", () => {
@@ -226,5 +228,37 @@ describe("the third state (cf#240 lane D, input cp#112; copy swapped cf#243)", (
     // what makes the estate honest is the bindings refresh and the bytes move, not this constant.
     expect(videoFinishState({ VIDEO_FINISH_URL: undefined } as never)).toBe("provisionable");
     expect(videoFinishReason("provisionable")).toBe(VIDEO_FINISH_UNAVAILABLE_REASON);
+  });
+});
+
+describe("cf#810 the bound tier reports AVAILABLE with no URL", () => {
+  // This is the guard on the repoint. The end state unsets VIDEO_FINISH_URL because the door
+  // replaces it, and without this the panel greys out a film tier that works.
+  const door = { fetch: async () => new Response("{}") };
+
+  it("a door with NO url is available, and reports no unavailability reason", () => {
+    const env = { MEDIA_DOOR_FETCHERS: { VIDEO_FINISH_URL: door } } as never;
+    expect(videoFinishState(env)).toBe("available");
+    expect(videoFinishReason(videoFinishState(env))).toBeNull();
+    // ABSENT KEY MEANS AVAILABLE. A bound tier must say nothing at all.
+    expect(videoFinishHooksUnavailable(env)).toEqual({});
+  });
+
+  it("the negative: no door and no url is NOT available", () => {
+    const env = {} as never;
+    expect(videoFinishState(env)).toBe("provisionable");
+    expect(videoFinishReason(videoFinishState(env))).not.toBeNull();
+    expect(Object.keys(videoFinishHooksUnavailable(env)).length).toBeGreaterThan(0);
+  });
+
+  it("a door beats an unprovisionable LABEL, because an observation beats a label", () => {
+    const labelled = { VIDEO_FINISH_TIER_STATE: "unprovisionable" } as never;
+    expect(videoFinishState(labelled)).toBe("unprovisionable");
+
+    const bound = {
+      VIDEO_FINISH_TIER_STATE: "unprovisionable",
+      MEDIA_DOOR_FETCHERS: { VIDEO_FINISH_URL: door },
+    } as never;
+    expect(videoFinishState(bound)).toBe("available");
   });
 });

@@ -48,6 +48,9 @@ export interface ModuleManifest {
    *  attaches the tenant's per-job R2 credential to its invoke envelope. OPTIONAL/additive, mirrors
    *  the core module contract. */
   needs_tenant_r2?: boolean;
+  /** A job trains any slot with no adapter, so the core keeps that film to one job (core#370). */
+  trains_loras?: boolean;
+
 }
 
 export interface InvokeContext {
@@ -74,12 +77,33 @@ export interface InvokeRequest<I = unknown> {
   r2?: TenantR2Config;
 }
 
+/** VENDORED from core's `InvokeFailureReason` (vivijure-module/2, core#291). CLOSED set.
+ *
+ *  DO NOT HAND-EDIT. `tests/invoke-failure-reason-vendored.test.ts` derives this block from core's
+ *  `INVOKE_FAILURE_REASONS` and fails if any of the 34 vendored copies drifts from it. Copied rather
+ *  than imported because this file is deliberately import-free (a module must build without the core
+ *  package); the test is what makes 34 copies safe.
+ *
+ *  ABSENT means the module has not adopted the field. It is never defaulted to a class. */
+export type InvokeFailureReason =
+  | "bad-input"
+  | "unsupported"
+  | "not-configured"
+  | "unauthorized"
+  | "quota-exceeded"
+  | "rate-limited"
+  | "upstream-unavailable"
+  | "backend-error"
+  | "cancelled"
+  | "timeout"
+  | "internal";
+
 // A module may answer synchronously (output) or, for a long-running job, asynchronously: return
 // pending + a poll token, and the caller drives /poll until it is done.
 export type InvokeResponse<O = unknown> =
   | { ok: true; output: O }
   | { ok: true; pending: true; poll: string; jobId?: string } // jobId: optional/additive (#318) -- backend RunPod job id for the progress snapshot read; no MODULE_API bump
-  | { ok: false; error: string };
+  | { ok: false; error: string; reason?: InvokeFailureReason };
 
 export interface PollRequest {
   poll: string;
@@ -117,7 +141,22 @@ export interface KeyframeInput {
 export interface KeyframeShot {
   shot_id: string;
   keyframe_key: string;
+  /** This job drew nothing and returns a still already in the store. Absent means drawn. */
+  reused?: boolean;
+  /** The plate count guard report, when the backend ran it on this still. */
+  plate_count?: PlateCount;
 }
+/** The backend plate count guard report on one still (vivijure-backend docs/contract.md, the
+ *  `keyframes` row). `clean: false`: the still was made from a plate that may show an extra person.
+ *  Passed through untouched; the core reads it strictly (parsePlateCount). */
+export interface PlateCount {
+  expected: number;
+  faces: number[];
+  chosen: number;
+  clean: boolean;
+  retries: number;
+}
+
 export interface KeyframeOutput {
   project: string;
   keyframes: KeyframeShot[];

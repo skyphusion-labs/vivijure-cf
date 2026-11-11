@@ -10,16 +10,18 @@
 // (pass the input clip through unchanged) is preferred over a hard ok:false unless the job
 // cannot be submitted at all.
 
+import { FAILURE_UNREACHABLE, failureFromStatus, withFailure } from "../../_shared/finish-failure";
 import {
-  MODULE_API,
-  type ModuleManifest,
   type InvokeRequest,
   type InvokeResponse,
   type PollRequest,
+  type CancelRequest,
+  type CancelResponse,
   type PollResponse,
   type FinishInput,
   type FinishOutput,
 } from "./contract";
+import { MANIFEST } from "./manifest";
 import {
   coerceConfig, buildRunPodBody, encodePoll, decodePoll, parseBackendOutput, finishedKey,
   passthroughOutput, sourceClipKey,
@@ -47,44 +49,6 @@ interface Env {
    *  warns rather than reading as a clean run (see modules/_shared/runpod-job-log.ts). */
   TELEMETRY_DB?: D1Database;
 }
-
-// Exported (cf#537) so a test can run conformance against the SHIPPED manifest rather than
-// against a transcribed copy in the test file. finish-lipsync already exported its own.
-export const MANIFEST: ModuleManifest = {
-  name: "finish-rife",
-  version: "0.1.2",
-  api: MODULE_API,
-  hooks: ["finish"],
-  max_invocation_seconds: 900,
-  provides: [
-    { id: "interpolate", label: "Smooth motion (RIFE frame interpolation)" },
-    { id: "face_restore", label: "Relock faces (GFPGAN)" },
-  ],
-  config_schema: {
-    interpolate:          { type: "bool",  default: true,   label: "smooth motion" },
-    interpolation_factor: { type: "int",   default: 2, min: 1, max: 8, label: "smoothness", enum_labels: { "1": "off", "2": "2x", "4": "4x", "8": "8x" } },
-    face_restore:         { type: "enum",  values: ["none", "gfpgan", "codeformer"], default: "none", label: "face restore" },
-    face_fidelity:        { type: "float", default: 0.7, min: 0, max: 1, label: "fidelity (0 = max restore, 1 = max fidelity)" },
-    only_faces:           { type: "bool",  default: true,   label: "faces only (leave background untouched)" },
-  },
-  ui: { section: "finish", icon: "wand", order: 10 },
-  // cf#537: EXPLICIT rather than absent. Absent is treated as "default" by the core, so this line
-  // changes no behaviour -- interpolation keeps running for every caller that sends no selection.
-  // It is stated because the manifest default is PERMISSIVE, which makes silence at this layer a
-  // signal: a module that ought to be opt-in and says nothing keeps running unasked and nothing
-  // reports it. Conformance therefore requires an explicit value from any module serving a
-  // selectable hook, so the reader can tell "considered, runs by default" from "nobody thought".
-  participation: "default",
-  // Declared artifact conventions (S6): the container names its output off the shot id, and its
-  // applied marker depends on the interpolate knob. The core's R2 recovery reads THIS, not our name.
-  finish_artifacts: {
-    output_key: { kind: "shot_named", filename: "_finished.mp4" },
-    applied: [
-      { when: { knob: "interpolate", equals: false }, tag: "noop:interpolate-off" },
-      { tag: "interpolate:{interpolation_factor|2}x" },
-    ],
-  },
-};
 
 function json(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
@@ -213,7 +177,7 @@ async function submit(env: Env, req: InvokeRequest<FinishInput>): Promise<Invoke
   const input = req.input;
   const clipKey = sourceClipKey(input);
   if (!input?.shot_id || !clipKey) {
-    return { ok: false, error: "finish-rife: input needs shot_id and a clip (clip_key or video_url)" };
+    return { ok: false, error: "finish-rife: input needs shot_id and a clip (clip_key or video_url)", reason: "bad-input" };
   }
   const resolved: FinishInput = { ...input, clip_key: clipKey };
   const { route, endpointId } = await runpodCreds(env);
@@ -234,7 +198,7 @@ async function submit(env: Env, req: InvokeRequest<FinishInput>): Promise<Invoke
       headers: { ...auth(route), "content-type": "application/json" },
       body: JSON.stringify(buildRunPodBody(resolved, cfg, req.context.project)),
     });
-    if (!r.ok) return passthrough(resolved, "runpod-run-failed", { detail: "HTTP " + r.status });
+    if (!r.ok) return withFailure(passthrough(resolved, "runpod-run-failed", { detail: "HTTP " + r.status }), failureFromStatus(r.status));
     const jobId = ((await r.json()) as { id?: string }).id;
     if (!jobId) return passthrough(resolved, "no-jobid");
     // cf#279: RunPod cannot enumerate jobs, so an id not recorded at submit is unreachable
@@ -248,7 +212,7 @@ async function submit(env: Env, req: InvokeRequest<FinishInput>): Promise<Invoke
       jobId,  // cf#289/#296: RunPod cannot enumerate jobs, so a caller that is not handed the id at submit can never reach it.
     };
   } catch (e) {
-    return passthrough(resolved, "exception", { detail: (e as Error).message });
+    return withFailure(passthrough(resolved, "exception", { detail: (e as Error).message }), FAILURE_UNREACHABLE);
   }
 }
 
@@ -403,6 +367,26 @@ async function poll(env: Env, body: PollRequest): Promise<PollResponse<FinishOut
   };
 }
 
+// Stop the running job this token names (cf#1109). A 200 and a 404 both mean it is not running on our
+// account, so both are ok:true. Anything else, including a plane refusal, is ok:false, so the core logs
+// an orphan rather than assuming it stopped. Failures are data, never thrown.
+async function cancel(env: Env, body: CancelRequest): Promise<CancelResponse> {
+  const st = decodePoll(body.poll);
+  if (!st) return { ok: false, error: "finish-rife: bad poll token" };
+  const { route, endpointId } = await runpodCreds(env);
+  const credProblem = credentialProblem(route, endpointId);
+  if (credProblem) return { ok: false, error: "finish-rife: " + credProblem };
+  try {
+    const resp = await fetch(runpodBase(route, endpointId) + "/cancel/" + st.jobId, { method: "POST", headers: auth(route) });
+    const refusal = planeRefusalReason(route, resp);
+    if (refusal) return { ok: false, error: planeRefusalError(MANIFEST.name, refusal) };
+    if (resp.ok || resp.status === 404) return { ok: true };
+    return { ok: false, error: "finish-rife /cancel -> " + resp.status };
+  } catch (e) {
+    return { ok: false, error: "finish-rife cancel failed: " + (e as Error).message };
+  }
+}
+
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     const url = new URL(request.url);
@@ -443,9 +427,17 @@ export default {
     if (request.method === "POST" && url.pathname === "/invoke") {
       let req: InvokeRequest<FinishInput>;
       try { req = await request.json() as InvokeRequest<FinishInput>; }
-      catch { return json({ ok: false, error: "invalid JSON body" } as InvokeResponse); }
-      if (req.hook !== "finish") return json({ ok: false, error: "unsupported hook " + String(req.hook) } as InvokeResponse);
+      catch { return json({ ok: false, error: "invalid JSON body", reason: "bad-input" } as InvokeResponse); }
+      if (req.hook !== "finish") return json({ ok: false, error: "unsupported hook " + String(req.hook), reason: "unsupported" } as InvokeResponse);
       return json(await submit(env, req));
+    }
+
+    if (request.method === "POST" && url.pathname === "/cancel") {
+      let body: CancelRequest;
+      try { body = await request.json() as CancelRequest; }
+      catch { return json({ ok: false, error: "invalid JSON body" } as CancelResponse); }
+      if (!body?.poll || typeof body.poll !== "string") return json({ ok: false, error: "poll token required" } as CancelResponse);
+      return json(await cancel(env, body));
     }
 
     if (request.method === "POST" && url.pathname === "/poll") {

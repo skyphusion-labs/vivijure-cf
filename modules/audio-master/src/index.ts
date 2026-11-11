@@ -22,6 +22,7 @@
 // (pass the INPUT bed through unchanged, but RECORDED) is preferred over a hard ok:false unless the input
 // itself is malformed -- a master miss must never drop a fully-rendered film (#249 / #77).
 
+import { FAILURE_BAD_RESPONSE, FAILURE_REFUSED, FAILURE_UNREACHABLE, failureFromStatus, withFailure } from "../../_shared/finish-failure";
 import {
   MODULE_API,
   type ModuleManifest,
@@ -43,7 +44,7 @@ interface Env {
 
 const MANIFEST: ModuleManifest = {
   name: "audio-master",
-  version: "0.1.2",
+  version: "0.1.3",
   api: MODULE_API,
   hooks: ["master"],
   provides: [
@@ -88,7 +89,7 @@ function passthrough(
 async function invoke(env: Env, req: InvokeRequest<MasterInput>): Promise<InvokeResponse<MasterOutput>> {
   const input = req.input;
   if (!input?.film_id || !input?.audio_key || !input?.audio_url || !input?.output_url || !input?.output_key) {
-    return { ok: false, error: "audio-master: input needs film_id, audio_key, audio_url, output_url, output_key" };
+    return { ok: false, error: "audio-master: input needs film_id, audio_key, audio_url, output_url, output_key", reason: "bad-input" };
   }
   if (!masterBase(env)) return passthrough(input, "no-audio-master-url");
 
@@ -113,19 +114,23 @@ async function invoke(env: Env, req: InvokeRequest<MasterInput>): Promise<Invoke
   );
   if (timed.err || !timed.resp) {
     const msg = timed.err instanceof Error ? timed.err.message : String(timed.err ?? "unreachable");
-    return passthrough(input, "container-unreachable", { detail: msg });
+    return withFailure(passthrough(input, "container-unreachable", { detail: msg }), FAILURE_UNREACHABLE);
   }
   const resp = timed.resp;
-  if (!resp.ok) return passthrough(input, "container-failed", { detail: "HTTP " + resp.status });
+  // cf#1327: three container outcomes, three tags. A non-2xx is the transport or the route; a body that is
+  // JSON but not an object is a bad response, held and retried like unparseable JSON below; an ok:false body
+  // is the handler refusing, which no retry cures.
+  if (!resp.ok) return withFailure(passthrough(input, "container-http-error", { detail: "HTTP " + resp.status }), failureFromStatus(resp.status));
 
   let body: unknown;
   try {
     body = await resp.json();
   } catch {
-    return passthrough(input, "container-bad-response");
+    return withFailure(passthrough(input, "container-bad-response"), FAILURE_BAD_RESPONSE);
   }
   const res = parseContainerResult(body);
-  if (!res || !res.ok) return passthrough(input, "container-failed");
+  if (!res) return withFailure(passthrough(input, "container-bad-response", { detail: "body is not an object" }), FAILURE_BAD_RESPONSE);
+  if (!res.ok) return withFailure(passthrough(input, "container-refused"), FAILURE_REFUSED);
   if (!res.key) return passthrough(input, "no-output-key", { detail: "container returned no mastered key" });
 
   const output = masterOutputFromResult(input, res);
@@ -154,8 +159,8 @@ export default {
     if (request.method === "POST" && url.pathname === "/invoke") {
       let req: InvokeRequest<MasterInput>;
       try { req = await request.json() as InvokeRequest<MasterInput>; }
-      catch { return json({ ok: false, error: "invalid JSON body" } as InvokeResponse); }
-      if (req.hook !== "master") return json({ ok: false, error: "unsupported hook " + String(req.hook) } as InvokeResponse);
+      catch { return json({ ok: false, error: "invalid JSON body", reason: "bad-input" } as InvokeResponse); }
+      if (req.hook !== "master") return json({ ok: false, error: "unsupported hook " + String(req.hook), reason: "unsupported" } as InvokeResponse);
       return json(await invoke(env, req));
     }
 

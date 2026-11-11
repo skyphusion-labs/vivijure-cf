@@ -1,0 +1,227 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+  <title>Films -- Vivijure Studio</title>
+  <link rel="icon" href="favicon.svg" type="image/svg+xml">
+  <link rel="icon" href="favicon-32.png" type="image/png" sizes="32x32">
+  <link rel="icon" href="favicon-16.png" type="image/png" sizes="16x16">
+  <link rel="apple-touch-icon" href="apple-touch-icon.png" sizes="180x180">
+  <link rel="manifest" href="manifest.webmanifest">
+  <meta name="theme-color" content="#0E1730">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body class="planner-body filmmaker-surface" data-studio-page="films">
+  <header class="topbar">
+    <a class="brand brand-vivijure" href="planner" aria-label="Vivijure studio">
+      <span class="brand-mark" aria-hidden="true"></span>
+      <span class="brand-name">Vivijure</span>
+    </a>
+    <nav class="studio-nav" data-studio-nav aria-label="Studio pages"></nav>
+    <span class="topbar-spacer"></span>
+    <div class="account">
+      <button id="account-toggle" type="button" class="icon-btn" aria-haspopup="true" aria-expanded="false" aria-label="Account &amp; tools">
+        <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="8" r="4"/><path d="M4 21c0-4 3.6-7 8-7s8 3 8 7"/></svg>
+      </button>
+      <div id="account-menu" class="account-menu" role="menu" hidden>
+        <button id="account-user" class="account-row account-user" type="button" role="menuitem" title="signed in">
+          <span class="account-ico"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="8" r="4"/><path d="M4 21c0-4 3.6-7 8-7s8 3 8 7"/></svg></span>
+          <span class="account-email" id="account-email">loading&#8230;</span>
+        </button>
+        <div class="account-prefs" role="group" aria-label="Preferences">
+          <div class="account-prefs-head">Preferences</div>
+        </div>
+      </div>
+    </div>
+  </header>
+  <main class="planner-layout films-layout">
+    <section id="films-home" class="planner-stage">
+      <h1>Films</h1>
+      <p class="lede">Long films, built as parts and joined at the end.</p>
+      <p><a class="planner-primary films-link" href="films?new=1">Start a film</a></p>
+      <div id="films-all-wrap" hidden>
+        <h2 class="planner-stage-title">all films</h2>
+        <p id="films-all-empty" class="films-muted" hidden>No films on this studio yet.</p>
+        <ul id="films-all" class="films-recent"></ul>
+      </div>
+      <div id="films-recent-wrap">
+        <h2 class="planner-stage-title">recent on this device</h2>
+        <p id="films-recent-empty" class="films-muted">No films opened on this device yet.</p>
+        <ul id="films-recent" class="films-recent"></ul>
+      </div>
+      <form id="films-open" class="films-open">
+        <label class="planner-field">
+          <span>open a film by id</span>
+          <input id="films-open-id" class="planner-input" type="text" autocomplete="off" spellcheck="false" />
+        </label>
+        <button type="submit" class="planner-secondary">Open</button>
+      </form>
+    </section>
+
+    <section id="films-new" class="planner-stage" hidden>
+      <p><a href="films">All films</a></p>
+      <h1>Start a film</h1>
+      <label class="planner-field"><span>name</span>
+        <input id="new-project" class="planner-input" type="text" maxlength="48" autocomplete="off" spellcheck="false" /></label>
+      <label class="planner-field"><span>master board from a project</span>
+        <select id="new-from-project"></select></label>
+      <label class="planner-field"><span>master board, as JSON</span>
+        <textarea id="new-board" rows="6" spellcheck="false"></textarea></label>
+      <p id="new-facts" class="films-muted"></p>
+      <div id="new-cast"></div>
+      <label class="planner-field"><span>shots in each part</span>
+        <input id="new-part-size" class="planner-input" type="number" inputmode="numeric" min="1" /></label>
+      <label class="planner-field"><span>or breaks, as shot counts where a part ends (30,62)</span>
+        <input id="new-breaks" class="planner-input" type="text" inputmode="numeric" autocomplete="off" /></label>
+      <label class="planner-field"><span>look</span>
+        <select id="new-look"><option value="photoreal">Photoreal</option><option value="anime">Anime</option></select></label>
+      <label class="planner-field"><span>motion door</span>
+        <select id="new-door"></select></label>
+      <label class="planner-field"><span>quality</span>
+        <select id="new-tier"></select></label>
+      <label class="planner-field"><span>frame (every part must match)</span>
+        <select id="new-frame"><option value="1920x1080">1920 x 1080</option><option value="1280x720">1280 x 720</option><option value="1080x1920">1080 x 1920</option></select></label>
+      <label class="planner-field"><span>your estimate per shot, in dollars</span>
+        <input id="new-per-shot" class="planner-input" type="number" inputmode="decimal" step="any" min="0" /></label>
+      <p id="new-per-shot-hint" class="films-muted"></p>
+      <label class="planner-field"><span>spend ceiling, in dollars</span>
+        <input id="new-ceiling" class="planner-input" type="number" inputmode="decimal" step="any" min="0" /></label>
+      <label class="films-check"><input id="new-pause" type="checkbox" checked /> Stop after the first part, so I can watch it</label>
+      <details>
+        <summary>Per-part changes</summary>
+        <label class="planner-field"><span>part_overrides, as JSON</span>
+          <textarea id="new-overrides" rows="3" spellcheck="false" placeholder='[{"index":3,"cast_loras":{},"character_refs":{}}]'></textarea></label>
+      </details>
+      <p class="films-muted">A music bed on the joined film is not built yet.</p>
+      <p id="new-warn" class="films-warn" role="status"></p>
+      <p id="new-problems" class="films-error" role="status"></p>
+      <p id="new-note" class="films-note" role="status"></p>
+      <button id="new-start" type="button" class="planner-primary" disabled>Start</button>
+    </section>
+
+    <dialog id="new-confirm" class="planner-spend-confirm">
+      <form method="dialog">
+        <h3>Start this film?</h3>
+        <p id="new-confirm-what"></p>
+        <p id="new-confirm-cost"></p>
+        <p id="new-confirm-warn" class="films-warn"></p>
+        <p id="new-confirm-overrides"></p>
+        <p id="new-confirm-hold"></p>
+        <div class="planner-actions">
+          <button type="submit" value="cancel" class="planner-secondary">Go back</button>
+          <button type="submit" value="go" class="planner-primary">Start the film</button>
+        </div>
+      </form>
+    </dialog>
+
+    <p id="film-load-note" class="films-note" role="status"></p>
+
+    <div id="film-detail" hidden>
+      <section class="planner-stage">
+        <p><a href="films">All films</a></p>
+        <div class="films-part-head">
+          <h1 id="film-title"></h1>
+          <span id="film-phase" class="films-chip"></span>
+        </div>
+        <progress id="film-bar" class="films-bar" value="0" max="1"></progress>
+        <div id="film-shots"></div>
+        <div id="film-elapsed" class="films-muted"></div>
+        <div id="film-cost" class="films-muted"></div>
+        <div id="film-stop" class="films-stop" role="alert" hidden>
+          <strong id="film-stop-reason"></strong>
+          <div id="film-stop-note"></div>
+        </div>
+        <div id="film-cron" class="films-stop" role="alert" hidden>
+          <strong>The studio's scheduler has not run for 3 minutes.</strong>
+          <div>Nothing will move until it does. This film is not just slow.</div>
+        </div>
+        <div class="films-actions"><button id="film-resume" type="button" class="planner-primary" hidden></button></div>
+        <div id="film-spend" class="films-muted"></div>
+        <div id="film-basis" class="films-muted"></div>
+        <form id="film-ceiling" class="films-open" hidden>
+          <label class="planner-field">
+            <span>raise the spend ceiling, in dollars</span>
+            <input id="film-ceiling-input" class="planner-input" type="number" inputmode="decimal" step="any" min="0" />
+          </label>
+          <button type="submit" class="planner-secondary">Raise</button>
+        </form>
+        <div id="film-degraded" class="films-degraded" hidden></div>
+        <div id="film-error" class="films-error" role="alert" hidden></div>
+        <div class="films-actions"><button id="film-delete" type="button" class="planner-danger" hidden>Delete this film</button></div>
+      </section>
+
+      <p id="film-action-note" class="films-note" role="status"></p>
+      <p id="film-retake-note" class="films-warn" hidden>A new take is under way. The film below is the last finished one until the new join is done.</p>
+      <section id="film-output" class="planner-stage" hidden></section>
+
+      <section class="planner-stage">
+        <div class="films-part-head">
+          <h2 class="planner-stage-title">parts</h2>
+          <label class="films-muted"><input id="film-only-trouble" type="checkbox" /> only failed or rendering</label>
+        </div>
+        <div id="film-parts-count" class="films-muted"></div>
+        <form id="film-find" class="films-open">
+          <label class="planner-field">
+            <span>go to shot number</span>
+            <input id="film-find-number" class="planner-input" type="number" inputmode="numeric" min="1" />
+          </label>
+          <button type="submit" class="planner-secondary">Go</button>
+        </form>
+        <ul id="film-parts" class="films-parts"></ul>
+      </section>
+    </div>
+
+    <dialog id="film-still-dialog" class="films-still-dialog">
+      <h3 id="film-still-title"></h3>
+      <img id="film-still-img" alt="The still for this shot" />
+      <p id="film-still-text" class="films-shot-text"></p>
+      <p id="film-still-warn" class="films-warn" role="note" hidden></p>
+      <div class="films-actions">
+        <button id="film-still-prev" type="button" class="planner-secondary">Previous</button>
+        <button id="film-still-next" type="button" class="planner-secondary">Next</button>
+        <button id="film-still-retake" type="button" class="planner-secondary">New take</button>
+        <button id="film-still-close" type="button" class="planner-secondary">Close</button>
+      </div>
+    </dialog>
+
+    <dialog id="film-retake-dialog" class="planner-spend-confirm">
+      <form method="dialog">
+        <h3 id="film-retake-title"></h3>
+        <label class="planner-field"><span>prompt</span>
+          <textarea id="film-retake-prompt" rows="4"></textarea></label>
+        <label class="planner-field"><span>What they say</span>
+          <textarea id="film-retake-line" rows="2"></textarea></label>
+        <label class="planner-field"><span>voice</span>
+          <select id="film-retake-voice"></select></label>
+        <label class="films-check"><input id="film-retake-still" type="checkbox" /> Draw a new still too. It costs more, and counts as one shot's estimate against the ceiling.</label>
+        <p>This buys this shot's clip and finish, and its line if the line or voice changes. Every other shot is kept, then the film joins again. It costs money, and the studio cannot give a price.</p>
+        <div class="planner-actions">
+          <button type="submit" value="cancel" class="planner-secondary">Go back</button>
+          <button type="submit" value="go" class="planner-primary">Make a new take</button>
+        </div>
+      </form>
+    </dialog>
+
+    <dialog id="film-retry-dialog" class="planner-spend-confirm">
+      <form method="dialog">
+        <h3 id="film-retry-title"></h3>
+        <p id="film-retry-body"></p>
+        <p id="film-retry-note" class="films-error"></p>
+        <div class="planner-actions">
+          <button type="submit" value="cancel" class="planner-secondary">Go back</button>
+          <button id="film-retry-go" type="submit" value="go" class="planner-primary">Retry</button>
+        </div>
+      </form>
+    </dialog>
+  </main>
+
+  <script src="auth-token.js"></script>
+  <script src="module-registry.js"></script>
+  <script src="poll-schedule.js"></script>
+  <script src="studio-chrome.js"></script>
+  <script src="topbar.js"></script>
+  <script src="films.js"></script>
+  <script src="films-new.js"></script>
+</body>
+</html>

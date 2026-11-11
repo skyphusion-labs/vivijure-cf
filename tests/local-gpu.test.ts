@@ -18,7 +18,9 @@ import {
   isSafeJobId,
   normalizeBackendUrl,
 } from "../modules/local-gpu/src/i2v";
-import localGpuWorker, { MANIFEST, doorDurationGrid, _resetGridCache } from "../modules/local-gpu/src/index";
+import localGpuWorker from "../modules/local-gpu/src/index";
+import { doorDurationGrid, _resetGridCache } from "../modules/local-gpu/src/backend";
+import { MANIFEST } from "../modules/local-gpu/src/manifest";
 import { buildPreviewBody, parseKeyframes, encodeKeyframePoll, decodeKeyframePoll } from "../modules/local-gpu/src/keyframe";
 import { checkHookOutput } from "@skyphusion-labs/vivijure-core/modules/conformance";
 import { QUALITY_TIERS } from "@skyphusion-labs/vivijure-core/render-module-config";
@@ -338,6 +340,17 @@ describe("local-gpu manifest conformance", () => {
     expect(parseKeyframes({ keyframes: [{ shot_id: "shot_01", key: "renders/film/keyframes/shot_01.png" }] })).toEqual([
       { shot_id: "shot_01", keyframe_key: "renders/film/keyframes/shot_01.png" },
     ]);
+  });
+
+  it("builds anime preview with the Animagine base and drops photoreal LoRAs", () => {
+    const body = buildPreviewBody(
+      { project: "film", bundle_key: "bundles/film.tar.gz", pretrained_loras: { A: "loras/a.safetensors" } },
+      { style: "anime" },
+    );
+    expect(body.input.render_overrides).toEqual({
+      keyframe: { base_model: "cagliostrolab/animagine-xl-4.0" },
+    });
+    expect(body.input.pretrained_loras).toBeUndefined();
   });
 
   it("declares honest two-door ui framing: local locality + cost + blurb + real limits (#379)", () => {

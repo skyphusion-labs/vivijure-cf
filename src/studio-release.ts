@@ -13,18 +13,34 @@
 //      of a given tag serves a different constant than the prior tag, so two releases are always
 //      distinguishable even when STUDIO_RELEASE is unset.
 //
-// Optional env.STUDIO_GIT_SHA rides as `git_sha` when set (CI can inject GITHUB_SHA at deploy).
-// Absent means the field is omitted; never invent a sha.
+// cf#1347: `git_sha` is ALWAYS present: env.STUDIO_GIT_SHA when the deploy stamps one, else null. Never a
+// guess. `core_version` is the vivijure-core this worker was BUILT with, read from the installed
+// package's package.json by the bundler at build time, so it cannot drift from what is running. Both are
+// checked for shape before they are projected, so a mis-set variable (a token pasted into
+// STUDIO_GIT_SHA, say) is reported as null and never echoed on an unauthenticated route.
+import corePackage from "@skyphusion-labs/vivijure-core/package.json";
 
 /** Keep in sync with package.json "version". tests/studio-release-287.test.ts pins the pair. */
-export const PACKAGE_VERSION = "1.33.9";
+export const PACKAGE_VERSION = "1.45.0";
 
 export interface StudioReleaseIdentity {
   /** The studio release / build id. Prefer the `vX.Y.Z` tag form when STUDIO_RELEASE is set. */
   studio_release: string;
-  /** Optional short or full git sha of the build that produced this worker. Omitted when unset. */
-  git_sha?: string;
+  /** Short or full git sha of the build that produced this worker, as the deploy stamped it. null when
+   *  the deploy stamps none, or the value is not a hex sha. */
+  git_sha: string | null;
+  /** The vivijure-core version this worker was built with (the installed package). null if unreadable. */
+  core_version: string | null;
 }
+
+const GIT_SHA = /^[0-9a-f]{7,40}$/i;
+const SEMVER = /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$/;
+
+/** The installed vivijure-core version, baked at build time. Exported for its test. */
+export const CORE_VERSION: string | null = (() => {
+  const v = (corePackage as { version?: unknown }).version;
+  return typeof v === "string" && SEMVER.test(v) ? v : null;
+})();
 
 function nonEmpty(v: unknown): string | undefined {
   if (typeof v !== "string") return undefined;
@@ -38,6 +54,10 @@ export function resolveStudioRelease(env: {
   STUDIO_GIT_SHA?: string;
 }): StudioReleaseIdentity {
   const release = nonEmpty(env.STUDIO_RELEASE) ?? PACKAGE_VERSION;
-  const git_sha = nonEmpty(env.STUDIO_GIT_SHA);
-  return git_sha ? { studio_release: release, git_sha } : { studio_release: release };
+  const sha = nonEmpty(env.STUDIO_GIT_SHA);
+  return {
+    studio_release: release,
+    git_sha: sha && GIT_SHA.test(sha) ? sha : null,
+    core_version: CORE_VERSION,
+  };
 }

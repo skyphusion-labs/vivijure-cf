@@ -50,13 +50,21 @@ const DECLARED: Record<string, { sites: string[]; why: string }> = {
     sites: ["planner-registry.js", "planner-render-config.js"],
     why: "rollout-window fallback for modules that predate ui.locality; retires with that window",
   },
+  "cloud-keyframe": {
+    sites: ["planner-render-config.js", "planner-render.js"],
+    why: "ruling: the look decides the stills door, and this door takes no LoRA. Retires when a manifest flag says so",
+  },
   "local-gpu": {
     sites: ["planner-render-config.js"],
     why: "suppressed from the projected config list and from the cloud-keyframe default; predates cf#780",
   },
-  "cf-seedance": {
-    sites: ["cast.js"],
-    why: "voice-sample copy names the one door that can lock a take; product copy, needs a capability flag to generalise",
+  "alibaba-wan-lora": {
+    sites: ["cast.js", "make-style.js"],
+    why: "Cast shows Wan training only where this door exists. Retires when Wan training is removed. make-style.js: its face grade is now usage.face_hold (cf#1246), but its NEED for a trained Wan look is still prose only (provides label); retires when a manifest field states that need",
+  },
+  "infinitetalk": {
+    sites: ["planner-render-config.js"],
+    why: "hosted spoken default: the driving-only door that plays the cast line. Retires when a usage flag marks that door, so the name is not compiled in",
   },
   "finish-blender": {
     sites: ["planner-restore.js"],

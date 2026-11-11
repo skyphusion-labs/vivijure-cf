@@ -19,7 +19,16 @@ with a `degraded` marker), never a silent pass and never an over-eager hard fail
 deliberately-abstract films exist). The pure functions here are unit-tested; the ffmpeg sampling is a
 thin I/O wrapper.
 """
-from ffmpeg_run import FFMPEG_TIMEOUT, FfmpegTimeout, _run  # noqa: F401
+from ffmpeg_run import FFMPEG_TIMEOUT, FfmpegTimeout, _run
+
+# RE-EXPORTED ON PURPOSE, and declared the way the linter in CI actually reads.
+# app.py catches `inspect_core.FfmpegTimeout` and test_ffmpeg_timeout.py asserts it is the
+# helper's class, so these names are part of this module's surface even though nothing here
+# calls them. This line used to carry `# noqa: F401`, which did nothing: pyflakes does not
+# read noqa at all -- that is flake8's mechanism -- so the suppression was a comment claiming
+# a property the tooling lacks, and cf#874's gate reported the finding anyway. Measured
+# against fixtures: noqa still reports, __all__ is clean.
+__all__ = ["FFMPEG_TIMEOUT", "FfmpegTimeout", "_run"]
 
 # --- Thresholds (empirically grounded against the S12 noise/good evidence; see #557). ---
 # Keyframe similarity below this = the first frame does not resemble its conditioning keyframe.

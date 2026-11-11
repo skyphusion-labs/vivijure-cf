@@ -327,7 +327,7 @@
     return typeof loc === "string" ? loc.trim().toLowerCase() : "";
   }
 
-  // own-gpu is the silent look door (studio GPU). RunPod cloud i2v (seedance, kling, ...)
+  // own-gpu is the silent look door (studio GPU). RunPod cloud i2v (minimax-hailuo, alibaba-wan, ...)
   // is the talking/speed door. CF Workers AI modules are cf-*. Anyone can pick any door.
   function isQualityDoor(mod) {
     const name = moduleName(mod);
@@ -349,44 +349,35 @@
     return mod && mod.usage && typeof mod.usage === "object" ? mod.usage : {};
   }
 
-  function boundCastHasSample() {
-    const st = global.planState;
-    if (!st) return false;
-    const bindings = st.castBindings || {};
-    const catalog = st.castCatalog || [];
-    for (const slot of Object.keys(bindings)) {
-      const id = bindings[slot];
-      const c = catalog.find((x) => x && (x.id === id || String(x.id) === String(id)));
-      if (c && typeof c.voice_ref_key === "string" && c.voice_ref_key) return true;
-    }
-    return false;
+  // driving_audio and not native_audio. InfiniteTalk. A door that is both (alibaba-wan)
+  // can invent speech, so it is not this.
+  function isDrivingOnly(mod) {
+    const u = usageOf(mod);
+    return u.driving_audio === true && u.native_audio !== true;
   }
 
-  function byUiOrder(a, b) {
-    const ao = Number(uiHint(a, "order"));
-    const bo = Number(uiHint(b, "order"));
-    const an = Number.isFinite(ao) ? ao : 99;
-    const bn = Number.isFinite(bo) ? bo : 99;
-    return an - bn;
+  // A declared silent catalog door: usage exists, it does not speak, and it is not the
+  // studio GPU. A module with no usage is not a guess.
+  function isSilentCatalog(mod) {
+    if (isQualityDoor(mod)) return false;
+    const loc = localityValue(mod);
+    if (loc === "local" || loc === "byo") return false;
+    if (!mod || !mod.usage || typeof mod.usage !== "object") return false;
+    const u = usageOf(mod);
+    return u.native_audio !== true && u.driving_audio !== true;
   }
 
-  // Hosted talking default: Seedance if a Cast sample is kept (usage.voice_ref);
-  // else InfiniteTalk if the board has a line (driving_audio, not native);
-  // Wan last (driving_audio + native auto-dub). Else first talking door by ui.order.
+  // Spoken board: infinitetalk when that driving-only door is installed, else the first
+  // other driving-only door. A kept Cast sample does not switch this to Seedance.
+  // Silent board: the first silent catalog door. own-gpu and alibaba-wan are not defaults.
   function defaultSpeedDoor(mods) {
     const list = Array.isArray(mods) ? mods : [];
-    if (boundCastHasSample()) {
-      const seedance = list.find((m) => usageOf(m).voice_ref === true);
-      if (seedance) return seedance;
-    }
     if (storyboardHasSpokenLines()) {
-      const ourFile = list.find((m) => usageOf(m).driving_audio === true && usageOf(m).native_audio === false);
-      if (ourFile) return ourFile;
+      const named = list.find((m) => moduleName(m) === "infinitetalk" && isDrivingOnly(m));
+      if (named) return named;
+      return list.find(isDrivingOnly) || null;
     }
-    const wan = list.find((m) => usageOf(m).driving_audio === true && usageOf(m).native_audio === true);
-    if (wan) return wan;
-    const talking = talkingMotionMods(list).slice().sort(byUiOrder);
-    return talking[0] || null;
+    return list.find(isSilentCatalog) || null;
   }
 
   function doorTitle(mod) {
@@ -394,8 +385,12 @@
     return moduleLabel(mod);
   }
 
+  // cf#1246: the door's own price at cost, from ui.cost_usd_per_second or ui.cost_usd_per_clip
+  // (make-style.js rateLine, one formatter for both pages). "Price unknown" when it states none.
   function doorCost(mod) {
     if (isQualityDoor(mod)) return "Look only, slower";
+    const style = global.makeStyle;
+    if (style && typeof style.rateLine === "function") return style.rateLine(mod);
     const cost = uiHint(mod, "cost");
     if (typeof cost !== "string") return "";
     return filmmakerCostLine(cost).replace(/\.$/, "");
@@ -586,8 +581,8 @@
       const hint = wrap.querySelector(".planner-backend-caption-hint");
       if (hint) {
         hint.textContent = value
-          ? "Talking doors are the default. Studio GPU is silent look only."
-          : "Required: pick which backend renders the motion (image-to-video) step.";
+          ? "Talking styles come first. Studio GPU makes a silent look only."
+          : "Pick a video style.";
       }
     }
     // vivijure#546: notify the render gate whenever the backend choice changes so the
@@ -622,16 +617,16 @@
     cap.className = "planner-backend-caption";
     const capTitle = document.createElement("span");
     capTitle.className = "planner-backend-caption-title";
-    capTitle.textContent = "Render backend";
+    capTitle.textContent = "Video style";
     cap.appendChild(capTitle);
     const capHint = document.createElement("span");
     capHint.className = "planner-backend-caption-hint";
     const linesOn = storyboardHasSpokenLines();
     capHint.textContent = linesOn
-      ? "This storyboard has spoken lines. Only doors that can say them (they keep audio on our stills)."
+      ? "Your scenes have spoken lines, so only talking styles are shown."
       : (mods.length > 1
-        ? "Talking doors are the default. Studio GPU is silent look only."
-        : "This backend renders the motion (image-to-video) step.");
+        ? "Talking styles come first. Studio GPU makes a silent look only."
+        : "This is the video style your scenes will use.");
     cap.appendChild(capHint);
     section.appendChild(cap);
 
@@ -668,8 +663,8 @@
     doors.className = "planner-backend-doors";
 
     if (mods.length > 1) {
-      // Default: Seedance if a sample is kept, else InfiniteTalk if any line,
-      // Wan last, else first talking door. Leave the pick empty when none apply.
+      // Spoken: InfiniteTalk when it is installed. Silent: one catalog door.
+      // Leave the pick empty when neither applies.
       if (speed) {
         sel.value = speed.name;
       } else {
@@ -754,7 +749,7 @@
             motionWrap.hidden = false;
             const empty = document.createElement("p");
             empty.className = "planner-backend-caption-hint";
-            empty.textContent = "This storyboard has spoken lines, but no talking door is installed. Bind Seedance, InfiniteTalk, Wan, Veo, Flux, Vidu, or Grok.";
+            empty.textContent = "This storyboard has spoken lines, and this studio has no talking door installed.";
             motionWrap.appendChild(empty);
           }
         } else if (renderBackendSelector(doors, motionWrap)) motionShown = true;
@@ -769,6 +764,7 @@
       motionWrap.hidden = true;
     }
     renderFinishPicks();
+    renderLookPicker();
     const styleEl = document.getElementById("planner-style-lock");
     if (styleEl && !styleEl.value && global.planState && global.planState.storyboard
       && typeof global.planState.storyboard.style_prefix === "string"
@@ -778,6 +774,75 @@
     if (typeof global.ensureVoiceLockFilled === "function") {
       global.ensureVoiceLockFilled();
     }
+  }
+
+  // Ruling: anime stills go through cloud-keyframe, photoreal through keyframe with cast LoRAs.
+  const LOOK_DOORS = { anime: "cloud-keyframe", photoreal: "keyframe" };
+  const LOOK_KEY = "skyphusion.planner.look";
+
+  function keyframeMods() {
+    const c = global.plannerRegistry && global.plannerRegistry._cacheForRenderConfig;
+    return (c && c.keyframe) || [];
+  }
+
+  function installedKeyframeDoor(name) {
+    return keyframeMods().some((m) => moduleName(m) === name);
+  }
+
+  function selectedLook() {
+    const el = document.getElementById("planner-look");
+    return el && el.value ? el.value : "";
+  }
+
+  // With no look chosen this is the same default as src/default-keyframe.ts.
+  function keyframeDoorForLook(look) {
+    if (look && LOOK_DOORS[look] && installedKeyframeDoor(LOOK_DOORS[look])) return LOOK_DOORS[look];
+    if (installedKeyframeDoor("cloud-keyframe") && !installedKeyframeDoor("keyframe")) return "cloud-keyframe";
+    return "keyframe";
+  }
+
+  function renderLookPicker() {
+    const wrap = document.getElementById("planner-look-wrap");
+    const el = document.getElementById("planner-look");
+    if (!wrap || !el) return;
+    const looks = Object.keys(LOOK_DOORS)
+      .filter((look) => installedKeyframeDoor(LOOK_DOORS[look]))
+      .sort((a, b) => (a === "photoreal" ? -1 : b === "photoreal" ? 1 : 0));
+    let want = el.value;
+    if (!want) {
+      try { want = localStorage.getItem(LOOK_KEY) || ""; } catch (_) { want = ""; }
+    }
+    el.innerHTML = "";
+    for (const look of looks) {
+      const opt = document.createElement("option");
+      opt.value = look;
+      opt.textContent = look === "anime" ? "Anime" : "Photoreal";
+      el.appendChild(opt);
+    }
+    if (looks.indexOf(want) >= 0) el.value = want;
+    wrap.hidden = looks.length < 2;
+    if (!el.dataset.wired) {
+      el.dataset.wired = "1";
+      el.addEventListener("change", () => {
+        try { localStorage.setItem(LOOK_KEY, el.value); } catch (_) {}
+      });
+    }
+  }
+
+  // Clip money only. Nothing here knows the price of stills, voices, music or finish.
+  function filmSpendSummary(scenes, mod) {
+    const list = Array.isArray(scenes) ? scenes : [];
+    const seconds = list.reduce((sum, s) => sum + (Number(s && (s.target_seconds || s.seconds)) || 0), 0);
+    const rate = mod && mod.ui && mod.ui.cost_usd_per_second;
+    const known = Array.isArray(rate) && rate.length === 2 && rate.every((r) => typeof r === "number" && r > 0)
+      && seconds > 0;
+    return {
+      shots: list.length,
+      seconds,
+      door: mod ? moduleLabel(mod) : "",
+      low: known ? rate[0] * seconds : null,
+      high: known ? rate[1] * seconds : null,
+    };
   }
 
   function finishCache() {
@@ -929,8 +994,8 @@
     // wanted cleaned dialogue first. That trigger went with the module (cf#783), so the planner
     // no longer enables speech-upscale at all, and as of cf#786 the module itself is REMOVED:
     // dead endpoint, no trigger, and its purpose was feeding the post-hoc lip-sync step. Nothing
-    // replaced it, deliberately. The Cast voice is muxed as recorded, and a synced mouth comes
-    // from infinitetalk at motion time.
+    // replaced it, deliberately. A synced mouth comes from infinitetalk at motion time, and
+    // submit refuses a spoken line on a silent door.
     if (Object.keys(config).length) out.config = config;
     const motionSel = document.getElementById("planner-motion-backend");
     if (motionSel && motionSel.value) out.motion_backend = motionSel.value;
@@ -994,11 +1059,18 @@
     // opts.keyframesOnly so a keyframes-only preview is never falsely blocked here.
     const keyframesOnly = !!(opts && opts.keyframesOnly);
     const backendSel = document.getElementById("planner-motion-backend");
-    // Fastest stills path. Explicit keyframe_backend still wins. local-gpu
-    // stays omitted so core can couple it (vivijure-local#153).
-    if (!overrides.keyframe_backend && overrides.motion_backend !== "local-gpu"
-        && (overrides.motion_backend || overrides.config)) {
-      overrides.keyframe_backend = "keyframe";
+    // The look decides the stills door. Explicit keyframe_backend still wins. local-gpu stays
+    // omitted so core can couple it (vivijure-local#153).
+    if (!overrides.keyframe_backend && overrides.motion_backend !== "local-gpu") {
+      const look = selectedLook();
+      const route = keyframeDoorForLook(look);
+      if (look || overrides.motion_backend || overrides.config) {
+        overrides.keyframe_backend = route;
+        if (look) {
+          overrides.config = { ...(overrides.config || {}) };
+          overrides.config[route] = { ...(overrides.config[route] || {}), style: look };
+        }
+      }
     }
     if (!keyframesOnly && backendSel && !overrides.motion_backend) {
       const names = Array.from(backendSel.options || [])
@@ -1053,5 +1125,6 @@
     tierDisplayLabel,
     filmmakerCostLine,
     spendSentence,
+    filmSpendSummary,
   };
 })(window);

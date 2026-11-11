@@ -7,12 +7,38 @@
 
 
 // artifactUrl: an artifact reference is normally an R2 key served through the studio /api/artifact/
-// presign route. The public demo studio (#625) has no R2 binding and seeds render rows whose
-// output_key is an ABSOLUTE showcase URL; return such a URL verbatim so the film plays straight from
-// assets.skyphusion.net. For a normal relative key this is byte-identical to before, so prod behavior
-// is unchanged (a projection that also accepts an absolute artifact URL).
+// presign route. An output_key can instead be an ABSOLUTE URL, and such a value is returned verbatim
+// so the film plays straight from its own origin. For a normal relative key this is unchanged (a
+// projection that also accepts an absolute artifact URL). `isForeignRef` (src/record-reclaim.ts) is
+// the server-side half: a value this accepts must never be handed to an R2 delete. The shape came
+// from the public demo seed (#625), removed with that door in pr1019; the passthrough is kept
+// because any writer can still store an absolute value.
 function artifactUrl(key) {
   return /^https?:\/\//i.test(key) ? key : "/api/artifact/" + key;
+}
+
+// cf#1309: a standalone clip job (POST /api/render/clips) now has a history row. Since core 1.41.0
+// (#1351) its mode reads "clips"; the clips- job id prefix still counts, for a row a studio on an older
+// core listed. The film actions (view/resume, cancel, re-render, retry) all target film routes that
+// answer 404 or 400 for it, so the row offers delete, logs and one download per finished clip instead.
+function isClipJobRow(r) {
+  if (!r) return false;
+  if (r.mode === "clips") return true;
+  return typeof r.job_id === "string" && r.job_id.indexOf("clips-") === 0;
+}
+
+// cf#1309: the finished clips of a clip job row, from output.clips ({ shot_id, key }, the same shape a
+// derived animation row stores). A clip with no usable key is skipped, never guessed.
+function clipJobDownloads(r) {
+  const clips = r && r.output && typeof r.output === "object" && Array.isArray(r.output.clips)
+    ? r.output.clips
+    : [];
+  const out = [];
+  for (const c of clips) {
+    if (!c || typeof c.shot_id !== "string" || typeof c.key !== "string" || !c.key) continue;
+    out.push({ shot_id: c.shot_id, href: artifactUrl(c.key), name: (r.project || "clip") + "-" + c.shot_id + ".mp4" });
+  }
+  return out;
 }
 function buildHistoryRow(r, childrenByParent) {
   const li = document.createElement("li");
@@ -55,8 +81,32 @@ function buildHistoryRow(r, childrenByParent) {
   const clipFinishBand = window.finishDegrade
     ? window.finishDegrade.clipFinishBand(r.output)
     : "unmeasured";
+  // cf#853 / core#317: speech, master and dialogue are three MORE signals in the same
+  // vocabulary. Each gets its own attribute rather than being folded into one, because the
+  // whole point of the band vocabulary is that a stage nobody measured and a stage that ran
+  // clean are different facts. Folding them here would rebuild cf#549 three stages over.
+  const stageBands = {};
+  if (window.finishDegrade && window.finishDegrade.STAGE_KEYS) {
+    for (let s = 0; s < window.finishDegrade.STAGE_KEYS.length; s++) {
+      const k = window.finishDegrade.STAGE_KEYS[s];
+      stageBands[k] = window.finishDegrade.stageBand(r.output, k);
+    }
+  }
+  // cf#864: the SAME enumeration the live view and the block builder use.
+  const stageInfos = window.stageDegradeView
+    ? window.stageDegradeView.reportedStages(r.output, window.finishDegrade)
+    : [];
+
+  // core#377: stamped on every row with an answer, so a count of incomplete films needs no parsing.
+  const finishIncomplete = window.finishDegrade ? window.finishDegrade.incompleteFrom(r.output) : null;
+  if (finishIncomplete) li.dataset.finishIncomplete = "true";
   li.dataset.finishDegrade = finishBand;
   li.dataset.clipFinish = clipFinishBand;
+  // With the helper absent these stay unset rather than reading "none-reported": an absent
+  // projection measured nothing and must never be recorded as having found nothing.
+  if (stageBands.speech) li.dataset.speechDegrade = stageBands.speech;
+  if (stageBands.master) li.dataset.masterDegrade = stageBands.master;
+  if (stageBands.dialogue) li.dataset.dialogueDegrade = stageBands.dialogue;
 
   const meta = document.createElement("div");
   meta.className = "planner-history-meta";
@@ -112,7 +162,9 @@ function buildHistoryRow(r, childrenByParent) {
     passBadge.textContent = passLabel;
     passBadge.title = passLabel === "preview"
       ? "stills preview; no motion / no film yet"
-      : "motion film (preview stills were already generated)";
+      : passLabel === "clips"
+        ? "motion clips, one per shot; no assembled film"
+        : "motion film (preview stills were already generated)";
     meta.appendChild(passBadge);
   }
 
@@ -206,7 +258,10 @@ function buildHistoryRow(r, childrenByParent) {
   const clipBandNote = window.finishDegrade
     ? window.finishDegrade.bandNote(clipFinishBand)
     : null;
-  const degNote = finishBandNote || clipBandNote;
+  const stageNote = window.finishDegrade && window.finishDegrade.stagesNote
+    ? window.finishDegrade.stagesNote(stageInfos)
+    : null;
+  const degNote = finishBandNote || clipBandNote || stageNote;
   if (degNote) {
     const degBadge = document.createElement("span");
     degBadge.className = "planner-history-mode planner-history-mode-degraded";
@@ -359,12 +414,15 @@ function buildHistoryRow(r, childrenByParent) {
   const actions = document.createElement("div");
   actions.className = "planner-history-actions";
 
-  const view = document.createElement("button");
-  view.type = "button";
-  view.className = "planner-history-action";
-  view.textContent = "view";
-  view.addEventListener("click", () => resumeRender(r));
-  actions.appendChild(view);
+  const clipJob = isClipJobRow(r);
+  if (!clipJob) {
+    const view = document.createElement("button");
+    view.type = "button";
+    view.className = "planner-history-action";
+    view.textContent = "view";
+    view.addEventListener("click", () => resumeRender(r));
+    actions.appendChild(view);
+  }
 
   // #757: cancel any in-flight render straight from the history list, not just
   // the one the panel itself launched. Any non-terminal row is cancelable via
@@ -377,7 +435,7 @@ function buildHistoryRow(r, childrenByParent) {
     || r.status === "IN_PROGRESS"
     || r.status === "SUBMITTED"
     || r.status === "SCATTERING";
-  if (cancelable && r.job_id) {
+  if (cancelable && r.job_id && !clipJob) {
     const cancel = document.createElement("button");
     cancel.type = "button";
     cancel.className = "planner-history-action planner-history-action-cancel";
@@ -385,6 +443,15 @@ function buildHistoryRow(r, childrenByParent) {
     cancel.title = "cancel this in-flight render (stops the GPU job)";
     cancel.addEventListener("click", () => cancelHistoryRow(r, cancel));
     actions.appendChild(cancel);
+  }
+
+  for (const d of clipJob ? clipJobDownloads(r) : []) {
+    const a = document.createElement("a");
+    a.href = d.href;
+    a.download = d.name;
+    a.className = "planner-history-action";
+    a.textContent = "clip " + d.shot_id;
+    actions.appendChild(a);
   }
 
   if (r.output_key) {
@@ -447,7 +514,7 @@ function buildHistoryRow(r, childrenByParent) {
     addAudio.addEventListener("click", () => addAudioToRender(r, addAudio));
     actions.appendChild(addAudio);
 
-    // v0.137.0: spoken narration via installed score module (config_schema.text).
+    // v0.137.0: spoken narration via an installed score module of kind narration (vivijure-cf#878).
     if (
       window.plannerRegistry
       && window.plannerRegistry.narrationScoreModules().length > 0
@@ -467,26 +534,29 @@ function buildHistoryRow(r, childrenByParent) {
   }
 
   // v0.35.1: "re-render" with the same bundle. Skips plan + bundle stages.
-  const rerun = document.createElement("button");
-  rerun.type = "button";
-  rerun.className = "planner-history-action";
-  rerun.textContent = "re-render";
-  rerun.title = "render this bundle again (skips plan + bundle stages)";
-  rerun.addEventListener("click", () => rerunBundle(r));
-  actions.appendChild(rerun);
+  // cf#1309: a clip job row has no bundle, so it has nothing to re-render. That is the only gate.
+  if (!clipJob) {
+    const rerun = document.createElement("button");
+    rerun.type = "button";
+    rerun.className = "planner-history-action";
+    rerun.textContent = "re-render";
+    rerun.title = "render this bundle again (skips plan + bundle stages)";
+    rerun.addEventListener("click", () => rerunBundle(r));
+    actions.appendChild(rerun);
+  }
 
   // cf#353: real retry -- re-POSTs the row's STORED args via /renders/:id/retry.
   // Server creates a NEW history row; the failed row stays for the audit trail.
   // "re-render" above still stages the bundle into the panel for a fresh manual submit.
   const isFailed =
     r.status === "FAILED" || r.status === "CANCELLED" || r.status === "TIMED_OUT";
-  if (isFailed && r.mode !== "finalized" && r.mode !== "cloud-finalized") {
+  if (isFailed && !clipJob && r.mode !== "finalized" && r.mode !== "cloud-finalized") {
     // Finalize/cloud failures use their own finalize/animate controls on the parent preview.
     const retry = document.createElement("button");
     retry.type = "button";
     retry.className = "planner-history-action planner-history-action-primary";
     retry.textContent = "retry";
-    retry.title = "re-submit this render with the same stored args (new history row; GPU may resume off volume)";
+    retry.title = "re-submit this render from its stored bundle (new history row; it may not keep everything)";
     retry.addEventListener("click", () => retryFailedRender(r, retry));
     actions.appendChild(retry);
     // cf#649: one next action on the collapsed row, without expanding.
@@ -565,6 +635,22 @@ function buildHistoryRow(r, childrenByParent) {
     li.appendChild(clipWrap);
   }
 
+  // cf#864: one note per REPORTED stage, built by the SHARED builder (stage-degrade-view.js).
+  // Separate blocks on purpose -- a speech passthrough, an unmastered bed and a film with no
+  // voices are three different facts, and one merged sentence is the collapse this vocabulary
+  // exists to prevent. Only the "reported" band gets prose; "unreadable" rides on its data
+  // attribute and its badge, because there is nothing readable to quote and inventing a cause is
+  // the one thing this must never do.
+  const stageEls = window.stageDegradeView
+    ? window.stageDegradeView.stageBlocks(
+        document,
+        stageInfos,
+        window.finishDegrade ? window.finishDegrade.stageSummary : null,
+        { className: "render-degrade planner-history-degrade", role: "note" },
+      )
+    : [];
+  for (let s = 0; s < stageEls.length; s++) li.appendChild(stageEls[s]);
+
   // v0.129.0: inline movie player, full card width, directly below the action
   // buttons (view / re-render / delete). Completed rows that produced a silent
   // MP4 get an HTML5 <video controls>; preload="metadata" so opening a row does
@@ -573,13 +659,18 @@ function buildHistoryRow(r, childrenByParent) {
   if (r.status === "COMPLETED" && r.output_key) {
     const playerWrap = document.createElement("div");
     playerWrap.className = "planner-history-player";
-    const video = document.createElement("video");
-    video.src = artifactUrl(r.output_key);
-    video.controls = true;
-    video.preload = "metadata";
-    video.playsInline = true;
-    video.className = "planner-history-player-video";
-    playerWrap.appendChild(video);
+    // Built on first expand. A collapsed row must not fetch metadata for its film.
+    li._fillPlayer = () => {
+      const video = document.createElement("video");
+      video.src = artifactUrl(r.output_key);
+      video.controls = true;
+      video.preload = "metadata";
+      video.playsInline = true;
+      video.className = "planner-history-player-video";
+      playerWrap.appendChild(video);
+      li._fillPlayer = null;
+    };
+    if (isExpanded) li._fillPlayer();
     li.appendChild(playerWrap);
   }
 
@@ -672,6 +763,14 @@ function buildHistoryRow(r, childrenByParent) {
       cap.textContent = kf.shot_id;
       a.appendChild(cap);
       wrap.appendChild(a);
+      // cf#916 / cf#1282: this still may show an extra person, or its clip failed the picture
+      // check. Empty for a clean shot, so a healthy row gains nothing.
+      const shotWarns = window.stageDegradeView
+        ? window.stageDegradeView.shotWarningBlocks(document, r.output, kf.shot_id, kf, window.finishDegrade, {
+          className: "planner-history-keyframe-warn",
+        })
+        : [];
+      for (const w of shotWarns) wrap.appendChild(w);
 
       // v0.145.2: the motion clip rendered FROM this keyframe, shown directly
       // under the still so the keyframe and its animation read as one unit.
@@ -708,7 +807,8 @@ function buildHistoryRow(r, childrenByParent) {
       if (delivery) {
         const planned = delivery.planned_seconds;
         const delivered = delivery.delivered_seconds;
-        const clamped = delivered < planned - 0.05;
+        // A normal clip lands a little short. Flag only a shortfall a viewer could notice.
+        const clamped = delivered < planned - Math.max(0.5, planned * 0.1);
         const fmt = (s) => (Math.round(s * 10) / 10) + "s";
         const dur = document.createElement("span");
         dur.className = "planner-history-keyframe-dur";
@@ -1796,6 +1896,7 @@ function toggleHistoryRowExpand(id, liEl) {
   if (next) {
     historyState.expandedIds.add(id);
     liEl.classList.remove("planner-history-item-collapsed");
+    if (liEl._fillPlayer) liEl._fillPlayer();
   } else {
     historyState.expandedIds.delete(id);
     liEl.classList.add("planner-history-item-collapsed");
@@ -1815,6 +1916,7 @@ function historyStatusKind(status) {
 // cf#649: collapsed-row labels. Only emit a string when the field is actually
 // present so a missing backend does not invent one.
 function historyPassLabel(r) {
+  if (isClipJobRow(r)) return "clips";
   if (!r || typeof r.mode !== "string") return "";
   if (r.mode === "keyframes-only") return "preview";
   if (r.mode === "full" || r.mode === "finalized" || r.mode === "cloud-finalized") return "final";
@@ -1970,10 +2072,9 @@ function formatRelative(unixSeconds) {
 async function retryFailedRender(row, btnEl) {
   const confirmMsg =
     "retry this render?\n\n"
-    + "the studio re-submits the row's stored args (project, bundle, tier, overrides). "
-    + "a NEW history row is created; this failed row stays for the audit trail. "
-    + "on the same GPU endpoint within the volume retention window, already-trained "
-    + "LoRAs and shots may be reused.\n\ncontinue?";
+    + "this starts a new job from the stored bundle and settings. it can cost money again, and it "
+    + "may not keep everything from the first try. the studio tells you if anything was dropped.\n\n"
+    + "this failed row stays in the list.\n\ncontinue?";
   if (!window.confirm(confirmMsg)) return;
 
   btnEl.disabled = true;
@@ -2005,5 +2106,6 @@ async function retryFailedRender(row, btnEl) {
     return;
   }
   btnEl.textContent = "retry submitted";
+  if (data.degraded) window.alert("retry started, with a limit:\n\n" + data.degraded);
   loadHistory();
 }

@@ -145,7 +145,7 @@
         .json()
         .then(function (body) {
           // cf#525: a valid token with the wrong scope is not a dead credential.
-          // Do not pop paste-once. Only surface when a token is stored so AUTH_MODE=demo
+          // Do not pop paste-once. Only surface when a token is stored so an anonymous
           // (anonymous consumer) does not change its UX.
           if (body && body.code === "scope_denied") {
             if (getToken()) showScopeDeniedNotice();

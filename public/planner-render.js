@@ -66,7 +66,6 @@ function showRenderStage() {
   // v0.221.0: a fresh visit to the render stage starts with no LoRA warning;
   // the next render click re-checks against fresh cast state.
   hideLoraPreflightWarning();
-  loraPreflightAck = null;
   syncRenderModeUi();
 }
 
@@ -84,10 +83,6 @@ function showRenderStage() {
 // training finishes after load (see buildCastLoraSubmit v0.135.6), so the gate
 // re-fetches /api/cast before checking rather than trusting planState.castCatalog.
 
-// Signature of the unready-slot set the user has already acknowledged by
-// clicking render a second time. Reset whenever the set is empty or changes.
-let loraPreflightAck = null;
-
 function hideLoraPreflightWarning() {
   const el = $("#planner-lora-preflight-warning");
   if (!el) return;
@@ -102,7 +97,7 @@ function paintLoraWarning(el, unready, proceedHint) {
   const msg = document.createElement("span");
   msg.className = "planner-lora-preflight-msg";
   msg.textContent =
-    "These characters are using portraits only: " + names + ". "
+    "No trained look yet: " + names + ". "
     + (proceedHint || "Faces may vary between shots.");
   const link = document.createElement("a");
   link.href = "cast";
@@ -118,8 +113,21 @@ function showLoraPreflightWarning(unready) {
   paintLoraWarning(
     $("#planner-lora-preflight-warning"),
     unready,
-    "Click render again to proceed anyway.",
+    "A photoreal film needs a trained look for each person. Train them on Cast, or choose the Anime look.",
   );
+}
+
+// The stills door this submit would use. A door that takes no LoRA has nothing to refuse.
+function keyframeDoorForSubmit() {
+  const cfg = window.plannerRenderConfig;
+  if (!cfg || typeof cfg.collectForSubmit !== "function") return "";
+  try {
+    const expert = $("#planner-render-overrides");
+    const o = cfg.collectForSubmit(expert ? expert.value : "", { keyframesOnly: true });
+    return (o && o.keyframe_backend) || "";
+  } catch (_) {
+    return "";
+  }
 }
 
 // Motion backend for the LoRA preflight gate: mirrors the render submit's backend
@@ -149,9 +157,8 @@ function motionIsWanLora(motionBackend) {
 // freshly-shown warning. Re-fetches /api/cast so the readiness check is fresh.
 async function loraPreflightGate() {
   const bindings = planState.castBindings || {};
-  if (Object.keys(bindings).length === 0) {
+  if (Object.keys(bindings).length === 0 || keyframeDoorForSubmit() === "cloud-keyframe") {
     hideLoraPreflightWarning();
-    loraPreflightAck = null;
     return true;
   }
   setRenderStatus("checking the cast...", "loading");
@@ -164,22 +171,14 @@ async function loraPreflightGate() {
   });
   if (unready.length === 0) {
     hideLoraPreflightWarning();
-    loraPreflightAck = null;
     setRenderStatus("", "");
     return true;
   }
-  const sig = window.loraPreflight.loraSlotSignature(unready);
-  if (loraPreflightAck === sig) {
-    // Same warning the user already saw; they clicked render again -> proceed.
-    hideLoraPreflightWarning();
-    return true;
-  }
-  loraPreflightAck = sig;
   showLoraPreflightWarning(unready);
   setRenderStatus(
     unready.length === 1
-      ? "1 character is using a portrait only (see note above)"
-      : unready.length + " characters are using portraits only (see note above)",
+      ? "1 character has no trained look (see the note below)"
+      : unready.length + " characters have no trained look (see the note below)",
     "error",
   );
   return false;
@@ -223,6 +222,28 @@ function requirePlannerVoiceLock(keyframesOnly) {
   const ta = $("#planner-voice-lock");
   if (ta) ta.focus();
   return null;
+}
+
+// Nothing spends until this resolves true. The total covers clips only, and says so.
+function confirmFilmSpend(renderOverrides) {
+  const dlg = $("#planner-spend-confirm");
+  const cfg = window.plannerRenderConfig;
+  if (!dlg || typeof dlg.showModal !== "function" || !cfg) return Promise.resolve(true);
+  const name = renderOverrides && renderOverrides.motion_backend;
+  const mods = window.plannerRegistry ? window.plannerRegistry.motionBackendModules() || [] : [];
+  const sum = cfg.filmSpendSummary(planState.storyboard.scenes, mods.find((m) => m.name === name));
+  const money = (n) => "$" + n.toFixed(2);
+  $("#planner-spend-what").textContent =
+    sum.shots + (sum.shots === 1 ? " shot" : " shots") + ", about " + Math.round(sum.seconds)
+    + " seconds, on " + (sum.door || name || "the chosen door") + ".";
+  $("#planner-spend-total").textContent = sum.low === null
+    ? "This door does not state a rate, so the studio cannot give a total."
+    : "Clips: about " + money(sum.low) + " to " + money(sum.high) + ".";
+  return new Promise((resolve) => {
+    dlg.addEventListener("close", () => resolve(dlg.returnValue === "start"), { once: true });
+    dlg.returnValue = "";
+    dlg.showModal();
+  });
 }
 
 async function submitRender() {
@@ -281,6 +302,11 @@ async function submitRender() {
   if (renderState.pollTimer) {
     clearTimeout(renderState.pollTimer);
     renderState.pollTimer = null;
+  }
+  if (!keyframesOnly && !(await confirmFilmSpend(renderOverrides))) {
+    setRenderStatus("", "");
+    renderState.submitting = false;
+    return;
   }
   const qualityTier = $("#planner-quality-tier").value;
   // v0.40.0: the checkbox (read above) is the source of truth for the next submission. The
@@ -432,7 +458,7 @@ function updateRenderGate() {
     && cfg
     && typeof cfg.backendChoicePending === "function"
     && cfg.backendChoicePending();
-  const reason = pending ? "pick a render backend above" : "";
+  const reason = pending ? "Pick a video style above." : "";
   btn.disabled = !!reason;
   if (reasonEl) {
     reasonEl.textContent = reason;
@@ -653,10 +679,11 @@ function updateRenderProgress(data) {
     const phaseText = window.renderEta
       ? window.renderEta.phaseLabel(phaseSrc)
       : (phaseSrc || null);
-    if (phaseText) {
+    const waiting = window.finishDegrade ? window.finishDegrade.waitingLabel(out) : null;
+    if (waiting || phaseText) {
       const el = $("#planner-render-phase");
       el.hidden = false;
-      el.textContent = phaseText;
+      el.textContent = waiting || phaseText;
     }
     if (Array.isArray(out.log) && out.log.length > 0) {
       const wrap = $("#planner-render-log-wrap");
@@ -678,6 +705,9 @@ function updateRenderProgress(data) {
   const terminal = ["COMPLETED", "FAILED", "CANCELLED", "TIMED_OUT"];
   if (terminal.indexOf(data.status) >= 0) {
     hideProgressWidget();
+    // Counters and phase describe a running job. Left up, they contradict the final status.
+    $("#planner-render-scene").hidden = true;
+    $("#planner-render-phase").hidden = true;
     return;
   }
   // v0.136.0: SUBMITTED (pre-confirmation) is a queue-equivalent wait; do not
@@ -687,7 +717,10 @@ function updateRenderProgress(data) {
     data.status !== "SUBMITTED" &&
     renderState.startedAt === null
   ) {
-    renderState.startedAt = Date.now();
+    // The server knows how long the job has run. Without it, a second device or a late look at a long
+    // film starts the clock at zero and promises a finish in seconds.
+    const ran = typeof data.executionTimeMs === "number" && data.executionTimeMs > 0 ? data.executionTimeMs : 0;
+    renderState.startedAt = Date.now() - ran;
     savePersistedState();
   }
   // cf#303: IN_QUEUE used to skip the widget because startedAt stays null
@@ -865,8 +898,23 @@ function finalizeRenderPoll(data) {
     // the panel used to drop that on the floor and paint a plain green "completed".
     const degrade = window.finishDegrade ? window.finishDegrade.degradeFrom(out) : null;
     const clipFinish = window.finishDegrade ? window.finishDegrade.clipFinishFrom(out) : null;
-    const limited = !!(degrade || clipFinish);
-    setRenderStatus((limited ? "completed with limits" : "completed") + elapsed, limited ? "warn" : "success");
+    // cf#853 / core#317: speech, master and dialogue degrades reach the payload as their own
+    // top-level keys. Before this they were console.warn only, so a film that was never
+    // mastered, whose speech chain passed everything through, or that shipped without
+    // voices was painted plain green and was indistinguishable from a clean one.
+    //
+    // `limited` is an OR over signals that REPORTED a limit, which is deliberately not a
+    // worst-of over bands: an unmeasured stage is not a limit and must not warn, and an
+    // unreadable one is handled by its own band rather than by claiming the studio named
+    // something it did not. See combineBands() in finish-degrade.js.
+    const stageDegrades = stageDegradesOf(out);
+    const limited = !!(degrade || clipFinish || stageDegrades.length);
+    // core#377: a film with a missing step is never painted as a clean finish, whatever else it says.
+    const verdict = window.finishDegrade
+      ? window.finishDegrade.completedStatus(out, limited)
+      : { text: limited ? "completed with limits" : "completed", tone: limited ? "warn" : "success", retry: false };
+    setRenderStatus(verdict.text + elapsed, verdict.tone);
+    paintFinishIncomplete(out);
     const outpan = $("#planner-render-output");
     outpan.hidden = false;
     $("#planner-render-output-content").textContent = JSON.stringify(
@@ -880,10 +928,62 @@ function finalizeRenderPoll(data) {
 
   // Terminal failure of some flavor.
   setRenderStatus(data.status.toLowerCase() + elapsed, "error");
+  paintFinishIncomplete(data.output);
   const outpan = $("#planner-render-output");
   outpan.hidden = false;
   $("#planner-render-output-content").textContent = JSON.stringify(data.output || {}, null, 2);
   renderDeliverable(null, null);
+}
+
+// core#377: name each missing step and what is kept, and offer the retry. Clears itself otherwise, so
+// a clean render after a partial one in the same session shows nothing stale.
+function paintFinishIncomplete(out) {
+  let box = $("#planner-render-incomplete");
+  const fd = window.finishDegrade;
+  const list = fd ? fd.incompleteFrom(out) : null;
+  if (!list) {
+    if (box) box.hidden = true;
+    return;
+  }
+  if (!box) {
+    box = document.createElement("div");
+    box.id = "planner-render-incomplete";
+    box.className = "planner-render-coldstart planner-render-incomplete";
+    box.setAttribute("role", "alert");
+    const anchor = $("#planner-render-output");
+    anchor.parentNode.insertBefore(box, anchor);
+  }
+  const retryFailed = fd.retryFailedNote(out);
+  box.textContent = (retryFailed ? retryFailed + " " : "") + fd.incompleteSummary(list) + " ";
+  const jobId = renderState.jobId;
+  box.hidden = false;
+  if (!fd.canRetryFinish(jobId)) {
+    box.textContent = box.textContent.replace(" Retry runs these steps again without re-rendering any clip.", "");
+    return;
+  }
+  const retry = document.createElement("button");
+  retry.type = "button";
+  retry.textContent = "Retry missing steps";
+  retry.addEventListener("click", async () => {
+    retry.disabled = true;
+    let resp = null;
+    try {
+      resp = await fetch("/api/render/film/" + encodeURIComponent(jobId) + "/finish-retry", { method: "POST" });
+    } catch (_e) {
+      resp = null;
+    }
+    if (!resp || !resp.ok) {
+      retry.disabled = false;
+      setRenderStatus("could not start the retry", "error");
+      return;
+    }
+    box.hidden = true;
+    renderState.jobId = jobId;
+    setRenderStatus("retrying missing steps", "warn");
+    pollRender();
+  });
+  box.appendChild(retry);
+  box.hidden = false;
 }
 
 // cf#118: paint the download affordances from what the render ACTUALLY delivered, and
@@ -924,13 +1024,25 @@ function renderDeliverable(out, degrade) {
 // The disclosure block: our structural sentence, the studio reason VERBATIM, and the
 // per-shot clips as real links when they are what was delivered. Rebuilt from scratch on
 // every call so a stale note can never outlive the render that produced it.
+// cf#853: every per-stage degrade this payload REPORTS, in the declared stage order so the
+// disclosure reads the same way twice. Absent and clean stages are not here by construction
+// (stageFrom returns null for both), which is what keeps a healthy render silent.
+function stageDegradesOf(out) {
+  // cf#864: ONE enumeration, shared with the block builder and with render history, so the flag
+  // and the blocks can never disagree about which stages reported.
+  return window.stageDegradeView
+    ? window.stageDegradeView.reportedStages(out, window.finishDegrade)
+    : [];
+}
+
 function renderDegradeNote(degrade, deliv, out) {
   const host = $("#planner-render-degrade");
   if (!host) return;
   while (host.firstChild) host.removeChild(host.firstChild);
   const fd = window.finishDegrade;
   const clip = fd ? fd.clipFinishFrom(out) : null;
-  if (!degrade && !clip) {
+  const stages = stageDegradesOf(out);
+  if (!degrade && !clip && !stages.length) {
     host.hidden = true;
     return;
   }
@@ -968,6 +1080,15 @@ function renderDegradeNote(degrade, deliv, out) {
       host.appendChild(why);
     }
   }
+
+  // cf#864: one block per reported stage, built by the SHARED builder. cf#853 wrote this loop
+  // here and again in planner-history-row.js; two loops that must agree forever, with nothing
+  // asserting they do, is the copy-forks-at-copy-time shape. stage-degrade-view.js is now the one
+  // place a stage degrade becomes DOM, and it is unit-tested in both directions.
+  const stageEls = window.stageDegradeView
+    ? window.stageDegradeView.stageBlocksFor(document, out, fd, { className: "render-degrade-stage" })
+    : [];
+  for (let s = 0; s < stageEls.length; s++) host.appendChild(stageEls[s]);
 
   if (deliv.kind === "clips" && deliv.clips.length) {
     const h = document.createElement("h5");

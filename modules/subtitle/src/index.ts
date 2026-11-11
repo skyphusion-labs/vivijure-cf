@@ -18,7 +18,7 @@
 // Soft degrade (a polish step never fails the chain): no cues -> pass the film through unchanged
 // (noop:no-dialogue); disabled -> noop:disabled; a sidecar-only run with no sidecar URL ->
 // passthrough degraded; a container failure -> passthrough the original film tagged
-// "passthrough:container-failed", degraded. A film.finish module must never drop the film it was handed.
+// "passthrough:container-http-error" or "passthrough:container-refused", degraded (cf#909). A film.finish module must never drop the film it was handed.
 
 import {
   MODULE_API,
@@ -47,6 +47,8 @@ function vfCall(env: Env) {
     return fetch(vfBase(env) + path, init);
   };
 }
+import { FAILURE_BAD_RESPONSE, FAILURE_NOT_CONFIGURED, FAILURE_REFUSED, FAILURE_UNREACHABLE, failureFromStatus, withFailure } from "../../_shared/finish-failure";
+import { finishAffinity, withAffinity } from "../../_shared/finish-affinity";
 import {
   classifyVideoFinish404, nextNotFoundStreak,
 } from "../../_shared/video-finish-404";
@@ -61,7 +63,7 @@ const ROUTE = "subtitle";
 
 const MANIFEST: ModuleManifest = {
   name: "subtitle",
-  version: "0.2.1",
+  version: "0.2.2",
   api: MODULE_API,
   hooks: ["film.finish"],
   provides: [{ id: "subtitle", label: "Time-synced dialogue captions (burned-in + .srt)" }],
@@ -99,10 +101,10 @@ async function submitAsync(
   env: Env,
   spec: Record<string, unknown>,
   corr: VpcCorr = {},
-): Promise<string | null> {
+): Promise<string | "capacity" | null> {
   const timed = await timedVpcFetch(
     vfCall(env),
-    { method: "POST", headers: await mediaFinishHeaders(env.MEDIA_FINISH_TOKEN), body: JSON.stringify(spec) },
+    { method: "POST", headers: withAffinity(await mediaFinishHeaders(env.MEDIA_FINISH_TOKEN), finishAffinity(corr)), body: JSON.stringify(spec) },
     {
       module: MANIFEST.name,
       service: "video-finish",
@@ -115,6 +117,9 @@ async function submitAsync(
     },
   );
   if (timed.err || !timed.resp) return null;
+  // No slot: tell the core, so the film waits. The sync route is the same container and would only
+  // queue a second encode behind a refusal.
+  if (timed.resp.status === 429) return "capacity";
   if (timed.resp.status !== 202) return null;
   try {
     const body = (await timed.resp.json()) as { ok?: boolean; jobId?: string };
@@ -131,7 +136,7 @@ async function invokeSync(
 ): Promise<InvokeResponse<FilmFinishOutput>> {
   const timed = await timedVpcFetch(
     vfCall(env),
-    { method: "POST", headers: await mediaFinishHeaders(env.MEDIA_FINISH_TOKEN), body: JSON.stringify(spec) },
+    { method: "POST", headers: withAffinity(await mediaFinishHeaders(env.MEDIA_FINISH_TOKEN), finishAffinity(corr)), body: JSON.stringify(spec) },
     {
       module: MANIFEST.name,
       service: "video-finish",
@@ -143,16 +148,18 @@ async function invokeSync(
       contextJobId: corr.contextJobId,
     },
   );
-  if (timed.err || !timed.resp) return passthrough(input, "passthrough:container-unreachable", true);
+  if (timed.err || !timed.resp) return withFailure(passthrough(input, "passthrough:container-unreachable", true), FAILURE_UNREACHABLE);
   const resp = timed.resp;
-  if (!resp.ok) return passthrough(input, "passthrough:container-failed", true);
+  // cf#909: an HTTP refusal and a handler that answered ok:false are two failures with two tags. The
+  // first is the transport or the route; the second is the handler inside the container.
+  if (!resp.ok) return withFailure(passthrough(input, "passthrough:container-http-error", true), failureFromStatus(resp.status));
   let body: { ok?: boolean; key?: string; burned?: boolean; sidecar?: boolean; durationSeconds?: number };
   try {
     body = (await resp.json()) as typeof body;
   } catch {
-    return passthrough(input, "passthrough:container-bad-response", true);
+    return withFailure(passthrough(input, "passthrough:container-bad-response", true), FAILURE_BAD_RESPONSE);
   }
-  if (!body.ok) return passthrough(input, "passthrough:container-failed", true);
+  if (!body.ok) return withFailure(passthrough(input, "passthrough:container-refused", true), FAILURE_REFUSED);
   // Compose an honest `applied`: "subtitle" only when captions were actually burned (film_key then
   // points at the burned film); "subtitle:sidecar" when a .srt was written. A sidecar-only run burns
   // nothing, so film_key stays the original (no fake burn tag).
@@ -175,19 +182,19 @@ async function invokeSync(
 async function invoke(env: Env, req: InvokeRequest<FilmFinishInput>): Promise<InvokeResponse<FilmFinishOutput>> {
   const input = req.input;
   if (!input || !input.film_key || !input.video_url || !input.output_url || !input.output_key) {
-    return { ok: false, error: "film.finish: input needs film_key, video_url, output_url, output_key" };
+    return { ok: false, error: "film.finish: input needs film_key, video_url, output_url, output_key", reason: "bad-input" };
   }
 
   const cfg = coerceConfig(req.config);
   if (!cfg.enabled) return passthrough(input, "noop:disabled");
   if (!hasCaptions(input)) return passthrough(input, "noop:no-dialogue");
-  if (!vfBase(env)) return passthrough(input, "passthrough:no-video-finish-url", true);
+  if (!vfBase(env)) return withFailure(passthrough(input, "passthrough:no-video-finish-url", true), FAILURE_NOT_CONFIGURED);
 
   const wantSidecar = cfg.mode === "sidecar" || cfg.mode === "both";
   const haveSidecarUrl = wantSidecar && typeof input.sidecar_url === "string" && input.sidecar_url.length > 0;
   // Sidecar-only with no presigned sidecar URL: there is nothing this module can honestly do (it must
   // not burn in sidecar-only mode). Pass the film through and degrade -- never silently swallow it.
-  if (cfg.mode === "sidecar" && !haveSidecarUrl) return passthrough(input, "passthrough:sidecar-no-url", true);
+  if (cfg.mode === "sidecar" && !haveSidecarUrl) return withFailure(passthrough(input, "passthrough:sidecar-no-url", true), FAILURE_REFUSED);
 
   const srt = buildSrt(input.captions);
   const spec = buildContainerSpec(input, cfg, srt);
@@ -200,8 +207,9 @@ async function invoke(env: Env, req: InvokeRequest<FilmFinishInput>): Promise<In
   // Prefer async so a long burn survives across request budgets; fall back to sync for a pre-#602
   // container (back-compat). A sync fallback that itself fails soft-degrades (#190), never drops the film.
   const jobId = await submitAsync(env, spec, corr);
+  if (jobId === "capacity") return withFailure(passthrough(input, "passthrough:container-capacity", true), failureFromStatus(429));
   if (jobId) {
-    return { ok: true, pending: true, poll: encodePoll({ jobId, filmKey: input.film_key, outputKey: input.output_key, submittedAt: Date.now(), notFoundStreak: 0 }) };
+    return { ok: true, pending: true, poll: encodePoll({ jobId, affinity: finishAffinity(corr), filmKey: input.film_key, outputKey: input.output_key, submittedAt: Date.now(), notFoundStreak: 0 }) };
   }
   return invokeSync(env, input, spec, corr);
 }
@@ -215,7 +223,7 @@ async function poll(env: Env, body: PollRequest): Promise<PollResponse<FilmFinis
   // Intermediate pending polls stay silent; only terminal outcomes emit vpc.call with job wall-clock.
   const timed = await timedVpcFetch(
     vfCall(env),
-    { headers: await mediaFinishHeaders(env.MEDIA_FINISH_TOKEN) },
+    { headers: withAffinity(await mediaFinishHeaders(env.MEDIA_FINISH_TOKEN), st.affinity) },
     {
       module: MANIFEST.name,
       service: "video-finish",
@@ -329,10 +337,10 @@ export default {
       try {
         req = (await request.json()) as InvokeRequest<FilmFinishInput>;
       } catch {
-        return json({ ok: false, error: "invalid JSON body" } as InvokeResponse);
+        return json({ ok: false, error: "invalid JSON body", reason: "bad-input" } as InvokeResponse);
       }
       if (req.hook !== "film.finish") {
-        return json({ ok: false, error: "unsupported hook " + String(req.hook) } as InvokeResponse);
+        return json({ ok: false, error: "unsupported hook " + String(req.hook), reason: "unsupported" } as InvokeResponse);
       }
       return json(await invoke(env, req));
     }

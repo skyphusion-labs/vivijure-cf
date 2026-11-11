@@ -1,6 +1,6 @@
 // cast-image: a cast.image module worker (vivijure-module/2). Generates a character's LoRA TRAINING
 // reference set from a portrait + bible, via the studio's image models (FLUX 2 Klein / Nano Banana
-// Pro) with the safety-flag fallback. Lifts the proven browser-side generator (public/cast.js
+// Pro). Lifts the proven browser-side generator (public/cast.js
 // generateTrainingSet) server-side so it is swappable AND no longer blocks the cast page for minutes.
 //
 // ASYNC: a 10-image set can't render inside one Worker request, so:
@@ -10,9 +10,8 @@
 // PollResponse carries no token, so the run state lives in R2 and the poll token is a stable pointer.
 // Failures are DATA, never an exception across the wire.
 
+import { withRetryingR2 } from "../../_shared/r2-retry";
 import {
-  MODULE_API,
-  type ModuleManifest,
   type InvokeRequest,
   type InvokeResponse,
   type PollRequest,
@@ -21,9 +20,6 @@ import {
   type CastImageOutput,
 } from "./contract";
 import {
-  TRAINING_PROMPTS,
-  FLAG_FALLBACK_MODEL,
-  isFlaggedError,
   buildState,
   encodePoll,
   decodePoll,
@@ -33,6 +29,7 @@ import {
   type CastImageState,
 } from "./cast-image";
 import { generateImage, type AiRun, type ImagesBinding } from "./image-gen";
+import { MANIFEST, MODELS } from "./manifest";
 
 // Minimal binding shapes this module needs.
 interface R2Bucket {
@@ -41,30 +38,10 @@ interface R2Bucket {
 }
 interface Env {
   AI: AiRun;              // AI binding: FLUX 2 run direct (gateway-bypassed), proxied models via the gateway
-  GATEWAY_ID: SecretsStoreSecret;     // AI Gateway slug (secret); needed for the proxied / nano-banana fallback path
+  GATEWAY_ID: SecretsStoreSecret;     // AI Gateway slug (secret); needed for the proxied / nano-banana path
   R2_RENDERS: R2Bucket;   // the shared `vivijure` bucket: run state + generated refs land here
   IMAGES?: ImagesBinding; // Cloudflare Images: downscale refs to <=512px (FLUX-2's input cap; bounds nano-banana payloads)
 }
-
-const MODELS = [
-  "@cf/black-forest-labs/flux-2-klein-9b",
-  "google/nano-banana-pro",
-  "@cf/black-forest-labs/flux-2-klein-4b",
-  "@cf/black-forest-labs/flux-2-dev",
-];
-
-const MANIFEST: ModuleManifest = {
-  name: "cast-image",
-  version: "0.1.1",
-  api: MODULE_API,
-  hooks: ["cast.image"],
-  provides: [{ id: "cast-refs", label: "Training references (FLUX 2 / Nano Banana)" }],
-  config_schema: {
-    model: { type: "enum", values: MODELS, default: MODELS[0], label: "image model" },
-    num_images: { type: "int", default: 10, min: 4, max: TRAINING_PROMPTS.length, label: "training images" },
-  },
-  ui: { section: "cast", order: 10 },
-};
 
 // Images rendered per /poll cycle: keeps each poll inside the Worker time budget while finishing the
 // set in a handful of polls.
@@ -92,7 +69,7 @@ async function secretValue(s: SecretsStoreSecret | string | undefined): Promise<
 async function submit(env: Env, req: InvokeRequest<CastImageInput>): Promise<InvokeResponse<CastImageOutput>> {
   const input = req.input;
   if (!input || typeof input.cast_id !== "number" || !input.portrait_url) {
-    return { ok: false, error: "cast.image: input needs cast_id and portrait_url" };
+    return { ok: false, error: "cast.image: input needs cast_id and portrait_url", reason: "bad-input" };
   }
   const model = typeof req.config.model === "string" && MODELS.includes(req.config.model) ? req.config.model : MODELS[0];
   const num = typeof req.config.num_images === "number" ? req.config.num_images : 10;
@@ -124,17 +101,8 @@ async function poll(env: Env, body: PollRequest): Promise<PollResponse<CastImage
     try {
       img = await generateImage(env.AI, env.IMAGES, gatewayId, state.model, prompt, state.ref_urls);
     } catch (e) {
-      if (isFlaggedError((e as Error).message) && state.model !== FLAG_FALLBACK_MODEL) {
-        state.model = FLAG_FALLBACK_MODEL;
-        state.fallback_used = true;
-        try {
-          img = await generateImage(env.AI, env.IMAGES, gatewayId, state.model, prompt, state.ref_urls);
-        } catch (e2) {
-          return { ok: false, error: "cast.image: generation failed (post-fallback): " + (e2 as Error).message };
-        }
-      } else {
-        return { ok: false, error: "cast.image: generation failed: " + (e as Error).message };
-      }
+      // Any failure, a provider safety flag included, ends the run with the provider's reason.
+      return { ok: false, error: "cast.image: generation failed: " + (e as Error).message };
     }
     const ext = img.mime.includes("jpeg") ? "jpg" : img.mime.includes("webp") ? "webp" : "png";
     const key = refKey(state.cast_id, state.done.length + 1, ext);
@@ -166,12 +134,13 @@ async function poll(env: Env, body: PollRequest): Promise<PollResponse<CastImage
 
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
+    withRetryingR2(env);
     const url = new URL(request.url);
     if (request.method === "GET" && url.pathname === "/module.json") return json(MANIFEST);
 
     // GET /ready (cf#295): credential-visibility probe (docs/module-api.md "Credential readiness").
     // GATEWAY_ID is fully optional here: FLUX-2 (the primary path) runs the AI binding directly and is
-    // gateway-bypassed by design; the nano-banana fallback works with or without a gateway id (see
+    // gateway-bypassed by design; proxied models work with or without a gateway id (see
     // image-gen.ts: `gatewayId ? { gateway: { id: gatewayId } } : undefined`). So this module always
     // has a working generation path -- `ok` is not gated on it, the boolean is informational only, the
     // same discipline `telemetry.job_log` already uses elsewhere in this contract.
@@ -189,10 +158,10 @@ export default {
       try {
         req = (await request.json()) as InvokeRequest<CastImageInput>;
       } catch {
-        return json({ ok: false, error: "invalid JSON body" } as InvokeResponse);
+        return json({ ok: false, error: "invalid JSON body", reason: "bad-input" } as InvokeResponse);
       }
       if (req.hook !== "cast.image") {
-        return json({ ok: false, error: "unsupported hook " + String(req.hook) } as InvokeResponse);
+        return json({ ok: false, error: "unsupported hook " + String(req.hook), reason: "unsupported" } as InvokeResponse);
       }
       return json(await submit(env, req));
     }

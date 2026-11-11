@@ -153,6 +153,7 @@ export function passthroughOutput(input: FilmFinishInput, reason: string, opts: 
 
 export interface FinishPoll {
   jobId: string;       // the container's background job id
+  affinity?: string;   // the instance holding this job. Absent on a token from before per-film routing.
   filmKey: string;     // the input film key (the sidecar-only / passthrough result key)
   outputKey: string;   // the deterministic key the container writes the burned film to
   submittedAt: number | null; // epoch ms; 90-min 404 backstop + wall-clock. null = the token carried none.
@@ -170,6 +171,7 @@ export function decodePoll(token: string): FinishPoll | null {
       const notFoundStreak = parseNotFoundStreak(o.notFoundStreak);
       return {
         jobId: o.jobId,
+        ...(typeof o.affinity === "string" && o.affinity ? { affinity: o.affinity } : {}),
         filmKey: o.filmKey,
         outputKey: o.outputKey,
         submittedAt: typeof o.submittedAt === "number" && Number.isFinite(o.submittedAt) ? o.submittedAt : null,

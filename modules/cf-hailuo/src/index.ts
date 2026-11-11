@@ -12,6 +12,7 @@
 //
 // Failures are DATA (ok:false), never thrown across the wire.
 
+import { withRetryingR2 } from "../../_shared/r2-retry";
 import {
   MODULE_API,
   type ModuleManifest,
@@ -36,6 +37,7 @@ import {
   type RunState,
   type ModuleConfig,
 } from "./params";
+import { requireVideoUrl, runPaidGeneration } from "../../_shared/paid-generation";
 import { WorkflowEntrypoint, type WorkflowEvent, type WorkflowStep, type WorkflowStepConfig } from "cloudflare:workers";
 
 interface R2Bucket {
@@ -87,15 +89,24 @@ const MANIFEST: ModuleManifest = {
     section: "motion",
     order: 65,
     locality: "cloud",
-    cost: "Pay per render",
+    // cf#1246: provider cost, no markup. Source and date: docs/motion-door-prices.md.
+    cost: "$0.28 per 6 s and $0.56 per 10 s clip at 768P, $0.49 per 6 s clip at 1080P",
+    cost_as_of: "2026-11-05",
+    cost_usd_per_clip: [
+      { resolution: "768P", seconds: 6, usd: 0.28 },
+      { resolution: "768P", seconds: 10, usd: 0.56 },
+      { resolution: "1080P", seconds: 6, usd: 0.49 },
+    ],
     blurb: "Physical motion on Cloudflare. Silent. 6 or 10 seconds.",
     limits: [
       "6 or 10 second clips",
       "Silent motion",
-      "Speaking is the Cast voice, muxed; a synced mouth is the InfiniteTalk door",
+      "No spoken lines. A board with a line needs a talking door",
+      "The provider lists no price for 10 seconds at 1080P.",
     ],
   },
   usage: {
+    face_hold: "one",
     native_audio: false,
     voice: "cast_tts",
     scatter_native_audio: true,
@@ -136,14 +147,16 @@ async function readState(env: Env, jobId: string): Promise<RunState | null> {
   }
 }
 
-/** Blocking env.AI.run -> download video -> R2 clip + done state. Runs inside a Workflow step. */
-async function runGeneration(env: Env, params: WorkflowParams): Promise<void> {
+/** The provider call. Its own workflow step, so nothing after it can buy it again (cf#1105). */
+async function generateClip(env: Env, params: WorkflowParams): Promise<unknown> {
   const gatewayId = await secretValue(env.GATEWAY_ID);
   if (!gatewayId) throw new Error("GATEWAY_ID not configured");
   const modelParams = buildParams(params.input, params.config);
-  const result = await env.AI.run(MODEL, modelParams, { gateway: { id: gatewayId } });
-  const url = parseVideoUrl(result);
-  if (!url) throw new Error("model completed but returned no video URL");
+  return env.AI.run(MODEL, modelParams, { gateway: { id: gatewayId } });
+}
+
+/** Download and write. Retries on its own step, and never reaches the provider. */
+async function storeClip(env: Env, params: WorkflowParams, url: string): Promise<void> {
   const vresp = await fetch(url);
   if (!vresp.ok) throw new Error("video fetch " + vresp.status);
   const bytes = await vresp.arrayBuffer();
@@ -165,10 +178,13 @@ const GENERATE_STEP_CONFIG: WorkflowStepConfig = {
 
 export class CfHailuoWorkflow extends WorkflowEntrypoint<Env, WorkflowParams> {
   async run(event: WorkflowEvent<WorkflowParams>, step: WorkflowStep): Promise<void> {
+    withRetryingR2(this.env);
     const p = event.payload;
     try {
-      await step.do("generate", GENERATE_STEP_CONFIG, async () => {
-        await runGeneration(this.env, p);
+      await runPaidGeneration(step, GENERATE_STEP_CONFIG, {
+        generate: () => generateClip(this.env, p),
+        parse: (raw) => requireVideoUrl(parseVideoUrl(raw)),
+        store: (url) => storeClip(this.env, p, url),
       });
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
@@ -186,10 +202,10 @@ async function submit(
 ): Promise<InvokeResponse<MotionBackendOutput>> {
   const input = req.input;
   if (!input || !input.keyframe_url || !input.prompt || !input.shot_id) {
-    return { ok: false, error: "motion.backend: input needs shot_id, keyframe_url, and prompt" };
+    return { ok: false, error: "motion.backend: input needs shot_id, keyframe_url, and prompt", reason: "bad-input" };
   }
   const gatewayId = await secretValue(env.GATEWAY_ID);
-  if (!gatewayId) return { ok: false, error: "cf-hailuo: GATEWAY_ID not configured" };
+  if (!gatewayId) return { ok: false, error: "cf-hailuo: GATEWAY_ID not configured", reason: "not-configured" };
 
   const config = normalizeConfig(req.config ?? {});
   const seconds = clampDuration(input.seconds);
@@ -266,6 +282,7 @@ async function poll(env: Env, body: PollRequest): Promise<PollResponse<MotionBac
 
 export default {
   async fetch(request: Request, env: Env, _ctx: ExecutionContext): Promise<Response> {
+    withRetryingR2(env);
     const url = new URL(request.url);
     if (request.method === "GET" && url.pathname === "/module.json") return json(MANIFEST);
 
@@ -283,10 +300,10 @@ export default {
       try {
         req = (await request.json()) as InvokeRequest<MotionBackendInput>;
       } catch {
-        return json({ ok: false, error: "invalid JSON body" } as InvokeResponse);
+        return json({ ok: false, error: "invalid JSON body", reason: "bad-input" } as InvokeResponse);
       }
       if (req.hook !== "motion.backend") {
-        return json({ ok: false, error: "unsupported hook " + String(req.hook) } as InvokeResponse);
+        return json({ ok: false, error: "unsupported hook " + String(req.hook), reason: "unsupported" } as InvokeResponse);
       }
       return json(await submit(env, req));
     }

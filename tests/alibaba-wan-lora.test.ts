@@ -13,7 +13,7 @@ import {
   RUNPOD_NOTFOUND_GRACE_MS,
   ALLOWED_DURATIONS,
 } from "../modules/alibaba-wan-lora/src/wan-lora";
-import { MANIFEST } from "../modules/alibaba-wan-lora/src/index";
+import { MANIFEST } from "../modules/alibaba-wan-lora/src/manifest";
 import { checkManifest, checkHookOutput, allPass, failures } from "@skyphusion-labs/vivijure-core/modules/conformance";
 
 describe("alibaba-wan-lora pure logic", () => {
@@ -59,21 +59,20 @@ describe("alibaba-wan-lora pure logic", () => {
       image: "https://r2/x.png", // the keyframe passed straight through as the start image
       duration: 5,
       seed: -1,
-      enable_safety_checker: false,
+      enable_safety_checker: true,
     });
     // no LoRA keys when the lists are empty
     expect("high_noise_loras" in body.input).toBe(false);
     expect("low_noise_loras" in body.input).toBe(false);
   });
 
-  it("buildWanLoraBody passes custom LoRAs through both passes plus seed + safety overrides", () => {
+  it("buildWanLoraBody passes custom LoRAs through both passes plus seed", () => {
     const body = buildWanLoraBody(
       { shot_id: "s", keyframe_url: "u", prompt: "p", seconds: 8 },
       {
         high_noise_loras: '[{"path":"https://hf.co/hi.safetensors","scale":1.1}]',
         low_noise_loras: '[{"path":"https://hf.co/lo.safetensors","scale":0.6}]',
         seed: 42,
-        enable_safety_checker: false,
       },
     );
     expect(body.input).toMatchObject({
@@ -81,7 +80,7 @@ describe("alibaba-wan-lora pure logic", () => {
       image: "u",
       duration: 8,
       seed: 42,
-      enable_safety_checker: false,
+      enable_safety_checker: true,
       high_noise_loras: [{ path: "https://hf.co/hi.safetensors", scale: 1.1 }],
       low_noise_loras: [{ path: "https://hf.co/lo.safetensors", scale: 0.6 }],
     });

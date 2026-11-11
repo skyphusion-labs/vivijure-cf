@@ -2,6 +2,13 @@
 //
 // Two providers, in preference order:
 //   1. Opus via Cloudflare AI Gateway (Unified Billing, keyless) -- the cinematic-director pass.
+//      Two transports reach it (opusTransport):
+//        - "token": a fetch to the gateway's Anthropic endpoint with cf-aig-authorization. Used
+//          whenever CF_AIG_TOKEN is set, exactly as before.
+//        - "binding": env.AI.run(<catalog id>, <Anthropic Messages body>, { gateway }). The AI binding
+//          is pre-authenticated, so no token is needed. OPT-IN with ENHANCE_OPUS_BINDING=1, so a
+//          deployment that has GATEWAY_ID and no token keeps the free local model it has today
+//          instead of starting to spend.
 //   2. Workers AI local open-weight model -- the free fallback when no Opus token is configured, or
 //      when the Opus call fails. This is the Vivijure modularity thesis in one module: swap an
 //      expensive cloud model for a free/local one without changing the hook contract.
@@ -18,9 +25,16 @@ export const DEFAULT_OPUS_MODEL = "claude-opus-4-8";
 
 // Structural binding: the Workers AI runner plus the AI Gateway accessor. Kept minimal so the module
 // stays free of the full Ai overload surface and any @cloudflare/workers-types version pin.
+/** The gateway options this module passes on env.AI.run (AI Gateway binding reference). */
+export interface BindingGatewayOptions {
+  id: string;
+  skipCache?: boolean;
+  metadata?: Record<string, string>;
+}
+
 export interface ProviderEnv {
   AI: {
-    run(model: string, input: { messages: ChatMessage[] }): Promise<{ response?: string | string[] }>;
+    run(model: string, input: unknown, opts?: { gateway?: BindingGatewayOptions }): Promise<unknown>;
     gateway(id: string): { getUrl(provider: string): Promise<string> };
   };
   GATEWAY_ID?: string;
@@ -34,6 +48,8 @@ export interface ProviderEnv {
   TENANT_ID?: string;
   TENANT_SLUG?: string;
   ENHANCE_MODEL?: string;
+  /** "1" opts in to the token-free binding transport for Opus. Plain text, not a secret. */
+  ENHANCE_OPUS_BINDING?: string;
   // Dev-only mock gate (#411). Unset in prod. See mock.ts.
   PLANNER_AI_MOCK?: string;
 }
@@ -47,12 +63,37 @@ function isAnthropicModelId(id: string): boolean {
   return s.startsWith("anthropic/") || s.startsWith("claude-");
 }
 
+export type OpusTransport = "token" | "binding";
+
+/** How Opus is reached on this deployment, or null when it is not. The token wins when both are
+ *  configured, so a deployment that has a token behaves exactly as before. Pure. */
+export function opusTransport(env: ProviderEnv): OpusTransport | null {
+  if (!env.GATEWAY_ID) return null;
+  if (env.CF_AIG_TOKEN) return "token";
+  if (env.ENHANCE_OPUS_BINDING?.trim() === "1") return "binding";
+  return null;
+}
+
 /** Pick the provider for a call. A Workers AI id ("@cf/...") always routes local regardless of
- *  gateway config; otherwise Opus only when BOTH the gateway id and the Unified-Billing token are
- *  configured. Pure, so the selection is unit-tested. */
+ *  gateway config; otherwise Opus when a transport is configured (opusTransport). Pure, so the
+ *  selection is unit-tested. */
 export function pickProvider(env: ProviderEnv, modelId?: string): Provider {
   if (modelId?.trim().startsWith("@cf/")) return "local";
-  return env.GATEWAY_ID && env.CF_AIG_TOKEN ? "opus" : "local";
+  return opusTransport(env) ? "opus" : "local";
+}
+
+/** The AI Gateway CATALOG id for an Anthropic slug, or null when the slug has no known catalog form.
+ *
+ * The binding looks a model up by its exact catalog name, and the catalog spells Claude versions
+ * with a dot where Anthropic uses a dash: "claude-opus-4-8" is "anthropic/claude-opus-4.8", and
+ * "anthropic/claude-opus-4-8" does not resolve (Cloudflare model catalog and AI SDK docs). A
+ * version with no minor ("claude-fable-5") is the same in both. Anything else returns null rather
+ * than a guess, so the caller fails over to the local model instead of sending a name the gateway
+ * will not find. Pure. */
+export function anthropicCatalogId(slug: string): string | null {
+  const m = /^claude-([a-z]+)-(\d+)(?:-(\d+))?$/.exec(slug.trim().replace(/^anthropic\//, ""));
+  if (!m) return null;
+  return `anthropic/claude-${m[1]}-${m[2]}${m[3] !== undefined ? "." + m[3] : ""}`;
 }
 
 /** The Anthropic model slug for a call, in precedence order: an explicit per-call override from the
@@ -130,30 +171,77 @@ function safeAttribution(v: string | undefined): string | undefined {
  * self-hosted install, so no header is sent and parity holds -- a self-hoster billing their own
  * account has nothing to attribute. Pure, so the shape is unit-tested without the runtime. */
 export function aigMetadata(env: ProviderEnv): string | null {
+  const meta = aigMetadataObject(env);
+  return meta ? JSON.stringify(meta) : null;
+}
+
+/** The same attribution as an object, for the binding's `gateway.metadata` option. Pure. */
+export function aigMetadataObject(env: ProviderEnv): Record<string, string> | null {
   const tenantId = safeAttribution(env.TENANT_ID);
   if (!tenantId) return null;
   const meta: Record<string, string> = { tenant_id: tenantId };
   const slug = safeAttribution(env.TENANT_SLUG);
   if (slug) meta.slug = slug;
-  return JSON.stringify(meta);
+  return meta;
 }
 
-/** Call Opus through the AI Gateway (Unified Billing: cf-aig-authorization only, never x-api-key).
- *  Throws on a missing token, a non-2xx, or an empty reply, so the caller can fall back. */
+/** Output budget for plan, refine and the director pass, which all scale with the shot count.
+ *  Thinking tokens count against it. Every model in the catalog allows 128K synchronously, but this
+ *  call does not stream: Anthropic advises against a large max_tokens without streaming, and the
+ *  official SDK refuses a non-streaming request above 3600 s * max_tokens / 128000 = 600 s, which
+ *  is 21333 tokens. This is the largest round value under that line. */
+export const LONG_OUTPUT_MAX_TOKENS = 21000;
+/** Output budget for the one-line chat helpers. */
+export const CHAT_MAX_TOKENS = 4096;
+
+/** The model stopped and running the same request on another provider would be wrong: the reply was
+ *  cut off, or the model refused. direct() does not fall back on this, because a weaker model must
+ *  not answer what a refusal declined, and a fallback would bury the true reason. */
+export class ModelStoppedError extends Error {}
+
+/** Why a 200 reply is not usable, from its stop_reason, or null when it is. Only enumerated values
+ *  and numbers reach the message, never reply text (cf#223). Pure. */
+export function stopFailure(raw: unknown, maxTokens: number): string | null {
+  const r = raw as {
+    stop_reason?: unknown;
+    usage?: { output_tokens_details?: { thinking_tokens?: unknown } };
+  } | null;
+  if (r?.stop_reason === "refusal") return "anthropic refused the request (stop_reason refusal)";
+  if (r?.stop_reason !== "max_tokens") return null;
+  const thinking = r.usage?.output_tokens_details?.thinking_tokens;
+  const spent = typeof thinking === "number" ? `, ${thinking} thinking tokens` : "";
+  return `anthropic reply was cut off (stop_reason max_tokens, limit ${maxTokens} output tokens${spent}); ask for fewer shots`;
+}
+
+export interface OpusCallOptions {
+  /** Defaults to CHAT_MAX_TOKENS. */
+  maxTokens?: number;
+  /** Do not answer from the AI Gateway cache. */
+  skipCache?: boolean;
+}
+
+/** Call Opus through the AI Gateway, by whichever transport this deployment has (opusTransport).
+ *  Throws on no transport, a failed call, or an empty reply, so the caller can fall back, and throws
+ *  ModelStoppedError on a truncated or refused reply, which the caller must not fall back on. */
 export async function callOpus(
   env: ProviderEnv,
   messages: ChatMessage[],
   modelOverride?: string,
+  opts: OpusCallOptions = {},
 ): Promise<string> {
-  if (!env.GATEWAY_ID || !env.CF_AIG_TOKEN) {
-    throw new Error("opus requires GATEWAY_ID and CF_AIG_TOKEN");
+  const transport = opusTransport(env);
+  const gatewayId = env.GATEWAY_ID;
+  if (!transport || !gatewayId) {
+    throw new Error("opus requires GATEWAY_ID and CF_AIG_TOKEN, or GATEWAY_ID and ENHANCE_OPUS_BINDING=1");
   }
-  const baseUrl = await env.AI.gateway(env.GATEWAY_ID).getUrl("anthropic");
+  if (transport === "binding") return await callOpusBinding(env, messages, modelOverride, opts);
+  const baseUrl = await env.AI.gateway(gatewayId).getUrl("anthropic");
   const { system, messages: aMessages } = toAnthropic(messages);
+  const maxTokens = opts.maxTokens ?? CHAT_MAX_TOKENS;
 
   const body: Record<string, unknown> = {
     model: opusModel(env, modelOverride),
-    max_tokens: 4096,
+    max_tokens: maxTokens,
     messages: aMessages,
   };
   if (system) body.system = system;
@@ -168,6 +256,7 @@ export async function callOpus(
   // sent empty, so a self-hoster emits exactly the request they emitted before this existed.
   const metadata = aigMetadata(env);
   if (metadata) headers["cf-aig-metadata"] = metadata;
+  if (opts.skipCache) headers["cf-aig-skip-cache"] = "true";
 
   const resp = await fetch(`${baseUrl}/v1/messages`, {
     method: "POST",
@@ -176,10 +265,60 @@ export async function callOpus(
   });
 
   if (!resp.ok) {
-    const errText = await resp.text();
-    throw new Error(`anthropic ${resp.status}: ${errText.slice(0, 300)}`);
+    // cf#223: this body is NOT ours. An Anthropic 4xx echoes the offending request content, and
+    // this module's input is the user's STORYBOARD -- so 300 raw characters of it were reaching a
+    // thrown message, and from there both the `error` string this module returns AND
+    // `output.notes`, which is persisted and rendered in the planner. Anthropic's own error `type`
+    // is drawn from an enumerated set and is safe; the prose is dropped.
+    let detail = "";
+    try {
+      const e = (await resp.json()) as { error?: { type?: string } };
+      if (e?.error?.type) detail = ` (${e.error.type})`;
+    } catch { /* non-JSON error body; status alone is enough */ }
+    throw new Error(`anthropic ${resp.status}${detail}`);
   }
-  const text = extractAnthropicText(await resp.json());
+  const raw: unknown = await resp.json();
+  const stopped = stopFailure(raw, maxTokens);
+  if (stopped) throw new ModelStoppedError(stopped);
+  const text = extractAnthropicText(raw);
+  if (!text) throw new Error("anthropic returned no text content");
+  return text;
+}
+
+/** The binding transport: env.AI.run with the catalog id and an Anthropic Messages body. The binding
+ *  returns the native Anthropic message JSON (the same shape the token path reads), so stopFailure
+ *  and extractAnthropicText apply unchanged. */
+async function callOpusBinding(
+  env: ProviderEnv,
+  messages: ChatMessage[],
+  modelOverride: string | undefined,
+  opts: OpusCallOptions,
+): Promise<string> {
+  const slug = opusModel(env, modelOverride);
+  const model = anthropicCatalogId(slug);
+  if (!model) throw new Error(`opus binding: no catalog id for model ${slug}`);
+  const { system, messages: aMessages } = toAnthropic(messages);
+  const maxTokens = opts.maxTokens ?? CHAT_MAX_TOKENS;
+  const body: Record<string, unknown> = { max_tokens: maxTokens, messages: aMessages };
+  if (system) body.system = system;
+
+  const gateway: BindingGatewayOptions = { id: env.GATEWAY_ID as string };
+  // Same attribution as the token path's cf-aig-metadata header, omitted on a self-hosted install.
+  const metadata = aigMetadataObject(env);
+  if (metadata) gateway.metadata = metadata;
+  if (opts.skipCache) gateway.skipCache = true;
+
+  let raw: unknown;
+  try {
+    raw = await env.AI.run(model, body, { gateway });
+  } catch (e) {
+    // cf#223: a provider error can echo the request, which is the user's storyboard. Only the error
+    // class name reaches the message, never its text.
+    throw new Error(`anthropic binding call failed (${(e as Error)?.name || "Error"})`);
+  }
+  const stopped = stopFailure(raw, maxTokens);
+  if (stopped) throw new ModelStoppedError(stopped);
+  const text = extractAnthropicText(raw);
   if (!text) throw new Error("anthropic returned no text content");
   return text;
 }
@@ -192,6 +331,6 @@ export async function callLocal(
   modelId?: string,
 ): Promise<string | string[] | undefined> {
   const model = modelId?.trim() || LOCAL_MODEL;
-  const res = await env.AI.run(model, { messages });
+  const res = (await env.AI.run(model, { messages })) as { response?: string | string[] } | null | undefined;
   return res?.response;
 }

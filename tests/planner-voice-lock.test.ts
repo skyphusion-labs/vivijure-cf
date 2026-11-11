@@ -109,7 +109,7 @@ describe("planner voice lock wiring", () => {
     expect(taIdx).toBeGreaterThan(0);
     expect(noteIdx).toBeGreaterThan(taIdx);
     expect(html).toMatch(/Voice is chosen once on Cast/);
-    expect(html).toMatch(/same speaker/);
+    expect(html).toMatch(/speaker can vary/);
     expect(html).not.toMatch(/[\u2013\u2014]/);
   });
 

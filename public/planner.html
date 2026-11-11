@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
-  <title>Storyboard Planner -- Vivijure Studio</title>
+  <title>Make a video (advanced) -- Vivijure Studio</title>
   <link rel="icon" href="favicon.svg" type="image/svg+xml">
   <link rel="icon" href="favicon-32.png" type="image/png" sizes="32x32">
   <link rel="icon" href="favicon-16.png" type="image/png" sizes="16x16">
@@ -33,13 +33,6 @@
         <div class="account-prefs" role="group" aria-label="Preferences">
           <div class="account-prefs-head">Preferences</div>
           <label class="account-pref">
-            <input type="checkbox" id="pref-email-notifications" />
-            <span class="account-pref-text">
-              <span class="account-name">Email me when a render finishes</span>
-              <span class="account-sub" id="pref-email-status">No emails when renders finish</span>
-            </span>
-          </label>
-          <label class="account-pref">
             <input type="checkbox" id="pref-operator-tools" />
             <span class="account-pref-text">
               <span class="account-name">Operator tools</span>
@@ -61,10 +54,10 @@
     <header class="planner-header">
       <div class="planner-header-row">
         <div>
-          <h1>Storyboard planner</h1>
-          <p class="lede">Write a brief, get a storyboard, and watch the film. One shot at a time.</p>
+          <h1>Make a video (advanced)</h1>
+          <p class="lede">Write your idea, get a plan of scenes, and watch your video. One scene at a time.</p>
         </div>
-        <button id="planner-new-session" type="button" class="planner-secondary planner-new-session" title="Clear this page and discard the saved browser session">New session</button>
+        <button id="planner-new-session" type="button" class="planner-secondary planner-new-session" title="Clear this page and discard the saved browser session">Start over</button>
       </div>
     </header>
 
@@ -79,13 +72,13 @@
       <h2 class="planner-stage-title">write</h2>
 
       <label class="planner-field">
-        <span>brief</span>
+        <span>Your idea</span>
         <textarea id="planner-brief" rows="6" placeholder="What happens in this film? Who is in it, where, and how should it feel?"></textarea>
       </label>
 
       <div class="planner-actions">
         <span id="planner-status" class="planner-status"></span>
-        <button id="planner-plan" type="button" class="planner-primary" data-hook="plan.enhance">Write the storyboard</button>
+        <button id="planner-plan" type="button" class="planner-primary" data-hook="plan.enhance">Plan my scenes</button>
       </div>
 
       <details class="planner-advanced">
@@ -116,7 +109,7 @@
         <div class="planner-field">
           <div class="planner-cast-header">
             <span class="planner-field-label">cast (slot A through D, optional, check to include)</span>
-            <button id="planner-brief-clear" type="button" class="planner-clear-brief" title="clear brief, storyboard, audio, and all stage state -- start a new session">new / reset</button>
+            <button id="planner-brief-clear" type="button" class="planner-clear-brief" title="clear your idea, scenes, audio, and all stage state -- start over">start over</button>
           </div>
           <div id="planner-cast" class="planner-cast"></div>
         </div>
@@ -128,10 +121,10 @@
          successful plan resolves. -->
     <section id="planner-scenes" class="planner-stage" data-step="plan" hidden>
       <header class="planner-stage-header">
-        <h2 class="planner-stage-title">shots</h2>
+        <h2 class="planner-stage-title">Scenes</h2>
         <span id="planner-scenes-status" class="planner-status"></span>
       </header>
-      <p class="planner-stage-hint">Read and edit each shot. Changes go into the film automatically.</p>
+      <p class="planner-stage-hint">Read and edit each scene. Changes go into the film automatically.</p>
       <div class="planner-scenes-toolbar">
         <button id="planner-scenes-discard" type="button" class="planner-danger" disabled>discard all edits</button>
         <span id="planner-scenes-dirty-badge" class="planner-scenes-dirty" hidden>edited</span>
@@ -148,7 +141,9 @@
         </select>
         <button id="planner-markers-export" type="button" class="planner-accent-btn" title="download NLE marker file with one marker per scene">export markers</button>
       </div>
+      <nav id="planner-scenes-pager" class="planner-scenes-pager" aria-label="scene pages" hidden></nav>
       <ol id="planner-scenes-list" class="planner-scenes-list"></ol>
+      <nav id="planner-scenes-pager-bottom" class="planner-scenes-pager" aria-label="scene pages, bottom" hidden></nav>
     </section>
 
     <section id="planner-output" class="planner-output" data-step="plan" hidden>
@@ -230,6 +225,8 @@
         <span id="planner-audio-meta" class="planner-audio-meta"></span>
         <audio id="planner-audio-player" controls preload="metadata"></audio>
         <button id="planner-audio-clear" type="button" class="planner-secondary">clear</button>
+        <button id="planner-audio-delete" type="button" class="planner-secondary" hidden
+          title="delete this uploaded audio file from the studio">delete file</button>
       </div>
 
       <!-- cf#229: ADVISORY, not required. A music bed generates fine with no video-finish door
@@ -270,7 +267,7 @@
 
       <details class="planner-audio-block">
         <summary>upload your own track</summary>
-        <p class="planner-stage-hint">mp3, wav, aac, m4a, ogg up to 32 MB.</p>
+        <p class="planner-stage-hint">A full song is mp3 or m4a. The cap is 32 MB. A stereo 44.1 kHz WAV of about three minutes fills that cap.</p>
         <label class="cast-upload-btn">
           choose file
           <input id="planner-audio-file" type="file" accept="audio/mpeg,audio/mp3,audio/wav,audio/aac,audio/mp4,audio/ogg" hidden />
@@ -365,22 +362,22 @@
     <!-- v0.33.0: render stage. Revealed after a successful bundle. -->
     <section id="planner-render" class="planner-stage" data-step="render" hidden>
       <header class="planner-stage-header">
-        <h2 class="planner-stage-title">Render this film</h2>
+        <h2 class="planner-stage-title">Make the video</h2>
         <button id="planner-notify-toggle" type="button" class="planner-notify-toggle" hidden title="get a browser notification when this render finishes">enable notifications</button>
         <span id="planner-render-status" class="planner-status"></span>
       </header>
       <p class="planner-stage-hint">
-        Stills or motion, which look (the backend), how good, then Render this film.
+        Pictures or video, which look (the video style), how good, then Make the video.
       </p>
       <fieldset class="planner-render-mode">
         <legend>What to make</legend>
         <label class="planner-render-mode-choice">
           <input type="radio" name="planner-render-mode" id="planner-mode-stills" value="stills" />
-          <span>Stills</span>
+          <span>Pictures</span>
         </label>
         <label class="planner-render-mode-choice">
           <input type="radio" name="planner-render-mode" id="planner-mode-motion" value="motion" checked />
-          <span>Motion</span>
+          <span>Video</span>
         </label>
       </fieldset>
       <!-- v0.40.0: keyframes-only preview pass. Hidden; the stills/motion radios own it.
@@ -394,6 +391,10 @@
              Wire values stay draft/standard/final; labels are Preview / Share / Best (cf#646). -->
         <select id="planner-quality-tier"></select>
       </label>
+      <label class="planner-field" id="planner-look-wrap" hidden>
+        <span>look</span>
+        <select id="planner-look"></select>
+      </label>
       </div>
       <!-- Module render config: projected from GET /api/modules. The hook set comes from the live
            `catalog` (keyframe, motion.backend, speech, finish, master, film.finish render here;
@@ -402,7 +403,7 @@
       <div id="planner-motion-backend-wrap" class="planner-overrides-common"></div>
       <div id="planner-finish-picks" class="planner-finish-picks" hidden>
         <p class="planner-finish-picks-lede">Finish this film</p>
-        <p class="planner-finish-picks-note">Motion already talks when the model can. Each shot animates toward the next still.</p>
+        <p class="planner-finish-picks-note">Motion already talks when the model can. Some doors animate toward the next still; each door card says if it does.</p>
         <!-- cf#780: one checkbox per INSTALLED finish module that declares
              participation: "opt_in", projected from GET /api/modules by
              planner-render-config.js renderFinishPicks(). Each control's label is the
@@ -418,10 +419,22 @@
         <span>Lock the speaking voice</span>
         <textarea id="planner-voice-lock" rows="2" placeholder="Same speaker every shot: low alto, calm, slight Texas accent. Never a new voice."></textarea>
       </label>
-      <p class="planner-overrides-hint" id="planner-voice-lock-note">Voice is chosen once on Cast for each person. We fill this lock from that so every shot is the same speaker. Edit only if you need a tighter description.</p>
+      <p class="planner-overrides-hint" id="planner-voice-lock-note">Voice is chosen once on Cast for each person. Doors that cannot use Cast audio get this description instead, so the speaker can vary. Edit only if you need a tighter description.</p>
       <p id="planner-render-spend" class="planner-render-spend" role="status"></p>
+      <dialog id="planner-spend-confirm" class="planner-spend-confirm">
+        <form method="dialog">
+          <h3>Start this film?</h3>
+          <p id="planner-spend-what"></p>
+          <p id="planner-spend-total"></p>
+          <p class="planner-overrides-hint">Stills, voices, music and finish steps cost extra and are not in this total.</p>
+          <div class="planner-actions">
+            <button type="submit" value="cancel" class="planner-secondary">Go back</button>
+            <button type="submit" value="start" class="planner-primary">Start the film</button>
+          </div>
+        </form>
+      </dialog>
       <div class="planner-actions">
-        <button id="planner-render-btn" type="button" class="planner-primary">Render this film</button>
+        <button id="planner-render-btn" type="button" class="planner-primary">Make the video</button>
         <span id="planner-render-reason" class="planner-status planner-render-reason" hidden></span>
         <span id="planner-render-meta" class="planner-status"></span>
       </div>
@@ -474,10 +487,10 @@
           <summary class="planner-overrides-summary">expert: raw JSON</summary>
           <div class="planner-overrides-expert-block">
             <span class="planner-overrides-expert-label">raw render_overrides JSON (wins on conflict)</span>
-            <textarea id="planner-render-overrides" rows="4" placeholder='{"motion_backend":"seedance","config":{"cloud-keyframe":{"width":1344},"seedance":{"resolution":"720p"}}}' spellcheck="false"></textarea>
+            <textarea id="planner-render-overrides" rows="4" placeholder='{"motion_backend":"cf-seedance","config":{"cloud-keyframe":{"width":1344},"cf-seedance":{"resolution":"720p"}}}' spellcheck="false"></textarea>
             <p class="planner-overrides-hint">
               optional JSON in the module wire shape:
-              <code>{ "motion_backend": "seedance", "config": { "cloud-keyframe": {…}, "seedance": {…} } }</code>.
+              <code>{ "motion_backend": "cf-seedance", "config": { "cloud-keyframe": {…}, "cf-seedance": {…} } }</code>.
               wins over the structured fields above on conflict.
             </p>
           </div>
@@ -603,21 +616,21 @@
        never reflow or grow the page. body.sw-open reserves its column; the
        #planner-refine section keeps its IDs + data-step, so planner.js drives
        it unchanged (showRefineSection reveals it once a storyboard exists). -->
-  <button id="sw-tab" class="sw-tab" type="button" aria-controls="sw-dock" aria-expanded="false" title="Open the Screenwriter's Assistant">
+  <button id="sw-tab" class="sw-tab" type="button" aria-controls="sw-dock" aria-expanded="false" title="Open Ask for changes">
     <span class="sw-tab-icon" aria-hidden="true">&#9998;</span>
-    <span class="sw-tab-label">Screenwriter</span>
+    <span class="sw-tab-label">Ask for changes</span>
   </button>
-  <aside id="sw-dock" class="sw-dock" aria-label="Screenwriter's Assistant">
+  <aside id="sw-dock" class="sw-dock" aria-label="Ask for changes">
     <header class="sw-dock-head">
       <div class="sw-dock-titles">
-        <h2 class="sw-dock-title">Screenwriter's Assistant</h2>
+        <h2 class="sw-dock-title">Ask for changes</h2>
         <span id="planner-refine-status" class="planner-status"></span>
       </div>
       <button id="sw-dock-close" class="sw-dock-close" type="button" aria-label="Close assistant">&times;</button>
     </header>
     <div class="sw-dock-body">
       <section id="planner-refine" class="planner-stage sw-refine" data-step="plan" hidden>
-        <p class="planner-stage-hint">Tell me how to revise the storyboard. Try "make scene 2 darker", "add a beat before the ending", or "shorten the opening". Each change rewrites the storyboard and refreshes the editor + YAML.</p>
+        <p class="planner-stage-hint">Tell me how to revise the storyboard. Try "make scene 2 darker", "add a beat before the ending", or "shorten the opening". Each change rewrites your plan and refreshes the scenes.</p>
         <ul id="planner-refine-turns" class="planner-refine-turns"></ul>
         <div class="planner-refine-input-row">
           <textarea id="planner-refine-input" class="planner-refine-input" rows="2" placeholder="describe the change..."></textarea>
@@ -631,10 +644,8 @@
 
   <script src="auth-token.js"></script>
   <script src="module-registry.js"></script>
-  <script src="readonly-gate.js"></script>
   <script src="abuse-link-checks.js"></script>
   <script src="abuse-link.js"></script>
-  <script src="demo-steer.js"></script>
   <script src="studio-chrome.js"></script>
   <script src="topbar.js"></script>
   <script src="hook-availability-checks.js"></script>
@@ -642,11 +653,13 @@
   <script src="hook-availability.js"></script>
   <script src="model-catalog.js"></script>
   <script src="planner-registry.js"></script>
+  <script src="make-style.js"></script>
   <script src="planner-render-config.js"></script>
   <script src="lora-preflight.js"></script>
   <script src="render-eta.js"></script>
   <script src="poll-schedule.js"></script>
   <script src="finish-degrade.js"></script>
+  <script src="stage-degrade-view.js"></script>
   <script src="planner-error-recipe.js"></script>
   <!-- Planner UI, split out of the former monolithic planner.js. Plain classic
        scripts sharing one global scope; load order is significant -- top-level
@@ -659,6 +672,7 @@
   <script src="planner-preflight.js"></script>
   <script src="planner-projects.js"></script>
   <script src="planner-refine.js"></script>
+  <script src="audio-bed.js"></script>
   <script src="planner-audio.js"></script>
   <script src="planner-scenes.js"></script>
   <script src="planner-plan.js"></script>

@@ -12,6 +12,7 @@
 //
 // Failures are DATA (ok:false), never thrown across the wire.
 
+import { withRetryingR2 } from "../../_shared/r2-retry";
 import {
   MODULE_API,
   type ModuleManifest,
@@ -36,6 +37,7 @@ import {
   type RunState,
   type ModuleConfig,
 } from "./params";
+import { runPaidGeneration } from "../../_shared/paid-generation";
 import { WorkflowEntrypoint, type WorkflowEvent, type WorkflowStep, type WorkflowStepConfig } from "cloudflare:workers";
 import { presignR2Put } from "./r2-put";
 
@@ -64,6 +66,8 @@ interface Env {
   I2V_WORKFLOW: WorkflowBinding;
   R2_S3_ACCESS_KEY_ID?: SecretsStoreSecret | string;
   R2_S3_SECRET_ACCESS_KEY?: SecretsStoreSecret | string;
+  /** Optional: set only when the pair above is an R2 temporary credential. */
+  R2_S3_SESSION_TOKEN?: SecretsStoreSecret | string;
   R2_S3_ENDPOINT?: string;
   R2_S3_BUCKET?: string;
 }
@@ -97,16 +101,19 @@ const MANIFEST: ModuleManifest = {
     section: "motion",
     order: 80,
     locality: "cloud",
-    cost: "Pay per render",
+    // cf#1246: provider cost, no markup. Source and date: docs/motion-door-prices.md.
+    cost: "$0.08/s at 480p, $0.14/s at 720p (grok-imagine-video-1.5-preview; grok-imagine-video is $0.05/s and $0.07/s)",
+    cost_as_of: "2026-11-05",
+    cost_usd_per_second: [0.08, 0.14],
     blurb: "Quick talking drafts from a still. 1-15 seconds.",
     limits: [
       "1-15 second clips",
       "Same voice lock on every shot",
-      "One film, no scatter",
       "Cannot lock the Cast voice sample. Same description, not the same take.",
     ],
   },
   usage: {
+    face_hold: "one",
     native_audio: true,
     voice: "prompt_lock",
     scatter_native_audio: false,
@@ -165,18 +172,23 @@ async function mintUploadUrl(env: Env, key: string): Promise<string> {
   } catch {
     throw new Error("cf-grok-video: R2_S3_ENDPOINT is not a valid https URL");
   }
-  return presignR2Put({ accessKeyId, secretAccessKey, endpoint, bucket, key, expiresSeconds: UPLOAD_TTL_SECONDS });
+  const sessionToken = await secretValue(env.R2_S3_SESSION_TOKEN);
+  return presignR2Put({ accessKeyId, secretAccessKey, sessionToken, endpoint, bucket, key, expiresSeconds: UPLOAD_TTL_SECONDS });
 }
 
-/** Blocking env.AI.run. ZDR teams get no xAI-hosted URL; they PUT to output.upload_url. */
-async function runGeneration(env: Env, params: WorkflowParams): Promise<void> {
+/** The provider call. Its own workflow step, so nothing after it can buy it again (cf#1105). */
+async function generateClip(env: Env, params: WorkflowParams): Promise<unknown> {
   const gatewayId = await secretValue(env.GATEWAY_ID);
   if (!gatewayId) throw new Error("GATEWAY_ID not configured");
   const key = clipKey(params.project, params.shot_id);
   const uploadUrl = await mintUploadUrl(env, key);
   const modelParams = buildParams(params.input, params.config, uploadUrl);
-  const result = await env.AI.run(params.config.model || MODEL, modelParams, { gateway: { id: gatewayId } });
+  return env.AI.run(params.config.model || MODEL, modelParams, { gateway: { id: gatewayId } });
+}
 
+/** Download and write. Retries on its own step, and never reaches the provider. */
+async function storeClip(env: Env, params: WorkflowParams, url: string | null): Promise<void> {
+  const key = clipKey(params.project, params.shot_id);
   const existing = await env.R2_RENDERS.get(key);
   if (existing) {
     await writeState(env, params.job_id, {
@@ -191,7 +203,6 @@ async function runGeneration(env: Env, params: WorkflowParams): Promise<void> {
   }
 
   // Non-ZDR fallback: xAI still hosted a URL.
-  const url = parseVideoUrl(result);
   if (!url) throw new Error("model completed but wrote no object to upload_url and returned no video URL");
   const vresp = await fetch(url);
   if (!vresp.ok) throw new Error("video fetch " + vresp.status);
@@ -214,10 +225,13 @@ const GENERATE_STEP_CONFIG: WorkflowStepConfig = {
 
 export class CfGrokVideoWorkflow extends WorkflowEntrypoint<Env, WorkflowParams> {
   async run(event: WorkflowEvent<WorkflowParams>, step: WorkflowStep): Promise<void> {
+    withRetryingR2(this.env);
     const p = event.payload;
     try {
-      await step.do("generate", GENERATE_STEP_CONFIG, async () => {
-        await runGeneration(this.env, p);
+      await runPaidGeneration(step, GENERATE_STEP_CONFIG, {
+        generate: () => generateClip(this.env, p),
+        parse: (raw) => parseVideoUrl(raw),
+        store: (url) => storeClip(this.env, p, url),
       });
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
@@ -235,10 +249,10 @@ async function submit(
 ): Promise<InvokeResponse<MotionBackendOutput>> {
   const input = req.input;
   if (!input || !input.keyframe_url || !input.prompt || !input.shot_id) {
-    return { ok: false, error: "motion.backend: input needs shot_id, keyframe_url, and prompt" };
+    return { ok: false, error: "motion.backend: input needs shot_id, keyframe_url, and prompt", reason: "bad-input" };
   }
   const gatewayId = await secretValue(env.GATEWAY_ID);
-  if (!gatewayId) return { ok: false, error: "cf-grok-video: GATEWAY_ID not configured" };
+  if (!gatewayId) return { ok: false, error: "cf-grok-video: GATEWAY_ID not configured", reason: "not-configured" };
 
   const config = normalizeConfig(req.config ?? {});
   const seconds = clampDuration(input.seconds);
@@ -316,6 +330,7 @@ async function poll(env: Env, body: PollRequest): Promise<PollResponse<MotionBac
 
 export default {
   async fetch(request: Request, env: Env, _ctx: ExecutionContext): Promise<Response> {
+    withRetryingR2(env);
     const url = new URL(request.url);
     if (request.method === "GET" && url.pathname === "/module.json") return json(MANIFEST);
 
@@ -333,10 +348,10 @@ export default {
       try {
         req = (await request.json()) as InvokeRequest<MotionBackendInput>;
       } catch {
-        return json({ ok: false, error: "invalid JSON body" } as InvokeResponse);
+        return json({ ok: false, error: "invalid JSON body", reason: "bad-input" } as InvokeResponse);
       }
       if (req.hook !== "motion.backend") {
-        return json({ ok: false, error: "unsupported hook " + String(req.hook) } as InvokeResponse);
+        return json({ ok: false, error: "unsupported hook " + String(req.hook), reason: "unsupported" } as InvokeResponse);
       }
       return json(await submit(env, req));
     }

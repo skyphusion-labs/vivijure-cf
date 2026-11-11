@@ -126,7 +126,11 @@ describe("cf#586 -- the self-host installers local-gpu default, pinned in both d
   // ---------------------------------------------------------------------------------------------
   it("CONTRAST: image-generate treats the operator placeholder as absent, local-gpu does not", () => {
     const ig = readFileSync("modules/image-generate/src/index.ts", "utf8");
-    const lg = readFileSync("modules/local-gpu/src/index.ts", "utf8");
+    // cf#1308 moved local-gpu's secret resolution into backend.ts; read it with the entry, or the
+    // not.toContain below would pass on a file that no longer holds the secret handling.
+    const lg =
+      readFileSync("modules/local-gpu/src/index.ts", "utf8") +
+      readFileSync("modules/local-gpu/src/backend.ts", "utf8");
     expect(ig).toContain(PLACEHOLDER); // POSITIVE CONTROL, and it runs first for a reason
     expect(lg).not.toContain(PLACEHOLDER);
     // local-gpu does bind the secrets, so the placeholder reaches it as a live value rather than

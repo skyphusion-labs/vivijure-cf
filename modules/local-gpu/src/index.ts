@@ -23,12 +23,12 @@ import {
   type MotionBackendInput,
   type MotionBackendOutput,
 } from "./contract";
-import type { DurationGridDecl } from "./contract";
-import { buildI2vBody, readOutput, readDurationGrid, encodePoll, decodePoll, jobGone, classifyGoneState, isSafeJobId, normalizeBackendUrl } from "./i2v";
-// MANIFEST is data-only in ./manifest (cf#285) so quality-tier-drift can import it without
-// this entrypoint's full graph. Re-exported for callers that still load index.
+import { buildI2vBody, readOutput, encodePoll, decodePoll, jobGone, classifyGoneState, isSafeJobId, normalizeBackendUrl } from "./i2v";
+// MANIFEST is data-only in ./manifest (cf#285); the entry imports it and does not re-export it
+// (cf#1244: a Worker entry exports only classes and its default handler).
 import { MANIFEST } from "./manifest";
-export { MANIFEST };
+// Secret resolution, backend config and the duration-grid relay live in ./backend (cf#1308).
+import { type Env, secretValue, backendCfg, authHeaders, doorDurationGrid } from "./backend";
 import {
   buildPreviewBody,
   decodeKeyframePoll,
@@ -36,105 +36,17 @@ import {
   parseKeyframes,
   parseTrainedLoras,
 } from "./keyframe";
-
-interface Env {
-  // The base URL of the user's local backend (a Cloudflare tunnel hostname terminating at the homelab
-  // box), e.g. "https://render.myhomelab.example". Kept a secret: it is the only network handle to the
-  // box, and a leaked URL is an unauthenticated GPU-spend / DoS trigger (the same #38 discipline that
-  // keeps the RunPod endpoint id a secret).
-  LOCAL_BACKEND_URL: SecretsStoreSecret;
-  // Optional bearer token the local server checks (a shared secret minted by the homelabber). The
-  // service-binding trust boundary is the primary auth (this module has no public surface), but a
-  // tunnel origin is reachable if its hostname leaks, so the token is defense in depth. Absent => the
-  // body still submits; the server may run open on a trusted LAN tunnel.
-  LOCAL_BACKEND_TOKEN?: SecretsStoreSecret;
-}
+import { runpodSubmitFailure } from "../../_shared/runpod-submit-error";
 
 function json(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
-}
-
-// --- duration-grid relay (#707) ------------------------------------------------------------------
-//
-// The door DECLARES its fixed duration grid (pinned fps + per-tier frame caps) on /health; this
-// module RELAYS it in the manifest so core preflight can warn about duration clamping at storyboard
-// time. Best-effort with a short timeout and an in-isolate cache (positive AND negative results, so
-// a down door is not re-probed on every manifest fetch and discovery never hangs on it). On any
-// failure the manifest simply omits the field: absence = no declared constraint, never fabricated.
-const GRID_CACHE_TTL_MS = 5 * 60_000;
-const GRID_FETCH_TIMEOUT_MS = 1_500;
-let gridCache: { at: number; grid: DurationGridDecl | null } | null = null;
-
-/** Test hook: drop the in-isolate grid cache. */
-export function _resetGridCache(): void {
-  gridCache = null;
-}
-
-export async function doorDurationGrid(
-  env: Env,
-  fetcher: typeof fetch = fetch,
-  nowMs: number = Date.now(),
-): Promise<DurationGridDecl | null> {
-  if (gridCache && nowMs - gridCache.at < GRID_CACHE_TTL_MS) return gridCache.grid;
-  let grid: DurationGridDecl | null = null;
-  try {
-    const { baseUrl, token } = await backendCfg(env);
-    if (baseUrl) {
-      const r = await fetcher(baseUrl + "/health", {
-        headers: authHeaders(token),
-        signal: AbortSignal.timeout(GRID_FETCH_TIMEOUT_MS),
-      });
-      if (r.ok) grid = readDurationGrid(((await r.json()) as { duration_grid?: unknown }).duration_grid);
-    }
-  } catch {
-    // down / slow / non-JSON door: omit the field this TTL window; the manifest stays honest.
-  }
-  gridCache = { at: nowMs, grid };
-  return grid;
-}
-
-/** Resolve a Secrets Store binding (production) or a plain string (tests / local dev) to its value. */
-async function secretValue(
-  name: "LOCAL_BACKEND_URL" | "LOCAL_BACKEND_TOKEN",
-  s: SecretsStoreSecret | string | undefined,
-): Promise<{ value: string; error?: string }> {
-  if (typeof s === "string") return { value: s };
-  if (!s) return { value: "" };
-  try {
-    return { value: await s.get() };
-  } catch (e) {
-    const error = `local-gpu: ${name} secret read failed: ${(e as Error).message}`;
-    console.warn(error);
-    return { value: "", error };
-  }
-}
-
-/** Resolve the backend URL + optional token once per request. The URL is normalized without a trailing
- *  slash so the path joins below are unambiguous. */
-async function backendCfg(env: Env): Promise<{ baseUrl: string; token: string; urlError?: string }> {
-  const [rawUrl, token] = await Promise.all([
-    secretValue("LOCAL_BACKEND_URL", env.LOCAL_BACKEND_URL),
-    secretValue("LOCAL_BACKEND_TOKEN", env.LOCAL_BACKEND_TOKEN),
-  ]);
-  const baseUrl = normalizeBackendUrl(rawUrl.value);
-  const readError = rawUrl.error ?? token.error;
-  return {
-    baseUrl: readError ? "" : (baseUrl ?? ""),
-    token: readError ? "" : token.value,
-    urlError: readError ?? (baseUrl ? undefined : "local-gpu: LOCAL_BACKEND_URL must be an absolute http(s) URL"),
-  };
-}
-
-/** Auth header for the local server, when a token is configured. */
-function authHeaders(token: string): Record<string, string> {
-  return token ? { authorization: "Bearer " + token } : {};
 }
 
 /** /invoke: validate, submit the i2v_clip job to the local backend, return a poll token immediately. */
 async function submit(env: Env, req: InvokeRequest<MotionBackendInput>): Promise<InvokeResponse<MotionBackendOutput>> {
   const input = req.input;
   if (!input || !input.prompt || !input.shot_id) {
-    return { ok: false, error: "motion.backend: input needs shot_id and prompt" };
+    return { ok: false, error: "motion.backend: input needs shot_id and prompt", reason: "bad-input" };
   }
   const { baseUrl, token, urlError } = await backendCfg(env);
   if (!baseUrl) return { ok: false, error: urlError ?? "local-gpu: LOCAL_BACKEND_URL not configured" };
@@ -145,7 +57,7 @@ async function submit(env: Env, req: InvokeRequest<MotionBackendInput>): Promise
       headers: { ...authHeaders(token), "content-type": "application/json" },
       body: JSON.stringify(buildI2vBody(input, req.config, req.context.project, grid)),
     });
-    if (!r.ok) return { ok: false, error: "local-gpu /run -> " + r.status };
+    if (!r.ok) return await runpodSubmitFailure("local-gpu", r);
     const jobId = ((await r.json()) as { id?: string }).id;
     if (!jobId || !isSafeJobId(jobId)) return { ok: false, error: "local-gpu /run returned no job id" };
     return {
@@ -225,7 +137,7 @@ async function cancel(env: Env, body: CancelRequest): Promise<CancelResponse> {
 async function submitKeyframe(env: Env, req: InvokeRequest<KeyframeInput>): Promise<InvokeResponse<KeyframeOutput>> {
   const input = req.input;
   if (!input || !input.project || !input.bundle_key) {
-    return { ok: false, error: "keyframe: input needs project and bundle_key" };
+    return { ok: false, error: "keyframe: input needs project and bundle_key", reason: "bad-input" };
   }
   const { baseUrl, token, urlError } = await backendCfg(env);
   if (!baseUrl) return { ok: false, error: urlError ?? "local-gpu: LOCAL_BACKEND_URL not configured" };
@@ -235,7 +147,7 @@ async function submitKeyframe(env: Env, req: InvokeRequest<KeyframeInput>): Prom
       headers: { ...authHeaders(token), "content-type": "application/json" },
       body: JSON.stringify(buildPreviewBody(input, req.config)),
     });
-    if (!r.ok) return { ok: false, error: "local-gpu keyframe /run -> " + r.status };
+    if (!r.ok) return await runpodSubmitFailure("local-gpu keyframe", r);
     const jobId = ((await r.json()) as { id?: string }).id;
     if (!jobId || !isSafeJobId(jobId)) return { ok: false, error: "local-gpu keyframe /run returned no job id" };
     return {
@@ -315,13 +227,13 @@ export default {
       try {
         req = (await request.json()) as InvokeRequest;
       } catch {
-        return json({ ok: false, error: "invalid JSON body" } as InvokeResponse);
+        return json({ ok: false, error: "invalid JSON body", reason: "bad-input" } as InvokeResponse);
       }
       if (req.hook === "keyframe") {
         return json(await submitKeyframe(env, req as InvokeRequest<KeyframeInput>));
       }
       if (req.hook !== "motion.backend") {
-        return json({ ok: false, error: "unsupported hook " + String(req.hook) } as InvokeResponse);
+        return json({ ok: false, error: "unsupported hook " + String(req.hook), reason: "unsupported" } as InvokeResponse);
       }
       return json(await submit(env, req as InvokeRequest<MotionBackendInput>));
     }

@@ -92,18 +92,30 @@ describe("applyPoll", () => {
   // #719: the door /status can stall ~5s mid-sampler-step (GIL hold under model offload); a poll
   // landing in the stall propagates as a transport error and used to STICKILY fail the healthy
   // render on the FIRST blip (film-d9214549 died at ~2min with the GPU at 8/40 steps).
+  // vivijure-cf#1381: since core#427 (core 1.42.0) the budget is polls AND time: a run fails only once it has
+  // lasted CLIP_POLL_MAX_ATTEMPTS polls and CLIP_POLL_TOLERANCE_SECONDS (120 s). So the ticks are stepped at the
+  // cron's cadence, one a minute, which is the cadence the budget was written for.
   it("tolerates transient poll errors up to the budget, then fails loud (#719)", () => {
     const s = shot();
-    applyPoll(s, { ok: false, error: "module /poll -> 502" }, "p");
+    applyPoll(s, { ok: false, error: "module /poll -> 502" }, "p", 0);
     expect(s.status).toBe("pending"); // blip 1: held, not failed
     expect(s.poll_attempts).toBe(1);
-    applyPoll(s, { ok: false, error: "module unreachable: connection reset" }, "p");
+    applyPoll(s, { ok: false, error: "module unreachable: connection reset" }, "p", 60_000);
     expect(s.status).toBe("pending"); // blip 2: still held
     expect(s.poll_attempts).toBe(2);
-    applyPoll(s, { ok: false, error: "module /poll -> 504" }, "p");
+    applyPoll(s, { ok: false, error: "module /poll -> 504" }, "p", 120_000);
     expect(s.status).toBe("failed");  // budget exhausted -> loud, with the real error
     expect(s.error).toContain("504");
     expect(s.error).toContain("#719");
+  });
+
+  it("three fast blips inside the time window stay pending (core#427: client polls cannot spend the budget)", () => {
+    const s = shot();
+    applyPoll(s, { ok: false, error: "module /poll -> 502" }, "p", 0);
+    applyPoll(s, { ok: false, error: "module /poll -> 502" }, "p", 8_000);
+    applyPoll(s, { ok: false, error: "module /poll -> 504" }, "p", 16_000);
+    expect(s.status).toBe("pending");
+    expect(s.poll_attempts).toBe(3);
   });
 
   it("a successful poll round-trip RESETS the transient budget (#719: consecutive, not cumulative)", () => {

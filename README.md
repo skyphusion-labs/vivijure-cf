@@ -24,13 +24,16 @@ is a separate product in its own repo,
 [`vivijure-control-plane`](https://github.com/skyphusion-labs/vivijure-control-plane). It installs
 this studio's published release unmodified, so hosted and self-hosted never drift apart.
 
-**Vivijure Studio:** https://vivijure.com · **Live demo:** https://demo.vivijure.com · **Skyphusion Labs:** https://skyphusion.org
+**Vivijure Studio:** https://vivijure.com · **Skyphusion Labs:** https://skyphusion.org
+
+The public demo is removed entirely, in two steps: the `demo.vivijure.com` custom domain went on 2026-10-08, and the deployment went on 2026-10-19 (both Worker scripts, the D1, the R2 bucket and the AI Gateway). This panel no longer carries a demo door.
 
 ## Layout
 
 | Path | Role |
 |------|------|
-| `src/index.ts` | Worker `fetch` + `scheduled()` |
+| `src/index.ts` | Worker entry: the default handler and the classes wrangler binds (`FinishContainer`, `ShotWorkflow`) |
+| `src/studio.ts` | The studio: route table (`API_ROUTES`), handlers, `fetch` + `scheduled()` bodies, the sweep pass |
 | `src/platform/` | Platform ICD adapter (`cfPlatformFromEnv`) |
 | `src/env.ts` | Hand-authored `Env` (mirror `wrangler.toml`) |
 | `modules/` | Opt-in module workers (`MODULE_*` bindings) |

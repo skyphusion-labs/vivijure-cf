@@ -8,7 +8,7 @@ seconds** (not a continuous range), and has no audio param -- the core's score/m
 ## Where it fits
 
 `motion.backend` is a **pick_one** hook: the studio binds exactly one motion backend per render, and
-this is one selectable provider among several (seedance, kling, minimax-hailuo, google-veo, vidu-q3,
+this is one selectable provider among several (minimax-hailuo, cf-seedance, cf-veo, cf-vidu-q3-turbo,
 alibaba-wan). It sits at the **clips** stage, right after the keyframe is
 fixed and before dialogue: the keyframe drives the motion, the clip flows on into the dialogue and
 speech phases and then finish.
@@ -50,7 +50,7 @@ different model means binding a different `motion.backend` module, not changing 
 schema):
 - `enable_prompt_expansion` (bool, default `false`) -- on, the provider rewrites/expands the prompt;
   off sends it as-is.
-- Output size is fixed at **720p** and per-shot `seconds` snaps **up** to the nearest of **{5, 10,
+- Output size is **720p** by default and selectable (`size`: `720p` / `1080p`, cf#922); per-shot `seconds` snaps **up** to the nearest of **{5, 10,
   15}** in code (not knobs).
 
 ## Contract
@@ -60,6 +60,7 @@ schema):
 - **Input** (`MotionBackendInput`): `shot_id`, `keyframe_url` (a presigned, fetchable URL of the
   start keyframe), `prompt`, `seconds`.
 - **Config** (`config_schema`): `enable_prompt_expansion` (default off -- the prompt is sent as-is).
+  The provider safety filter is always on and is not configurable.
   Output size is **720p**; per-shot `seconds` snaps **up** to the nearest allowed duration in **{5,
   10, 15}** (never shorter than the shot, which would clip the dialogue).
 - **Output** (`MotionBackendOutput`): `shot_id`, `clip_key` (the stored clip), `fps` (24), `frames`.

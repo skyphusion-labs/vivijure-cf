@@ -35,8 +35,8 @@ simply has no audio key.
 
 It used to flow into `finish-lipsync` (MuseTalk) to drive the mouth. MuseTalk is ruled out
 permanently and that module is removed (cf#783), so the mouth is no longer patched after the fact:
-a synced mouth comes from a driving-audio motion door (`infinitetalk`) at motion time, and on a
-silent door the Cast voice is muxed with the mouth left as the model animated it. Note the phase
+a synced mouth comes from a driving-audio motion door (`infinitetalk`) at motion time, and submit
+refuses a spoken line on a silent door. Note the phase
 order: `dialogue` runs AFTER clips, so this module's audio was never what fed that door.
 
 ## Configuration

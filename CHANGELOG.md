@@ -5,6 +5,3600 @@ for new features). Newest first.
 
 ## Unreleased
 
+## v1.45.0 -- 2026-11-10
+
+### Feat: the caller's dialogue module reaches the film, on vivijure-core 1.42.0 (#1379, #1381)
+
+Core moves to `^1.42.0`, which lets the caller pick the dialogue module and send it config (core#339). The studio's own mint sites never forwarded the choice, so the first dialogue module by ui.order ran (`dialogue-gen` before `chatterbox`), sent `{}`, whatever the user picked.
+
+- The panel door, render from keyframes, retry and finalize now pass `dialogue_backend` and `dialogue_config` from the resolved overrides bag into `startFilmJob` / `startFilmFromKeyframes`. The parent film's retake passes the ones its part ran with. With no selection nothing changes: no field is sent and the first module by ui.order runs.
+- An unknown name is refused when the film starts, by name (`dialogue module "<name>" is not installed`), before anything is spent.
+- Not wired, because there is no dialogue input to forward: the agent door (`POST /api/render/film`, which film parents submit through) takes pre-resolved maps and has no dialogue field, and regen-shot and the parent still are keyframes-only. Adding the field to the agent door and the MCP is a follow-up.
+- `tests/dialogue-selection-1379.test.ts` sweeps every mint site that forwards a resolved `finish_config` and fails when one does not forward the dialogue choice too.
+
+Core 1.42.0 also makes the poll transport tolerance time as well as count (core#427): a run of failures fails after 3 polls AND 120 s. The #719 fixture in `tests/render-orchestrator.test.ts` fired its polls back to back and so stayed pending; it now steps them at the cron's cadence with the same assertions, and a new case pins that three fast blips stay pending (#1381).
+
+### Feat: adopt vivijure-core 1.43.0, and answer its two new refusals by name (#1383, #1387)
+
+Core moves to `^1.43.0`. It throws two typed refusals for a caller's bad input, and the studio now answers each as the client error it is instead of `500 internal error`. One mapping (`src/core-refusals.ts`) serves the router and the parent film's in-process door call.
+
+- **400** for `ConfigValueError` (core#343, PR core#517): an enum value the module does not declare is refused, naming the field, the value and the allowed set. Before, core replaced it with the default and the render ran on a config nobody asked for. An absent value still takes the default.
+- **409** for `BoardKeyCollisionError` (core#518, PR core#519): a board whose title key another project already renders under is refused, naming that project. Two such boards would share each other's stored keyframes and LoRAs. Applies to `POST /api/storyboard/projects/:id/storyboard` and `PATCH /api/storyboard/projects/:id` with `storyboard`. The panel already shows the message on save.
+- The film path (`POST /api/film`, and the film door's board save) checks the key before it creates a project, and removes the project it made if a concurrent save takes the key first, so a refusal leaves nothing behind. The film still starts; the answer says the board was not saved and why.
+
+**For a client.** A render or film start that sent an invalid enum value used to succeed on the default; it now gets `400` naming the field. A board save that collides with another project's title key gets `409`; retitle the board.
+
+### fix(keyframe): the GPU keyframe door refuses style anime before any GPU spend
+
+The anime checkpoint is not on the GPU image (vivijure-backend#557: anime keyframes run on cloud-keyframe), so a GPU keyframe job with `style: anime` could only fail late, on a worker. The `keyframe` module now refuses it in `/invoke` before the credential read, the capacity reconcile and `/run`, with `reason: "bad-input"` and an error that names cloud-keyframe. Core does not retry it. `anime` stays in the door's `style` enum on purpose: core clamps an undeclared enum value to the field default, so a narrower enum would draw photoreal for an anime request with no word to the caller. Photoreal and the default are unchanged.
+
+### Fix: a failed board save answers fixed text, and the error goes to the log (#1395)
+
+CodeQL alert #86 (`js/stack-trace-exposure`): `saveFilmProject` returned `e instanceof Error ? e.message : String(e)` as the project `error`, and `POST /api/film` put it in its response. A thrown value can carry a stack or storage internals. Now any failure that is not a refusal the caller can act on is logged (`film_project.save_failed`) and answered with a fixed sentence: the board could not be saved to a project, and the film still started. The bundle board read (`film_project.bundle_board_read_failed`) works the same way. Core's `BoardKeyCollisionError` is still reported in core's words, because it tells the caller to retitle the board.
+
+**For a client.** On a failed save, `project.error` is now one of two fixed sentences instead of the underlying error text.
+
+### Fix: adopt vivijure-core 1.44.0, so the module workersMax reconcile uses RunPod REST v2 (fleet-chezmoi#2084)
+
+Core moves to `^1.44.0`. RunPod REST v1 (`rest.runpod.io/v1`) retires on 2026-11-15. RunPod idle scale-down sets an endpoint's `workersMax` to 0 after about 7 days with no requests. The four modules that restore it before a submit (keyframe, own-gpu, finish-blender, finish-upscale) call core's `reconcileRunpodEndpointWorkersMax`. On core 1.43.0 that call goes to v1. From the 15th the read fails, and core#527 makes that failure block the render. Core 1.44.0 (vivijure-core#529) reads and restores through `GET` and `PATCH https://api.runpod.io/v2/serverless/{id}`, with the bounds nested as `workers.max` and `workers.min`. `scripts/reconcile-runpod-endpoints.ts` picks this up as well.
+
+- The reconcile still runs only on the direct route (`!route.proxied`). A hosted tenant's proxied submit makes no management call, as before (cf#394).
+- The submit, poll and cancel calls to `https://api.runpod.ai/v2/{id}/...` (the serverless invoke API) are unchanged.
+- New: `tests/runpod-reconcile-v2-2084.test.ts`. It drives each of the four modules' real invoke path on the direct route and asserts `GET` and then `PATCH` of the v2 URL before the `/run`. It is red on core 1.43.0. Before it, no cf test exercised the direct reconcile at all.
+- `tests/runpod-proxy-base-cf394.test.ts` now asserts that the proxied route never reaches `api.runpod.io`. The old assertion was about `rest.runpod.io`, and it would have stayed green after the move.
+
+Not in this change: `deploy/vivijure_deploy.py` and `scripts/runpod-provision.py` still use v1 to create templates and endpoints. That port is fleet-chezmoi#2085.
+
+## v1.44.0 -- 2026-11-09
+
+**Release note:** `v1.43.0` (the section below, dated 2026-11-03) was prepared but never tagged, so it never shipped. Its changes, and everything since, ship in this release. The hosted `STUDIO_RELEASE` pin moves from `v1.42.2` to `v1.44.0`.
+
+### fix(cast): cast delete frees the voice line, and each member's voice sample is its own file
+
+Cast delete now sweeps the member's own `cast/<id>/` and `cast-gen/<id>/` folders, so `cast/<id>/voice-line.wav` (named by no column) and generated reference job docs are freed with the member. The sample in flight and its state doc are freed too. A generated voice sample used one clip key for every member, because the talking door was sent the constant shot id `voice-sample`; each member's sample now uses `voice-sample-<public_id>`, and keep copies the clip into `cast/<id>/voice-ref.<ext>`. A row kept before this change can still name the old shared key; cast delete frees it only when no surviving cast row names it, and a failed count keeps it. No migration: the old key stays readable for the rows that name it.
+
+### feat(storage): a dry-run report of the render-orphan sweep that cannot delete
+
+`scripts/r2-render-orphan-report.ts` applies the cf#1009 sweep rules, but it reads three local files and writes a report: a listing of `renders/` (JSON lines of key, size and upload time), the D1 owner snapshot, and the live job docs it names. It has no delete call, no network call and no subprocess. `tests/r2-render-orphan-report-1009.test.ts` scans it and everything it imports, and fails if one appears. As a control, the same scan flags the `--apply` GC script. The report gives counts, bytes and 10 sample keys per rule, and every would-delete object with its reason. Each classification in the core now carries a stable `rule` code beside its `reason`. The operator commands are in `docs/1009-r2-render-orphan-gc.md`.
+
+### feat(storage): an operator sweep for render job trees whose owner is gone
+
+`scripts/r2-render-orphan-gc.ts` and the pure core `src/r2-render-orphan-reconcile.ts` reclaim the part of the pre-2026-10-19 render backlog whose owner is provable from records. That is `renders/<film|scatter>-<uuid>/` trees and `renders/logs/<job-id>.txt` with no live renders row, shot record or scatter parent, kept when any live record or job doc names a key, and kept inside a 48 h grace window. The run is dry by default, refuses an oversized listing up front, and aborts if a live job doc cannot be read. Project-keyed trees, standalone clip jobs and record-free namespaces stay out of scope. `tsconfig.json` gains `allowImportingTsExtensions` (it is `noEmit`), so the script runs under node directly. See `docs/1009-r2-render-orphan-gc.md`.
+
+### feat(audio): an uploaded audio bed can be deleted
+
+`DELETE /api/storyboard/audio-upload/:name` deletes an uploaded music bed. It accepts only a name the upload route mints (`<uuid>.<ext>` under `audio/`), so it cannot delete anything else; a missing file is a 404, and while a film render that has not finished selects the bed it answers 409 and names those renders. A finished render keeps its sound. The planner shows a "delete file" button beside an attached uploaded bed. PRIVACY Section 7 no longer says the studio has no delete action for an uploaded bed (vivijure-cf#1016).
+
+### fix(render): the spoken-line gate counts only the shots being rendered
+
+The talking-door check read every line in the board, so rendering only the silent shots of a board with dialogue was refused on a silent door. The panel door (`processShotIds`), the agent door (`scenes`) and finalize from keyframes (the picked keyframes) now count only the lines of the shots they make. If a rendered shot id is not in the bundle, every line still counts, so a voiced film is never sent silent on a guess. Explicit `dialogue_lines` are unchanged. Finalize's automatic door pick follows the same rule.
+
+### fix(render): say when a door will cut a shot, and hold `first_last` to what a door sends
+
+`POST /api/storyboard/render` and `POST /api/render/film` now answer with `duration_notes` when the chosen door will not make a shot at its planned length, from the door's `usage` bounds. A caller that skipped preflight is told before the clip comes back cut. Nothing new is refused. A new conformance test runs every motion door's own param builder with an end still and requires `usage.first_last` to match whether the door sends it, so a door cannot declare end frames it drops, or drop the declaration and lose them.
+
+### feat(video-finish): the container takes a feature-length film: 600 clips and a 768 MiB bed (#1122)
+
+`MAX_CLIPS` rises from 80 to 600 and `MAX_AUDIO_BYTES` from 256 MB to 768 MiB (60 minutes of 16 bit 48 kHz stereo WAV is 691 MB). Chunked assemble already bounds disk to a fixed working set, so the clip count no longer protects the disk. This lands and deploys BEFORE vivijure-core 1.36.0, which raises core's admission to 600: a container that takes more than core admits is harmless, the reverse is not.
+
+`client_max_size` stays 1 MiB. The assemble body core sends at 600 clips measures about 0.46 MB (one `{ url }` per clip, the 80-pair partial pool, the output URL), so the 4 MiB raise in the vivijure-cf#1122 design was not needed; that design counted 1.4 KB a clip.
+
+`tests/clip-cap-equality-1122.test.ts` now holds the property rather than equality: core's `ASSEMBLE_MAX_CLIPS` is at most the container's `MAX_CLIPS`, an assemble body at the container's cap fits its request limit, and with the container's real bed limit on disk finalize still fits the largest film core admits. The panel scene cap stays held equal to core.
+
+### chore(deps): adopt vivijure-core 1.35.0, with the standalone clips lease (#1122)
+
+Core moves to `^1.35.0` in the same change as the cf#1315 lease, as the core 1.35.0 ledger requires of a host. What it brings to the studio:
+- A clip job is bought in claimed batches of 20 inside a window of 20, and each shot's URLs are minted when it is submitted (core#451). `POST /api/render/clips` now buys the first 20 shots, and the polls buy the rest.
+- Keyframe jobs are split at 60 shots, a film forced into one oversized keyframe job is refused at start, and the keyframe phase's 90 minute ceiling runs from the last finished keyframe job (core#453).
+- A film over the container's 80 clips is refused at submit, before anything is bought (core#454).
+
+New tests hold core's `ASSEMBLE_MAX_CLIPS` equal to the container's `MAX_CLIPS`, and the panel's `PLANNER_MAX_SCENES` equal to core's `STORYBOARD_MAX_SCENES`, so a future raise has to move both sides. One existing test pinned the keyframe ceiling to the phase start and now asserts the 1.35.0 rule, keeping the phase-start case on `assemble`. An un-stubbed test drives a 25 shot standalone job through the route on real core and checks every shot is bought exactly once.
+
+### chore(deps): adopt vivijure-core 1.36.0, so a film takes up to 600 shots (#1122)
+
+Core moves to `^1.36.0`. A storyboard takes up to 600 scenes and a stated 60 minutes, and assemble admits up to 600 clips, matching the video-finish container's `MAX_CLIPS` 600 from #1326, which is deployed. The panel's `PLANNER_MAX_SCENES` moves from 50 to 600 in the same change, held equal to core's `STORYBOARD_MAX_SCENES` by `tests/clip-cap-equality-1122.test.ts`. The LLM planner still asks for at most 50 scenes per turn. The scene editor has not been exercised at 600 rows; that is #1329.
+
+### fix(plan): a characters entry without slot is a 400, not a 500
+
+`POST /api/storyboard/plan` checked only that `characters` was an array, so an entry with no `slot` made the planner prompt builder throw and the route answered 500 "internal error". Each entry must now be `{ slot, name, bible }`: `slot` one of A to D and used once, `name` a non-empty string, `bible` a string that may be empty. Anything else is a 400 that names the entry and the bad fields (vivijure-cf#1137). The MCP tool description is tracked in vivijure-mcp#85.
+
+### fix(film): a film poll that is cut off still finishes its tick
+
+A Worker's execution context ends when its client disconnects, and every pending await in it ends too. A `GET /api/render/film/:id` or `GET /api/storyboard/render/:jobId` cut off mid-tick never wrote the film doc and never released the advance lease, so the film waited for the lease to expire. Both routes now hand the tick to `ctx.waitUntil`, which keeps it alive for up to 30 s after a disconnect. The caller still sees the tick's errors. A tick longer than that is bounded in core: it stops renewing its lease and the film is free again within one lease TTL (vivijure-cf#1139).
+
+### fix(image-generate): xAI and Recraft V4 chat images stop failing with 7003
+
+`xai/grok-imagine-image` and `recraft/recraftv4` failed every chat image call with `7003: User Input Error`. The AI Gateway log held the provider errors. xAI refuses its default URL output for a zero-data-retention team, so the module now sends `response_format: "b64_json"` and decodes the base64 it gets back instead of fetching it. Recraft V4 refuses any `style`, so the module no longer sends one to V4. The proxied output is now read as a URL, a data URL or raw base64, and base64 that does not decode to an image fails loud. `image-generate` is 0.1.2.
+
+The other two causes in #1141 were fixed before this change: the output shape by #1148, and the 1 MiB response cap by core 1.29.0, which reads `image.generate` through a 32 MiB cap.
+
+The studio file `src/proxied-image-params.ts` is removed. No code imported it, only its own test, and it still carried the Recraft `style` that V4 refuses.
+
+### feat(keyframe): a face reference margin for the scene-lock pass
+
+The `keyframe` module has a `face_crop_pad` setting (0 to 2, default 0.35, the crop shipped before). It sets how much around each face the scene-lock pass takes from the cast portrait, so a two-person still can keep each person's hair (cf#1143, vivijure-backend#576). Older backend images ignore it.
+
+### feat(keyframe): a people-free gap and a body placement strength for two-person stills
+
+The `keyframe` module has two more settings for two-person stills (cf#1143). `plate_people_free_background` (default off): with `plate_regional_text` on, the space between the two people reads only the look and the place, not the shot's sentence that names them, so it is not asked to draw a third person (vivijure-backend#582). `pose_scale` (default 0.55, the value shipped before): how firmly the still plants exactly two bodies, sent as `multi_char.controlnet_pose_scale`. Older backend images ignore both.
+
+### feat(keyframe): a two-person portrait strength for the scene pass
+
+The `keyframe` module has a `plate_ip_adapter_scale` setting (0 to 1, default 0, off). On a two-person shot it sets how strongly the first (scene) pass takes each person's cast portrait in their own half of the frame, so a two-shot can keep each person's hair (cf#1143, vivijure-backend#578). Older backend images ignore it.
+
+### feat(keyframe): keep each person's look to themselves in a two-person still
+
+The `keyframe` module has a `plate_regional_text` setting (default off). On a two-person shot it gives each person's description only to their own half of the first (scene) pass, while the scene, the style, the setting and the adult statement stay for the whole frame, so one person's clothes do not land on the other (cf#1143, vivijure-backend#580). Older backend images ignore it.
+
+### feat(cloud-keyframe): a shot with no place is drawn in the board's setting
+
+cloud-keyframe reads the storyboard's optional `setting` (vivijure-core#435) from `storyboard.yaml` and says it after any shot whose prompt and style prefix do not already contain it (`Setting: <setting>.`), in the plate and the final pass. A board with no setting draws exactly as before. `docs/CONTRACT.md` A.4 documents the field and how both keyframe doors use it. Refs cf#1145.
+
+### fix(cf-veo, cf-p-video-avatar): a provider refusal says what happened, and is not bought again
+
+A failed call now reads its own AI Gateway log entry through the AI binding (`gateway(id).getLog`) and says a known refusal in plain words, with the log id: the provider's safety check refusing a shot (the avatar door flagged anime shots as violent, cf#1154), the AI credit balance running out (402), a provider failure with no reason (veo 500, cf#1159), and our own unreadable start image. A refusal no longer reads as the transient `7003`, so it is not resubmitted three times, and the workflow does not retry the call. The provider's safety checker stays on: nothing here switches it off. A failure whose log cannot be read, or is not one of these, fails as before with the provider's own error and its log id. cf-veo 0.1.3 -> 0.1.4, cf-p-video-avatar 0.1.1 -> 0.1.2.
+
+### fix(cf-veo): a failed call names its gateway log
+
+cf-veo failed shots with `AiGatewayError: 2002: Error` and nothing else. A failed call now ends with `(gateway log <id>)`, which points at the request and the provider's reply in the AI Gateway log. The id holds no content. The provider code stays first, so the retry classifier reads it as before. The log id handling cf-p-video-avatar got in #1157 moves to one shared helper (`modules/_shared/gateway-log.ts`) that both doors use. Refs cf#1159.
+
+### fix(chatterbox): a queued line is polled, not bought again (#1164)
+
+`/runsync` returns a job that is still `IN_QUEUE` or `IN_PROGRESS` after about 90 s as `{ id, status }`. `chatterbox` read that as "no audio_url", threw, and its step retried, so each retry bought a new job and left the last one in the provider queue. Now a reply that names a job is checkpointed, and a queued job is polled by its id (`/status/<id>`, 20 s apart, at most 30 polls). A job that outlasts that is cancelled, and the film fails with the job id, the status it was stuck in, and the provider's own error. A `FAILED` reply on HTTP 400 keeps its error text. Only a request that reached no job is retried. Module `chatterbox` 0.1.2. `_shared/paid-generation` gains `storePaidResult`, the store half of `runPaidGeneration` on its own.
+
+### fix(video-finish): a talking film's dialogue no longer drifts late across its clips
+
+The film assemble joined clips that keep their dialogue with a plain `-c copy`. That leaves an audio packet at every join whose timestamp step is cut short while it still decodes to 1024 samples, so the track ran later with each clip for anything that reads samples in order, including the bed mix. Measured on the real `_assemble` with 25 talking clips of 2 to 4.2 s: 586 ms late at the last clip, by sample count. Every hard-cut join that keeps audio (the clip join, the chunked batch and partial joins, and the title cards) now copies the video and encodes the audio once with the same filter as `/async/join-films`: 0.0 ms spread on the same film. A silent film still joins by stream copy. Refs cf#1167.
+
+### fix(animate): refuse a per-shot door map with a door driven by a line's audio
+
+`animate-cloud` and `animate-hybrid` with a per-shot door map now answer 400 when the shots do not all use the default door and any door involved has `usage.driving_audio`. Core decides pre-clip dialogue from the default door alone, so such a film either lost its map after pre-clip dialogue or sent an audio-driven shot no audio, after money was spent. One door for every shot, and maps with no audio-driven door, start as before (vivijure-cf#1168). The full fix is tracked in skyphusion-labs/vivijure-core#442.
+
+### feat(film): delete a film built as parts
+
+`DELETE /api/film/:id` removes a long film as a whole: each part's renders through the same reclaim the render delete uses, every joined version and its captions, and the film's own records, the doc last so a delete that stops part way can be run again. Anything a surviving render still uses stays. It refuses while a part renders, a join is out or a new still is being drawn, and stops a film that could still start a part before anything goes. The film page has a "Delete this film" button that asks first and says plainly that it cannot be undone.
+
+### fix(film): a cancel cannot be undone by a tick, and a busy cancel is a 409 (#1215)
+
+Core 1.34.0. A cancel used to write the film doc with no lease, so a tick that read the doc first could write the old doc back over the cancel, and the film kept spending. The R2 retry made one case easy to reach: a tick's put that lands and errors is put again over the cancel. A cancel now takes the film's advance lease, as a tick does, and waits up to 20 s for a running tick. If the tick still holds the film, `DELETE /api/storyboard/render/:jobId` answers 409 with `retryable: true`, and nothing is written or cancelled.
+
+### test(r2-retry): the advanceFilmJob tick waits on its condition, not on a pass count
+
+The "through real core advanceFilmJob" tick helper gave up after 600 fake-clock passes, so on a loaded machine the loop could run out before `advanceFilmJob` settled (cf#1231). It now loops until the tick settles, bounded by 30 s of REAL wall time captured before the clock is faked, and yields a real macrotask each pass so work the fake clock does not control can progress. What the tests assert is unchanged.
+
+### fix(cast): hide the Wan LoRA pane on a host without the Wan train endpoint
+
+The cast page showed the Wan LoRA pane whenever the `alibaba-wan-lora` door was installed, so a host without `RUNPOD_WAN_TRAIN_ENDPOINT_ID` offered a button that could only end in the 501. `GET /api/cast` now also returns `wan_lora_trainable` (a boolean; the endpoint id is never returned), and the pane shows only when the door is installed and that field is `true`. A missing field, a failed request or a failed registry load keeps the pane hidden.
+
+### fix(tests): stop the test suite leaking temp dirs
+
+`tests/module-binding-requirements-942.test.ts` created 8 `cf942-*` dirs under `$TMPDIR` on every vitest run and never removed them. `tests/changelog-assemble.test.py` did the same with 3 `asm-holds-*` dirs per run. Both now track each dir they create by exact path and remove it (vitest `afterEach`; Python explicit removal plus `atexit`), and each has a regression check that fails if any dir it created survives the run. Cleanup never deletes by glob, so a concurrent run of the suite keeps its own fixtures.
+
+### fix(film): every long film saves its board to a project
+
+A film started through `POST /api/film` (the API, MCP and the new-film page) now saves its master board to a storyboard project, so the planner and the new-film page can reopen it. Before, only the film doc held the board, sliced into parts, and two films had to be rebuilt by hand. The film names the project with `project_id`, or the studio uses the film's name: a project with no board, or with this exact board, is reused, and a project holding a different board is never overwritten. The answer carries `project: {saved, id, name, created}`. The new-film page sends `project_id` while the board is still the one it loaded from a project.
+
+### feat(panel): a one-screen Make a video page for first-time creators
+
+A new page at `/make` takes someone from "a short video with me and my friend in it" to a finished video on one screen: pick or add up to 4 people (a name and one selfie runs the existing cast steps, with progress in plain words), write the idea, pick Vertical (the default), Square or Wide, pick Draft, Good or Best, see one total, press Make my video, confirm, then watch a progress bar and get a player with Download and Edit in advanced planner. The plan is saved to its own project. The video style is chosen for face consistency first, not price (`public/make-style.js`, `docs/make-a-video.md`), and a shape no consistent style can make is not offered. A talking video in Wide uses the style that speaks in each person's own Cast voice (InfiniteTalk), and anyone with no voice is given one of their own. A missing price reads "price unknown". The page uses only routes the planner and cast page already use. A new `PANEL_HOME` setting puts the page at `/` and first in the nav, with the planner kept as Advanced; unset keeps today's behaviour, and `GET /api/whoami` carries `panel_home` only when it is set.
+
+### feat(deploy): set PANEL_HOME from the deploy env
+
+`PANEL_HOME` can now be set at deploy time like `AUTH_MODE`: put `PANEL_HOME=simple` in `deploy.env` (or the `PANEL_HOME` repository variable for the CI deploy) to open the studio on the Make a video page. Leave it blank to keep the planner home; that is the default, so existing deployments do not change.
+
+### fix(panel): plain-language labels on the planner, cast and films pages
+
+The planner is now "Make a video (advanced)": "Your idea", "Plan my scenes", "Scenes", "Length (seconds)", "Who's in this scene", "What they say", "Pictures / Video", "Video style" and "Make the video"; "New session" is "Start over" and the Screenwriter's Assistant is "Ask for changes" (no YAML in its help). Cast says "Describe how they look" and "photos", and upload/download of a character moves into a "..." menu; the cast picker shows a face thumbnail instead of "has a face". Films shows titles without underscores, counts parts from 1, reads "Didn't finish (part 1). Try again?" for a stopped film, and the "Start a film" button has higher contrast. Text and CSS only; no ids, API fields or `src/` changed.
+
+### fix(cloud-keyframe): the module worker starts under a module-bound wrangler dev
+
+The cloud-keyframe Worker entry exported a number (`FILM_DOC_GRACE_MS`). workerd reads every export of an entry as an entrypoint and refused the worker, so `.dev-modbound/dev-modbound.sh` did not start. The constant now lives in a leaf module. A new test finds every Worker entry from the wrangler configs, imports it, and fails on any export workerd would refuse; it also fails on a new non-class named export, against a baseline of the existing ones that may only shrink (vivijure-cf#1244).
+
+### feat(modules): every motion door states its price and how well it holds a face
+
+Each motion door now carries `usage.face_hold` (hold, two, one or drift), and every metered door states its cost: `ui.cost_usd_per_second`, or the new `ui.cost_usd_per_clip` for a door billed per clip (infinitetalk, cf-hailuo). Prices are the provider's, with no markup, and each priced door carries `ui.cost_as_of`, the day the price was read (2026-11-05 for all). Sources are in `docs/motion-door-prices.md`. One rule set, `modules/_shared/door-manifest-rules.ts`, refuses a door with both cost fields, a malformed per-clip entry, a missing or unknown `face_hold`, or a cost without `cost_as_of`; the guard finds every motion door in `modules/` rather than listing them. Newly priced: alibaba-wan, alibaba-wan-lora, cf-flux-3-video, cf-grok-video, cf-hailuo, cf-hh1-r2v, cf-veo, infinitetalk, minimax-hailuo. cf-seedance stays unpriced, because its Cloudflare page lists no price, and its limits now say so. The grades match what the Make a video page computes today, so nothing it shows changes until it reads the field. Closes the manifest half of cf#1246.
+
+### feat(panel): prices at cost on every video style, and the face grade from the manifest
+
+The planner's video style cards and the Make a video total read each module's own price, at cost with nothing added: `ui.cost_usd_per_second` or `ui.cost_usd_per_clip`, with the day it was read when `ui.cost_as_of` is stated, and "Price unknown" when neither is. Each scene is priced at the length the module really makes, so a 7 second scene on a 5, 10 or 15 second module is priced as 10. The Make a video page now reads the face grade from `usage.face_hold` and no longer keeps a table of module names for it; a test proves no module's grade changed.
+
+### feat(deploy): set KEYFRAME_PARALLEL from the deploy env
+
+`KEYFRAME_PARALLEL` (how many keyframe invokes one film starts at once) is now rendered into the
+Worker's vars like `PANEL_HOME`: set it in `deploy.env` (or the `KEYFRAME_PARALLEL` repository
+variable for the CI deploy). Before this it could only be set with `wrangler deploy --var`, so a
+plain deploy silently put it back to the default. Blank means 4, the existing default, so existing
+deployments do not change.
+
+### fix(film): a film started with submit_film saves its board to a project
+
+`POST /api/storyboard/bundle` now keeps the whole board, as sent, beside the bundle (`<bundleKey>.board.json`), and `POST /api/render/film` (MCP `submit_film`) saves that board to a storyboard project, so the panel can reopen it. It never rebuilds a board from the bundle's lossy YAML. The film door also takes an optional `projectId` and writes the project on the renders row. A bundle made before this still starts its film, and the answer says the board was not saved. Parts of a long film save nothing; the parent saves the whole board.
+
+### fix(panel): Make a video says before starting when a scene will be cut
+
+Before "Make it", the confirm runs the studio's own length check for the chosen style and lists, in plain words, each scene that will be cut to fit, run longer, or snap to one of the style's lengths. The check could fail; then it says so, and the video can still start. Preflight's door-length issues now carry a small `detail` with the numbers, so the page words them without a copy of the rule. When only some scenes speak, the confirm says "Some scenes in this video speak, so the whole video uses a talking style." (#1253 ruling).
+
+### fix(modules): seven more RunPod doors say why a /run was refused, and a 409 is tried again
+
+After the keyframe door was fixed (cf#1271), local-gpu (both `/run` calls), minimax-hailuo, narration-gen, infinitetalk, alibaba-wan-lora, own-gpu and alibaba-wan still reported a refused `/run` as a bare status such as `infinitetalk /run -> 409`, and core read that as final. Each now uses the shared `modules/_shared/runpod-submit-error.ts` helper: the provider's own reason (its `error` or `message` field only, URLs and long token-like runs replaced, one line, capped) is carried, and 409 and 5xx are declared `upstream-unavailable` and 429 `rate-limited`, so core submits again on a later tick. Other statuses stay final. Module versions are bumped one patch each.
+
+### feat(keyframe): a pose skeleton switch for two-person stills
+
+The `keyframe` module (0.3.9) has a `pose_conditioning` setting for two-person stills (cf#1281): `auto` (the default) sends nothing, so the backend picks per path (vivijure-backend#596: a scene-lock plate draws without the pose skeleton while the plate count guard runs, and the plain regional path draws with it). `on` or `off` sets both paths, sent as `multi_char.pose_conditioning`. It is an enum, not a bool, because the core fills every schema default, so a bool could never stay unset. Older backend images ignore it.
+
+### feat(panel): the panel says when a film was made without some of its shots
+
+`output.keyframes_incomplete` (`{ adopted, expected, dropped }`) is written when the keyframe stage delivered only part of the stills and the film shipped without the rest. Nothing in the panel read it, so such a film looked like a clean render. It now shows on the planner live view and the render history row, with the badge "shots missing" and the dropped shots by id ("2 of 5 shots got no still, so this film was made without them (shot_02, shot_04)."), and on the Make a video page as "Some pictures could not be made, so this video leaves out part of your idea." The render payload ratchet test has no exemptions left (vivijure-cf#1283).
+
+### fix(image-generate): a fetched proxied image is stored with its real type
+
+A proxied model that answers with a URL had its mime taken from the fetched `content-type` header. A Recraft V4 chat image was a WebP stored as `image/png` under a `.png` key. The module now sniffs the fetched bytes and keeps the header only when the magic bytes are not a known image type. `sniffImageMime` also knows GIF now, so it agrees with `hasImageMagic`. `image-generate` is 0.1.3.
+
+### fix(film): a cron pass stops starting parent ticks before the platform's 30 s
+
+The film-parent sweep ticked every active parent in one pass. Under R2 that answers each call only on its fifth try, about 4 s a call, a pass took 44 to 55 s at 5 parents and 377 to 471 s at the list cap of 50, against the 30 s Cloudflare gives `scheduled` work. That was measured under fake timers, because the logs held no sustained outage to read. `sweepFilmParents` now starts no new parent tick once the pass has run `FILM_PASS_START_BUDGET_MS` (15 s). The same worst case is at most 22.2 s, at every size. Parents a pass does not start are reached on later passes, since the list is rotated by the minute. `film.cron_pass` gains `cut`, the number it did not start. `docs/observability.md` now lists `film.cron_pass`, `r2.retry` and `clips.sweep`.
+
+### refactor(modules): cf-veo and cf-p-video-avatar entries no longer export generateClip
+
+The provider call `generateClip` (cf#1105), with the `Env`, `WorkflowParams`, binding shapes and `secretValue` it needs, moves from each entry into a new `src/generate.ts`. Each Worker entry now exports only its default handler and its Workflow class, the contract `tests/worker-entry-exports-1244.test.ts` holds (vivijure-cf#1244). Behaviour is unchanged. Their `BASELINE` lines are gone (refs vivijure-cf#1308).
+
+### refactor(modules): seven module entries no longer export MANIFEST
+
+`alibaba-wan-lora`, `cloud-keyframe`, `finish-blender`, `finish-rife` and `finish-upscale` now keep their `MANIFEST` in a data-only `src/manifest.ts`, as `keyframe` and `own-gpu` already did; those two drop the re-export from their entry. Each Worker entry now exports only its default handler and its classes, which is the contract `tests/worker-entry-exports-1244.test.ts` holds (vivijure-cf#1244). The manifests are unchanged; `GET /module.json` returns the same document. Their `BASELINE` lines are gone (refs vivijure-cf#1308).
+
+### refactor(modules): cast-image, image-generate and local-gpu entries export only their handler
+
+`cast-image` and `image-generate` now keep their model lists and `MANIFEST` in a data-only `src/manifest.ts`. `local-gpu` moves its `Env`, secret resolution, backend config and duration-grid relay (`doorDurationGrid`, `_resetGridCache`) into `src/backend.ts`, and drops its `MANIFEST` re-export. Each Worker entry now exports only its default handler, the contract `tests/worker-entry-exports-1244.test.ts` holds (vivijure-cf#1244). Behaviour and every `/module.json` are unchanged. Their `BASELINE` lines are gone (refs vivijure-cf#1308).
+
+### refactor(studio): the studio Worker entry exports only its handler and bound classes
+
+`src/index.ts` is now a thin Worker entry: the default handler and the classes wrangler binds (`FinishContainer`, `ShotWorkflow`). The studio itself (route table `API_ROUTES`, every handler, `routeRequest`, `runSweepPass`, `safeArtifactContentType`, `clampArtifactUrlTtl`) moves unchanged to `src/studio.ts`; `ARTIFACT_PREFIXES` is imported from `src/shared.ts`, where it already lived. Responses are byte-identical. With every entry clean, the `BASELINE` in `tests/worker-entry-exports-1244.test.ts` is empty and is removed: a named export of any in-tree Worker entry must be a class (vivijure-cf#1308).
+
+### refactor(tail): the tail Worker entry exports only its handler
+
+`deriveFields`, `shapeEventsToLoki` and `reportSinkDrop`, with the event and stream types they use, move from `tail/src/index.ts` into `tail/src/shape.ts`. The entry keeps `Env`, the push and the handler. Behaviour is unchanged. Its `BASELINE` line in `tests/worker-entry-exports-1244.test.ts` is gone (refs vivijure-cf#1308).
+
+### feat(render): a standalone clip job has a render history row
+
+`POST /api/render/clips` now writes, after the job doc, an owner marker (`renders/<clips-id>/owner.json`) and a `renders` row whose `job_id` is the clip job id (`src/clip-job-row.ts`). The job shows in render history as `IN_PROGRESS`, `COMPLETED` or `FAILED`, labelled `clips`, with one download per finished clip; the film actions (view, cancel, re-render, retry) are not offered for it, and the retry route answers `400` for it. `GET /api/render/clips/:id` keeps the row current and inserts it if the start could not, only for a job that has the marker. Render delete frees the job's tree, log, clips and archived takes, gated like any render. The #1009 sweep keeps a clip job tree a live row owns, judges a marked tree with no row an orphan after the grace window, keeps unmarked trees out of scope, and deletes the marker last (held if a sibling failed). No migration: the existing columns carry it. See `docs/CONTRACT.md` 2.19 and `docs/1009-r2-render-orphan-gc.md`.
+
+### fix(clips): a standalone clip job has one advancer at a time
+
+`GET /api/render/clips/:id` advanced a clip job with no lease. From vivijure-core 1.35.0 a clip job over 20 shots buys its later batches from that advance, and core's object store has no conditional put, so two polls that overlapped could buy the same batch. The poll now advances a standalone job (one with `owner.json`) under the film advance lease keyed by the clip job id, the conditional UPDATE on the `renders` row cf#1309 gave it. A poll that overlaps another answers `200` from the doc with `advanced: false` and advances nothing; the one that advanced answers `advanced: true`. A missing row is written before the lease is asked, so a job whose start could not write its row is still guarded. A film's clip job is unchanged: its driver is the film tick. New `src/clip-job-lease.ts` (`withClipJobLease`, `readClipJobDoc`, `ensureClipJobRow`) is the helper a second driver uses. No migration. See `docs/CONTRACT.md` 2.19.
+
+### fix(clips): the sweep advances a standalone clip job nobody polls
+
+A standalone clip job (`POST /api/render/clips`) was advanced only by `GET /api/render/clips/:id`. Core's render sweep drives film and scatter jobs and skips any other id, so a clip job whose client stopped polling kept its render row `IN_PROGRESS`, never adopted the clips its door finished, and, from core 1.35.0, never bought its later batches. The cron sweep pass now also runs `sweepStandaloneClipJobs` (`src/clip-job-sweep.ts`): up to 5 non-terminal `clips-*` rows a pass, paged by the minute so none starves, each advanced under the same lease the poll route takes (#1315) and its row updated the same way. A job a poll is advancing is skipped that pass. A row without the standalone owner marker is not driven. One job that fails is logged and the pass goes on. Each pass logs `clips.sweep` with its counts. See `docs/CONTRACT.md` 2.19.
+
+### fix(master): audio-master names its three container failures apart, each with a verdict
+
+audio-master tagged three container outcomes `container-failed`, and two of them carried no `failure` verdict (cf#1327). A non-2xx is now `container-http-error` with `HTTP n`, and its verdict is unchanged (`failureFromStatus`). A JSON body that is not an object is now `container-bad-response` with the transient `FAILURE_BAD_RESPONSE`, the same as a body that does not parse, so the core holds the step and calls it again within its transport bound. An `ok: false` body is now `container-refused` with the permanent `FAILURE_REFUSED`. That changes no core behavior: a passthrough with no verdict already folded as permanent. audio-master 0.1.3.
+
+### feat(panel): the scene editor shows a long board 50 scenes at a time
+
+A board may hold 600 scenes. The scene editor built a row for every scene, and 600 rows are 22,712 DOM nodes. Now, on a board of more than 50 scenes, it shows one window of 50, with a pager above and below the list ("Scenes 51 to 100 of 600", previous, next, and go to scene). A board of 50 or fewer shows every row and no pager, as before. 50 is the most the planner writes in one turn (core `PLANNER_ASK_MAX_SCENES`), and a test holds the two equal. Edits still change the storyboard in place. A delete keeps the window it was made in, and a new plan opens at scene 1. Measured in real Chrome at 390 px with the CPU throttled 4x (`tests/browser/scene-editor-600.mjs`, now part of `npm run test:browser`), on a quiet box:
+
+| | 600 rows before | one window now |
+| --- | --- | --- |
+| load | 0.7 to 0.8 s | about 0.2 s |
+| delete | 0.83 to 0.88 s | about 0.16 s |
+| key to the next frame | 31 to 34 ms | 17 to 20 ms |
+
+Under load on the same box, all 600 rows measured 317 ms per key and 3.9 s per delete. The panel still has no storyboard import, and refine cannot grow a board past 50 yet (cf#1334, vivijure-core#473), so the editor does not point to either.
+
+### chore(containers): the media door Workers use a constant-time compare, and /ready reports readiness only
+
+The five door Workers under `containers/<name>/cf-container/` now share one vendored `src/gate.ts`. The bearer is compared in constant time: both values are hashed to SHA-256 and the digests are compared with the runtime's `timingSafeEqual`, the same behaviour as the containers' `hmac.compare_digest`. `GET /ready` returns `{ ok, token_configured }`, booleans only, in line with the module `/ready` convention. `tests/door-worker-gate.test.ts` checks that the five copies are identical, that each Worker uses the gate, and how the gate behaves through a real door Worker handler. Each door Worker takes this on its next `wrangler deploy` from its `cf-container/` directory.
+
+### fix(panel): a refine cannot cut a long board, and discard undoes a refine
+
+A refine sends the whole board, and until vivijure-core#473 the refinement prompt asks the model to return at most 50 scenes. So refining a board of more than 50 could come back shorter, and the panel replaced the board with it (cf#1334). The panel now refuses a refine reply that has fewer scenes than a board of more than 50. The board stays as it was, and the chat says why and points to delete in the scene editor. A refine that is meant to remove scenes from such a board is refused too, until core keeps the board length. A refine that applies now becomes the "discard all edits" baseline, so a discard returns to the board as it was before that refine. Before, discard went back to the original plan output and lost hand edits made before the refine.
+
+### chore(deps): adopt vivijure-core 1.40.0, so a driven shot keeps its planned length (#1338)
+
+Core moves to `^1.40.0` (vivijure-core#478). A shot on a driven door that bills per clip, whose `ui.cost_usd_per_clip` is a flat `{ usd }` price (InfiniteTalk), gets its line padded to the planned seconds. A shot on a driven door that bills by length (p-video, Wan) gets no pad. Its clip carries `holdToSeconds`, and video-finish holds the last frame (#1343, rolled out). `tests/door-audio-floor-957.test.ts` runs the three driving-audio doors' real manifests through core's rule: InfiniteTalk is padded to 2s with no hold, p-video gets no pad and a 2s hold, and Wan keeps its 3s floor and is held to 2s. `containers/video-finish/test_hold.py`, the CI half, now also asserts the clone's `stop_duration`: a 0 adds nothing, and before this only the real-ffmpeg test caught it.
+
+### fix(cf-p-video-avatar): declare the provider's 1 s audio minimum, so a short line is padded and not refused
+
+The render proof of cf#1338 failed on p-video. pruna/p-video-avatar refused a 0.43 s line with 400 "Audio is too short (0.43s). Minimum duration is 1.0s." (cost 0), on all three submits, so no clip came back. Before core#464, every line reached it padded to 3 s, which hid that minimum. The door now declares `usage.driving_audio_min_seconds: 1`, and the core pads a shorter line to 1 s. Assembly still holds the clip to the shot's planned length, which is not billed. Its `ui.limits` says so. cf-p-video-avatar 0.1.4.
+
+### feat(video-finish): hold a clip's last frame to its planned length, and never cut its audio to fit
+
+`/finish` reads an optional `holdToSeconds` on each clip. When the clip's video is shorter, it clones the last frame (`tpad=stop_mode=clone`) until the clip lasts that long, and on a talking film it pads the clip's own audio with silence to the same length. vivijure-core#478 sends it for a shot on a driven door that bills by length, whose line is not padded because the pad would be billed. On a talking film, every clip's video now also runs at least as long as its own audio. InfiniteTalk rounds its frames to `4n+1`, so a 0.43 s line came back as 0.36 s of video, and the audio is no longer cut to fit. The join's one-frame tail-trim is taken from the clip's length after the hold. A request without `holdToSeconds` assembles as before, except for that audio-length rule (cf#1338). Container rollout: needed at once on merge.
+
+### fix(panel): a refine may delete scenes from a board over 50, when the message names them
+
+The guard from cf#1337 refused every refine reply shorter than a board of more than 50 scenes, so it refused a correct, explicitly requested delete. Measured on app.studio (core 1.40.0, cf#1341): a 60-scene board refined with "delete shots 10, 20 and 30" came back with exactly those three removed, and the guard refused it. On the lead's ruling, such a reply now applies only when all three hold. (a) The message asks to remove scenes: a removal verb whose object is a scene or shot reference, so "remove the rain from shot 5" is not one. (b) The reply is a pure removal: in order, every kept scene unchanged. (c) Every removed scene is named in the message, by number or id. That is what refuses a truncation to the first 50. When it applies, the chat names the removed scenes, and "discard all edits" restores them. Any other shorter reply is refused. The refusal no longer says a refine can return at most 50 scenes, which stopped being true with core 1.39.0.
+
+### fix(film): a long film does not start a part while R2 is retrying
+
+A long film's first submit of a part makes 17 R2 calls: a claim, the bundle, core's film start and the saves. Two of them are conditional puts, which the R2 retry never repeats. Measured under fake timers with core's real film start, a tick where plain calls succeed only on their fifth try took 51.8 to 65 s for one part, past the 30 s a cron pass has. The paid keyframe invoke lands at about 30 to 37 s, so a cut lands either just before the spend or just after it. Both leave the part claimed, and after 15 minutes it fails as "submit outcome unknown", for a person to check. A cut after the spend also pays for keyframe work no film records. Now no part is claimed while this isolate has retried an R2 call in the last 2 minutes (`SUBMIT_HOLD_AFTER_R2_RETRY_MS`). The part stays pending, and the parent's `stop_reason` says storage is retrying. The same tick then takes 14.8 to 18.5 s, with nothing claimed and nothing bought. A healthy submit is unchanged. Claim-before-submit is untouched.
+
+### feat(studio): GET /api/modules says which vivijure-core and which build serve the studio
+
+`GET /api/modules` now always carries `core_version` and `git_sha` beside `studio_release`. `core_version` is the vivijure-core this worker was built with. The bundler reads it from the installed package's `package.json` at build time, so it cannot drift from what runs. `git_sha` is `env.STUDIO_GIT_SHA` as the deploy stamps it. When nothing stamps one it is `null`, which is now present instead of omitted, and never guessed. `wrangler.toml.example` now carries `STUDIO_GIT_SHA = "${STUDIO_GIT_SHA}"` in `[vars]`, and every render stamps it. The CI deploy uses `github.sha`, in its explicit envsubst list. studio-release uses the checked-out tag's `git rev-parse HEAD`. `deploy.sh` and the installer's `render_core_toml` use `git rev-parse HEAD`, or empty outside a git tree. Empty renders `""`, which projects as `null`. The route is unauthenticated, so both values are checked for shape before they are projected. A `git_sha` that is not 7 to 40 hex characters, or a `core_version` that is not a version, is `null`, never echoed (cf#1347).
+
+### fix(cf-seedance): send prompts up to the published cap, not 2000 characters (#1369)
+
+The four vendored Seedance schemas capped `prompt` at 2000 characters. Cloudflare's published schemas now allow 25000 (2.5) and 10000 (2.0, 2.0-fast, 2.0-mini), so `composePrompt` cut prompts the vendor would accept, and nothing reported the cut. The schemas are re-vendored from the live URLs; `prompt.maxLength` is the only change in each file. `tests/cf-seedance-schema.test.ts` pins the four published caps and checks that a 5000-character prompt is sent whole on every model.
+
+### ci: the tag deploy refuses an empty render value and fails on a live binding change (#1382)
+
+The `deploy` job now runs `scripts/assert-render-vars.sh` before `envsubst`. A variable the template uses that would render empty fails the job, unless it is on the allow-list (`ACCESS_AUD`, `ACCESS_TEAM_DOMAIN`, `FINISH_UPSCALE_DOORS`, which are empty on the live studio by design). `envsubst` renders an unset variable as an empty string, so the placeholder check could not see the three values the live studio needed (`VIDEO_FINISH_URL`, `KEYFRAME_PARALLEL`, `PANEL_HOME`). `KEYFRAME_PARALLEL` is no longer defaulted to 4 on this path, because the default hid an unset variable on a studio that runs 2. The job also snapshots the live `vivijure-studio` bindings through the Cloudflare API before `wrangler deploy` and again after it, and fails on any difference, with `STUDIO_GIT_SHA` masked (`scripts/studio-bindings-snapshot.mjs`). A snapshot that cannot be read exits 2 and never compares equal. Tests: `tests/render-vars-binding-diff-cf1382.test.ts`.
+
+### chore(deps): adopt vivijure-core 1.39.0, so a refine keeps every scene it was given
+
+Core moves to `^1.39.0` (vivijure-core#473). The refinement prompt no longer caps the board at 50 scenes: it tells the model to return every scene it was given, to add or rewrite at most 50 in one turn, and that the board may hold up to 600. The panel's refine guard from #1337 stays as it is, as a backstop against a model that drops scenes anyway; relaxing it waits until refine has been seen on a real board over 50.
+
+### fix(finish-upscale): a missing RunPod endpoint says so in a structured field (#757)
+
+A finish-upscale bound to a RunPod endpoint that does not exist used to degrade as `runpod-run-failed: HTTP 404` with `failure.code: "refused"`, the same shape as a bad request. It now degrades as `runpod-endpoint-absent`, with `failure: { kind: "permanent", code: "endpoint_absent" }` and a detail that says the door has no backend, which the film report shows. Still a soft degrade: the chain keeps the input clip.
+
+It fires only on RunPod's measured answer for a missing endpoint: HTTP 404 with `detail` exactly `endpoint not found` (measured with a valid key on 2026-11-09). A 404 with any other detail, a door's 404, and every other status are unchanged. The classifier is `modules/_shared/runpod-endpoint-absent.ts`, so other RunPod modules can adopt it.
+
+### fix(finish): a finish job lost to a container restart is detected, not read as a job that never existed (#784)
+
+Finish job state is still the video-finish container's process memory, so a restart (OOM, a host restart, a wake after sleep) drops a running job, and the next status read answers 404 `not_found`, the same as an unknown job. The container now names its process on every async submit and status body (`instance`, minted at process start). `FinishContainer` records which process took each job's 202. A `not_found` from a different process is logged as `finish_container.job_lost` (job id, the process that took it, the process that answered), and the 404 body gains `lost: "instance_restarted"`. The status stays 404, so core's reading is unchanged: it still debounces, then re-submits under the deterministic output key. Keeping a job alive across a restart is still open.
+
+### fix(ci): the changelog immutability guard reports whitespace-only drift on its own line (#824)
+
+`scripts/changelog-released-immutable.py` still compares a released section byte for byte against its tag. When the bytes differ but the only change is whitespace, it now prints a separate `differs from its tag in WHITESPACE ONLY` note and does not count it as drift. The normaliser is narrow on purpose: it strips trailing whitespace and collapses runs of blank lines, nothing else. A changed indent, a removed paragraph break, whitespace inside a line, and a rewrite hidden inside a whitespace sweep are all still refused, and `tests/changelog-released-immutable.test.py` proves each one. The job stays advisory (`continue-on-error`). Changing that posture is a separate call.
+
+### feat(modules): modules declare `reason` on the invoke failures they can name (#846)
+
+131 invoke-arm `ok: false` returns across 33 modules now set the closed `reason` field: `bad-input` (invalid JSON body, a missing or malformed input field, an input over a cap), `unsupported` (a hook the module does not serve), and `not-configured` (an inline check on GATEWAY_ID, the RunPod credential, or a backend URL). Core's `classifyInvokeFailure` reads the declared class before the sentence, so rewording these messages can no longer move a retry decision. All three classes are deterministic and so is the prose reading of every sentence, so no retry decision changes today.
+
+Failures whose class the module does not know stay without `reason` and keep the prose road: `submit failed: <message>`, `could not start generation workflow`, `could not persist run state`, and `credentialProblem(...)`, which returns two different conditions behind one string. `PollResponse` and `CancelResponse` carry no `reason` (core#306).
+
+`tests/invoke-failure-reason-adopted-846.test.ts` drives every module's real `/invoke` and `/poll` handlers, rejects a value outside the closed set, rejects `reason` on a poll or cancel literal, and fails if a declared class disagrees with the prose disposition of its sentence.
+
+### fix(finish): an unprovisionable declaration wins over a typed VIDEO_FINISH_URL
+
+`videoFinishState` read a non-empty `VIDEO_FINISH_URL` before `VIDEO_FINISH_TIER_STATE`, so `unprovisionable` counted only when the URL was empty. A studio declared unprovisionable with a URL set kept offering the mux and add-audio controls. The order is now: a bound container is available; then `VIDEO_FINISH_TIER_STATE=unprovisionable` wins; then a usable URL is available. `studioEnv` clears the URL it hands core in the same case, so the film path degrades the same way the panel reports. A bound container still wins over the declaration. Only the exact value `unprovisionable` counts (cf#871).
+
+### feat(modules): a score module declares its kind, and the studio picks one per kind (#878)
+
+Core moves to `^1.38.0`. The `score` hook carries three products a film can use together: a music bed, narration and a beat plan. The studio picked the module for each by sniffing config keys (`prompt`, `text`, `clip_seconds`). Now `music-gen`, `narration-gen` and `beat-sync` each declare `score_kind` (`music`, `narration`, `beat`) in the manifest they serve, and the studio picks one module within the kind it needs with core's `pickScoreModule`: a named module first, then `ui.order`. A score module that declares no kind is never used, and the error names it. The panel's score filters read `score_kind`, and the pipeline page labels the hook "one per kind" (`pick_one_per_kind`). `docs/module-api.md`, `docs/module-authoring.md` and `docs/CONTRACT.md` state the rule; the MA-13 deviation note is gone.
+
+**Deploy order.** Deploy the three score module workers first, and check that each `GET /module.json` carries `score_kind`. Then deploy the studio. A studio on core 1.38.0 in front of an old score module refuses it by name rather than guessing.
+
+### fix(deploy): deploy.sh deploys every module the core binds, and checks the store first
+
+`deploy.sh` could not complete on any account. Its hand list of modules named `kling`, which no longer exists, so step 3 stopped on the missing config before any deploy ran. The list also left out eight modules the core template binds (`infinitetalk`, `chatterbox`, `cf-hailuo`, `cf-veo`, `cf-p-video-avatar`, `cf-kling-v4`, `cf-minimax-h3`, `alibaba-wan-lora`), and module configs had only `store_id` filled. The module list is now derived from the core template after the same strip the core render uses (`scripts/deploy-plan.sh`), so a binding cannot dangle. Each module deploys from a rendered copy filled by `scripts/fill-module-placeholders.sh`, and the committed configs are no longer edited. Before any worker ships, the run checks that the Secrets Store holds every secret those configs bind. A missing one is seeded from a same-named `deploy.env` value, and any still missing stops the run by name. `finish-blender` has its own markers and binds only when `BLENDER_RUNPOD_ENDPOINT_ID` is set. `deploy.env.example` now says that an unobtainable `CF_AIG_TOKEN` stops the deploy (vivijure-cf#880).
+
+### feat(studio): an on-demand `GET /api/tiers/video-finish/readiness` (#887)
+
+The studio half of the video-finish readiness read (vivijure-cf#887, lead ruling option (b)). An operator-scope route, in its own module (`src/tier-readiness.ts`), that asks the tier when someone asks and never on a schedule. It calls `GET /health`, then the door Worker's `GET /ready` on the URL door only, then the container's bearer-gated `GET /auth-check` (cf#1360). On the bound door every call routes as a stateless path to a `sync-<n>` pool instance, so a probe never mints a job instance. It answers `SERVING`, `NOT_SERVING`, `AT_CAPACITY` or `UNKNOWN` with every call it made, `liveness_only: true`, and on a `401` which gate refused (on the URL door the door Worker's `401` is identical to the container's, so it is attributed only when `/ready` says the Worker holds no token). `UNKNOWN` is never folded into `NOT_SERVING`. Concurrent requests share one read and a read is reused for 30 s. Nothing on the render or config path imports the module, and `tests/tier-readiness-887.test.ts` enforces that on the import graph with planted controls. Needs the cf#1360 container image live; on an older image the route answers `UNKNOWN`.
+
+### feat(video-finish): a bearer-gated `GET /auth-check` that does no work (#887)
+
+The container half of the on-demand video-finish readiness read (vivijure-cf#887, option (b)). `GET /auth-check` sits behind `bearer_middleware` like every media route, so a 200 means the process is up AND accepted the caller's bearer; a wrong or stale token is the gate's own 401. It does no work: no JOBS entry, no ffmpeg, no subprocess, no worker thread, no network, no disk. The body is `{ok, serving: true, bearer: "verified"|"disabled", liveness_only: true}`; `disabled` reports the explicit loopback opt-out honestly instead of calling an open door verified. Nothing secret is returned.
+
+Through the `FINISH_CONTAINER` binding it routes like any stateless path, to a `sync-<n>` pool instance, so it never mints a job instance. The studio route that calls it (`GET /api/tiers/video-finish/readiness`) is a later PR; this one only adds the container route. Ships with `--containers-rollout=immediate` on the studio deploy and a deploy of the standalone `vivijure-video-finish` Worker.
+
+### docs(config): the media-door hosts resolve again; retire the last SPEECH_UPSCALE_DOORS reference
+
+Re-measured for vivijure-cf#890: every media-door host the reference deploy names (`VIDEO_FINISH_URL`, `IMAGE_PREP_URL`, `AUDIO_BEAT_SYNC_URL`, `AUDIO_MIX_URL`, `AUDIO_MASTER_URL`, `FINISH_BLENDER_DOORS`) now resolves and answers `GET /health` with 200, and every other path with 401. The comments in `wrangler.toml.example` and `modules/_shared/video-finish-404.ts` that said the video-finish host was NXDOMAIN now say what was measured and when. `SPEECH_UPSCALE_DOORS` and its two `SPEECH_DOOR_TOKEN*` keys are gone from the one test fixture that still set them; no source has read them since speech-upscale was removed (#787). No var is renamed or removed from the template.
+
+### fix(render): a submit door refuses a field it does not read, and a quality tier it does not know
+
+`POST /api/storyboard/render`, `POST /api/storyboard/render-from-keyframes` and `POST /api/render/film` read only the fields they know and silently dropped the rest. A request with `quality_tier: "draft"` (the field is `qualityTier`) or a top-level `resolution` (it belongs in the motion config) got a 201 and a render at `final` and at the motion door's default size. A `qualityTier` that was not a known tier also ran at `final`. Each door now answers `400` before any spend, naming every field it does not read, with a hint for the common ones, and refuses an unknown `qualityTier`. An absent `qualityTier` is still `final`. On the two panel doors the snake_case spellings a shipped client sends (`bundle_key`, `quality_tier`, `project_id`, `cast_loras`, `keyframes_only`) are applied as the field they name instead of dropped, a top-level `keyframe_backend` is applied as `renderOverrides.keyframe_backend`, and `storyboard` is accepted and ignored. Two spellings with different values are refused. The field lists are held equal to each handler's body type at compile time. The check runs only on outside requests: a retry replay and the parts of a long film are built by the studio and pass as before (vivijure-cf#896).
+
+### fix(studio): `GET /api/modules` reports `speech` unavailable while nothing serves it (#904)
+
+The catalog offered the `speech` stage ("clean / enhance dialogue audio") although no module provides it since cf#786 removed speech-upscale. `host.hooks_unavailable.speech` now says so, with a reason the panel prints verbatim. The entry is derived from what is installed, so it disappears as soon as a module serving `speech` is discovered. The hook stays in the catalog: retiring it and funding a provider are separate calls. `tests/providerless-hooks-904.test.ts` holds the list equal to the catalog hooks that no module in this repo declares.
+
+### fix(finish): subtitle and film-titles name an HTTP refusal and a handler refusal apart
+
+Both modules tagged two different container failures `passthrough:container-failed`: a non-2xx answer, and a 2xx whose body said `ok: false`. The tag that explains a degrade could not say whether to look at the transport or at the handler. A non-2xx is now `passthrough:container-http-error`, and an `ok: false` body is `passthrough:container-refused`. The `failure` verdict is unchanged (`failureFromStatus` for the first, permanent `refused` for the second). subtitle 0.2.2, film-titles 0.2.2.
+
+### feat(containers): the bound video-finish container is started with the bearer token (stage 1 of 2)
+
+`FinishContainer` started its container with `LOCAL_FINISH_ALLOW_UNAUTHENTICATED=true`, because the bound hop sent no credential. Now the first request to an instance resolves `MEDIA_FINISH_TOKEN`, the same Secrets Store binding the studio sends. When it is readable, the container starts with it as `LOCAL_FINISH_TOKEN` plus `LOCAL_FINISH_ACCEPT_MISSING_TOKEN=true`. Every media container's `bearer.py` gains that variable. It is a rollout stage, not an auth mode: with a token set, a request with no `Authorization` header is served and logged, and a wrong token is still 401. Without a token it changes nothing. The Durable Object logs `finish_container.bearer_absent` for every request that reaches the container without the header, and `finish_container.bearer_mode` once per instance. With no readable token the container keeps the old opt-out, so the finish tier stays up. The container smoke gate now starts every image in token mode. Stage 2 removes the permit and the fallback once a full film shows no `finish_container.bearer_absent`. Pairs with vivijure-core 1.36.0, which attaches the bearer on the bound path itself (cf#911).
+
+### feat(containers)!: the bound video-finish container requires the bearer (stage 2 of 2)
+
+**A deploy with `FINISH_CONTAINER` bound and no readable `MEDIA_FINISH_TOKEN` loses its finish tier.** That is the intended outcome. `FinishContainer` now starts its container with `LOCAL_FINISH_TOKEN` alone. With no readable token it answers 503 without starting the container and logs `finish_container.no_token`. The stage-1 rollout permit (`LOCAL_FINISH_ACCEPT_MISSING_TOKEN`) and the no-auth fallback are removed, and every media container's `bearer.py` is back to strict: a missing or wrong header is 401. Requires vivijure-core >= 1.36.0. Deploy only after stage 1 is live and a full film shows no `finish_container.bearer_absent` (cf#911).
+
+### feat(panel): the panel says when a render is not clean
+
+Two signals reached the render payload and nothing in the panel read them. `output.content_validation` (core 1.25.0) is what the clip pixel check measured: clips that failed it and clips it could not look at. `output.plate_check` (core 1.31.0) names stills the backend plate count guard could not clean of an extra person. Both now show on the render (the planner live view, the render history row and its badge, and the Make a video page in plain words) and beside the affected still ("This still may show an extra person. Regenerate it to try again.", and on the Films page "Use New take"). A check that never ran, or ran clean, shows nothing. The keyframe and local-gpu modules pass the backend `plate_count` through, a film animated from a preview keeps it, and a retake drops it for each still it replaces. A new test fails when the core adds a render payload key that no panel code reads and no exemption names (cf#916). `plate_check` needs core 1.31.0 to appear; on 1.30.0 the panel simply shows nothing for it.
+
+### docs(infinitetalk): the 15 second ceiling is our cap, said in one place (#931)
+
+RunPod's InfiniteTalk endpoint takes no duration parameter and publishes no length limit, so `usage.max_seconds: 15` cannot be cited to the vendor. It is now one constant, `MAX_SECONDS` in `modules/infinitetalk/src/kling.ts`, with its provenance, used by both the manifest and the clamp; before, `15` was written twice. `docs/motion-door-limits.md` says the range is 2-15 seconds and that 15 is our cap. No behaviour change: the value is unchanged until a paid probe measures the longest audio the endpoint renders in full.
+
+### fix(cf-veo): refuse 1080p on a shot that is not 8 seconds, before the provider is called (#932)
+
+Veo 3.1 makes 1080p at 8 seconds only (Google's Veo reference), and `config_schema` cannot say that one field limits another, so the panel offered 1080p on any shot. `cf-veo` now refuses the pair at its own input validation with `reason: "bad-input"`, and the error names the shot length and what to change: use 720p, or make the shot 8 seconds. The check reads the snapped duration (4, 6 or 8), and no workflow is started for a refused shot. The resolution label now reads "resolution (1080p: 8 second shots only)". The refusal still lands after keyframes; moving it to preflight needs a contract change, filed as vivijure-core#507.
+
+### chore(deps): adopt vivijure-core 1.37.0, so a driven line is padded only to its own door's floor (#957)
+
+Core moves to `^1.37.0`. A line on an audio-driven shot is padded only to `usage.driving_audio_min_seconds`, the floor that shot's door declares (skyphusion-labs/vivijure-core#464). alibaba-wan declares 3s, as Wan 2.6 takes driving audio of 3 to 30 seconds. infinitetalk and cf-p-video-avatar declare none, so their lines reach them as the dialogue module wrote them: cut to 200 ms after the last speech (#1322), not padded to 3s. A declared floor outside (0, 15] is refused when the manifest loads. The cf-p-video-avatar limit line that said trailing silence is not trimmed now says it is cut (cf-p-video-avatar 0.1.3), and `docs/motion-door-limits.md` no longer lists trimming as a gap. `tests/door-audio-floor-957.test.ts` reads the three driving-audio doors' real manifests through core's validator and parser; on core 1.36.0 its Wan case fails, since that core drops the floor.
+
+### fix(dialogue): a Cast line ends 200 ms after its last speech, not at 3.000s
+
+Every short Cast line WAV ran to 3.000s, about 1.66s of it silence, and every audio-driven door billed and animated that silence. The cause was ours: dialogue-gen padded every line under 3s with zeros for Wan's 3s driving-audio floor. Raw Aura-1 output is not padded (measured 2026-11-06: a 0.998s line ends in speech, a 6.304s line has a 0.159s tail). dialogue-gen 0.1.2 no longer pads, and it and chatterbox 0.1.3 cut trailing silence to 200 ms after the last 10 ms block that reaches -60 dBFS. alibaba-wan 0.2.4 declares the floor as its own: `usage.driving_audio_min_seconds: 3`. The helper is `modules/_shared/wav-pcm.ts`. The core still pads a line on a driven door to 3s until it reads that field; that is a separate core change.
+
+### fix(video-finish): a VIDEO_FINISH_URL must name an origin before the tier reports available
+
+A non-empty `VIDEO_FINISH_URL` used to report the video-finish tier available, whatever the string was. A rendered config that kept the literal `${VIDEO_FINISH_URL}` placeholder, or a bare hostname with no scheme, lit the panel's finish controls and sent each film down a finish path that failed after its clips were paid for. The value now counts only when it parses as an absolute http or https URL with a host and no placeholder left in it. The same rule clears an unusable value from the env handed to core, so the film path takes the documented degrade path and the panel and the film agree. A bound `FINISH_CONTAINER` still wins over the URL. This is a shape check, not a reachability probe (vivijure-cf#964).
+
+### chore(deps): core 1.30.0 from npm
+
+The studio now pins `@skyphusion-labs/vivijure-core` `^1.30.0` from the registry, replacing 1.28.4. That brings everything in core 1.29.0 and the optional storyboard `setting` (vivijure-cf#1145), so planner-built boards can name the film's place once. `npm ci` no longer needs a hand-installed core tarball.
+
+### chore(deps): core 1.31.0 from npm
+
+The studio now pins `@skyphusion-labs/vivijure-core` `^1.31.0` from the registry, replacing 1.30.0. Core 1.31.0 carries the backend plate count report to the render row (`plate_check`, and `plate_count` on keyframes-only entries), so the panel can warn that a still may show an extra person (vivijure-cf#1282).
+
+### chore(deps): core 1.32.0 from npm
+
+The studio now pins `@skyphusion-labs/vivijure-core` `^1.32.0` from the registry, replacing 1.31.0. Core 1.32.0 renews the film advance lease while a tick runs, with a 60 s lease in place of 300 s, so a film whose poll is cut off is free again within a minute. The cron sweep now also drives a keyframes-only film that nobody polls, and such a film still sends no email (vivijure-cf#1139).
+
+### chore(deps): core 1.33.0 from npm
+
+The studio now pins `@skyphusion-labs/vivijure-core` `^1.33.0` from the registry, replacing 1.32.0. Core 1.33.0 keeps a film's per-shot door map and per-door motion configs on the film doc, and decides pre-clip dialogue, minted silence, the audio URL and clip length from each shot's own door. So a film can mix a door driven by audio with a silent door (skyphusion-labs/vivijure-core#442).
+
+### fix(clips): pin core 1.41.0 and save a clip job's row as mode clips
+
+The studio now pins `@skyphusion-labs/vivijure-core` `^1.41.0` from the registry, replacing 1.40.0. Core 1.41.0 adds the `clips` render mode, and the render row projection now passes it through. A clip job's history row is now inserted with mode `clips` instead of `full`. The retry route refuses a row whose mode is `clips` as well as one whose job id has the `clips-` prefix. The panel's `isClipJobRow` reads the mode first and keeps the prefix as the fallback for rows saved under an older core, so `historyPassLabel` and the hidden retry button follow the mode too (#1351).
+
+### chore(deps): core 1.41.1 from npm
+
+The studio now pins `@skyphusion-labs/vivijure-core` `^1.41.1` from the registry, replacing 1.41.0. Core 1.41.1 stops a read of a finished render from rewriting the row's `completed_at`, `execution_time_ms` and `delay_time_ms` (skyphusion-labs/vivijure-core#487). Before, a second poll of a finished keyframes-only render replaced its runtime with the time since submit, so the History row and any figure built on it read when the row was last polled, not when the render finished.
+
+### chore(deps): core 1.41.3 from npm
+
+The studio now pins `@skyphusion-labs/vivijure-core` `^1.41.3` from the registry, replacing 1.41.1. Core 1.41.2 and 1.41.3 bring:
+
+- A finished film or scatter render reports how long it ran, however late it is first polled (skyphusion-labs/vivijure-core#490).
+- A pending keyframe poll no longer cancels a finished RunPod job and loses its output, the plate count record included (skyphusion-labs/vivijure-core#493).
+- The plate count record keeps the backend's face-floor flag (skyphusion-labs/vivijure-core#492).
+- A scatter render whose mux door is not configured sends `render.failed`, and the notify hook table names it (skyphusion-labs/vivijure-core#357).
+- A 4xx from the beat door fails on the first read (skyphusion-labs/vivijure-core#358).
+
+### feat(animate): a per-shot door map may mix a door driven by audio with a silent door
+
+`animate-cloud` and `animate-hybrid` now start a film whose shots mix a door with `usage.driving_audio` and a silent door. This lifts the 400 that vivijure-cf#1168 added earlier in this cycle (`perShotAudioDoorRefusal` is removed). Core 1.33.0 keeps the map on the film doc and decides each shot's audio from its own door (skyphusion-labs/vivijure-core#442). The spoken-clip prep now runs per door (`prepareSpokenClipsPerDoor`). A door driven only by audio that holds a spoken shot gets native audio off when its schema has that switch. That config is sent as its own `motion_configs` entry, and the door's shots carry no voice-sample clip. Every other door is left as before. A map still does not refuse a spoken shot on a door that cannot speak, unlike finalize. That question is vivijure-cf#1299.
+
+### fix(keyframe): a refused /run says why, and a 409 is tried again
+
+Three keyframes-only renders failed with only `keyframe /run -> 409`, each 7 to 25 s after the GPU endpoint moved to a new version (RunPod audit log), while a film 11 s later went through. Core read the bare status as final. The keyframe module now carries the provider's own reason (its `error` or `message` field only, with URLs and long token-like runs replaced, on one line, capped, because the request carries the tenant's R2 credential) and declares 409 and 5xx as `upstream-unavailable` and 429 as `rate-limited`, so core submits again on a later tick. Other statuses stay final. The helper is `modules/_shared/runpod-submit-error.ts`; the seven other RunPod doors with the same bare status can adopt it.
+
+## v1.43.0 -- 2026-11-03
+
+### fix(retry): a retry keeps what it already paid for (#1166)
+
+Retry now asks core to keep each line, clip and finish step whose inputs are proven identical, and buys only the rest. `POST /api/render/film` takes the same choice as `reuse_finished: true`. The default on that door stays off. Needs core at `39c6a25` or later.
+
+### feat(video-finish): join finished films into one film, and cap a film at what one upload carries
+
+`POST /async/join-films` joins up to 64 finished films, in order, by URL, into one PUT. The video is copied and the audio is encoded once. Films must match in frame, rate and codec, and a mismatch is refused before any join. The job id comes from the object paths, so a re-submit after a restart reaches the same job and writes the same bytes. See `containers/video-finish/README.md`.
+
+`MAX_FILM_BYTES` falls from 6.85 GB to 5,363,466,240 bytes, the R2 limit for one PUT, and `_put_file` refuses above it with a named 413. Core's assemble admission needs the matching change.
+
+### fix(plan-enhance): a plan cut off at its output limit says so (#1134)
+
+A long plan ran out of output tokens, and the studio reported `title is required` instead. A failed refine returned its input and read as a success. Plan and refine now return the true reason: a cut-off reply, a model error, or a reply that does not parse. A cut-off or refused reply is never retried on the local model. Plan, refine and the director pass can now use 21000 output tokens, up from 4096, so the most a single call can spend rises in step. Plan and refine skip the AI Gateway cache, so a retry reaches the model and an identical re-plan is billed again.
+
+**Fix: chat image reads the output shape the proxied models publish (#1141).**
+
+`image-generate` read `url`, `image_url`, `output_url`, `data`, `images` and `output`, and the models publish `image`, sometimes wrapped in `result`. Every Google call answered `no image URL`. It now reads what `cloud-keyframe` and `cast-image` already read.
+
+**Fix: finish-blender sends the presigned URLs the core gives it (#1146).**
+
+`finish-upscale` and `finish-rife` forward `video_url` and `output_url`, and `finish-blender` did not. So the door could only use R2 mode, and a door with no R2 env failed every shot and the whole film after the clips were paid.
+
+**Fix: plan-enhance keeps a shot under the 50 word cap (#1150).**
+
+A rewrite over the cap was returned as success and then refused by the validator. The model is now asked for under 40 words. A rewrite still over 50 keeps the original prompt, and the notes say how many.
+
+**Fix: a failed cf-p-video-avatar call names its gateway log (#1154).**
+
+A provider `7003` carries no detail, so the failure could not be diagnosed. The error now carries the AI Gateway log id, which holds no content and points to the request.
+
+**Fix: cloud-keyframe tells the model not to draw text (#1155).**
+
+A still of someone speaking could come back with a speech bubble or a caption, which then stayed on screen for the whole clip. Both prompts now forbid it.
+
+**Fix: the audio-mix dialogue track can be a whole film (#1158).**
+
+The dialogue track is the assembled film, and one 128 MB cap covered every track, so an upscaled 2 minute film was refused. The dialogue track is now capped at 3 GB. Music and sfx stay at 128 MB. Needs a container deploy.
+
+### fix(modules): dialogue-gen is the default dialogue door
+
+`dialogue-gen` now sorts ahead of `chatterbox`. A provider queue on `chatterbox` was failing spoken films, and the core picks the door by order with no per-film choice (vivijure-cf#1164).
+
+### fix(retry): a retry repeats the original film, or does not start (#1177)
+
+The film and render doors store the request beside the film, and retry replays it with `reuse_finished`, so cast, voices, bed and titles are kept and proven work is not bought again. A render with no stored request now answers 409 saying what it would lose, unless `accept_rederive: true`.
+
+### fix(cloud-keyframe): a film run with no film doc stops after a grace period
+
+A drawing run for a film treats a film doc still missing after 6 minutes as a film that is over, and stops before the next paid step. A run with no film id is not affected.
+
+### fix(cloud-keyframe): draw keyframes in a Workflow
+
+`cloud-keyframe` draws one shot per Workflow step. Progress no longer depends on a poll, and `/poll` returns from one R2 read, so a poll does not hold the film advance lease for the length of a draw. `/cancel` stops the Workflow, and the Workflow stops by itself when its film is over. A re-submit for the same film and shots reaches the run already going. A host without the new `KEYFRAME_WORKFLOW` binding draws one shot per poll, and a poll token from before the change finishes that way.
+
+### feat(films): a film board for long films built as parts
+
+New `/films` page, phone first. It shows a parent film's phase, shots, estimate, stop reason and limits, each part's status and error, retries a failed part, resumes a held film or a failed join, raises the spend ceiling, and offers the joined film and each part to watch or download. It projects `GET /api/film/:id`, so it needs the parent film routes. Actual spend is not shown as a number because no meter attributes it to one film. `test:browser` now also covers this page and runs in CI.
+
+### feat(films): a contact sheet for each part
+
+Each part on the film board can show all its stills in a grid, using small thumbnails from `GET /api/thumb/`. A tap opens one large, with previous and next, and a new take if the part allows it.
+
+### fix(film): a shot that lost a finish step reaches the film's report
+
+A shot whose upscale soft-degraded looked finished from everything on a long film. The film and each part now count such shots in `finish_degraded`, the part gives the reasons, `degraded` says so in text, and the shot row names its own. The panel's existing line shows that text.
+
+### feat(films): review a part's shots and make a new take
+
+Each part on the film board opens a shot list: still, seconds, prompt, line and error, with the clip on a tap. A new take can change the prompt, line or voice, and a waiting take can be cancelled. "Go to shot number" opens the right part. The board warns when the scheduler has stopped, and says when a step takes effect, since the cron acts on it within about a minute.
+
+### fix(films): a reload cannot start a second film, and the confirm says more
+
+The start form keeps its key across a reload until the film starts, and warns plainly if a key was used with other settings. It warns when the estimate is above the ceiling, and the confirm lists per-part changes.
+
+### feat(films): start a long film from the panel
+
+`/films?new=1` takes a master board from a project or pasted JSON, cast per slot, part size or breaks, look, door, frame, an estimate per shot and a spend ceiling, then asks before it creates the film. Caps and doors come from `GET /api/modules`. It stops after the first part by default.
+
+### docs(cast): flip-safe character design for cloud keyframes
+
+The cast editor, the studio guide and the `cloud-keyframe` README now say that a one-sided mark is not reliable on the cloud route. Use marks that read the same when mirrored, and make them bold, because a thin mark can drop out. This removes the wrong-side failure. It does not promise drift-free output.
+
+### fix(history): keep unchanged rows, load no film until expanded, send ETags
+
+The film list keeps a row's element when the row has not changed, so a refresh no longer stops a playing video. A collapsed row loads no film. The render clock uses the server's run time on a second device. Artifacts send an ETag, answer `If-None-Match` and honour `If-Range`.
+
+### feat(infinitetalk): a stopped film can stop a clip job
+
+The module declares `cancelable` and takes `POST /cancel` with a poll token. It calls `POST /cancel/<job>` on the public endpoint. Whether RunPod still charges a job cancelled while running is not measured. The module needs its own deploy.
+
+### fix(dialogue-gen): bring each spoken line to one level
+
+Aura's level varied by about 15 dB from line to line, and short lines came back quietest, so one speaker could be hard to hear. Each line now goes to -20 dBFS of speech, measured with pauses left out, up to a -1 dBFS peak and at most 24 dB of gain. Measured on 40 real lines: speech level range 15.3 dB before, 2.1 dB after. It applies to lines made after this deploy. A line that is reused keeps its old level.
+
+### docs(modules): door cards stop saying "One film, no scatter"
+
+Scatter is retired, and a long film is now parts joined at the end, so that line meant nothing to a filmmaker and was no longer the rule. The Flux card and `docs/motion-door-limits.md` now say what holds.
+
+### feat(film): long films as parts under one parent
+
+`POST /api/film` takes a master board, splits it into ordinary film jobs, runs them in order with limits, and joins the finished films. `GET /api/film/:id` reads it. `POST /api/film/:id/parts/:n/retry` re-submits a failed part and keeps proven work. `POST /api/film/:id/ceiling` raises the spend ceiling. The ceiling counts retries. `POST /api/film/:id/shots/:shot/retake` buys a new take of one shot of a finished part and joins again. `GET /api/film` lists films, and `stop_code` gives a stable key for `stop_reason`. `POST /api/render/film` now takes `delivery_width` and `delivery_height`.
+
+### fix(planner): phone access, door filter, look routing, and a spend confirm
+
+The Screenwriter dock no longer traps a phone: it stays shut until asked, and its close button stays below the top bar. The door filter for spoken lines now runs in a browser. A new look control routes anime to `cloud-keyframe` and photoreal to `keyframe`; an untrained character is refused on the LoRA route only. A motion render now asks first, with a clip total when the door states a rate (`ui.cost_usd_per_second`). Copy that overclaimed email, voice, retry and motion is corrected. `/` now opens the planner. Raw job output is shown only with operator tools on. Adds `npm run test:browser`.
+
+### fix(modules): provider safety filters are always on
+
+`alibaba-wan`, `alibaba-wan-lora`, `infinitetalk` and `cf-p-video-avatar` always send the provider safety filter on. It is not a config field, and a stored config that sets the old key is ignored. In `cast-image`, a provider safety flag ends the run as a plain failure with the provider's reason, on the model the run started with.
+
+### fix(studio, modules): retry temporary R2 errors
+
+Every R2 call through `studioEnv`, and through each module that binds `R2_RENDERS`, now retries codes 10001, 10043, 10054, 10058 and a lost connection: five attempts over 3.7 to 4.6 s, with jitter. Real errors fail at once. One R2 internal error used to end a film part.
+
+Limits. A conditional put and a stream put are not repeated. Reading a body after `get` is not covered. An outage longer than the backoff still fails what it failed before. A repeated plain put can overwrite a newer write when the first try landed and errored, which is rare.
+
+### fix(film): a retry before any clip does not count twice against the ceiling
+
+A part that failed before its clips, then retried, counted a whole second estimate, so a ceiling near one part's estimate stopped the film with nothing spent on clips. The first 2 such retries per part now add nothing: the stills are kept, and one estimate covers them. From the third they count in full, so a loop reaches the ceiling. "Before its clips" is the part's film saying it holds no clip job. A film that cannot be read this tick is no longer read as gone, and is left for the next tick.
+
+### feat(studio): a small copy of a still for contact sheets
+
+`GET /api/thumb/*key` returns a still at 360 px wide as JPEG, through the Images binding, with the same auth and key rules as `/api/artifact`. A contact sheet of 40 no longer needs 40 full PNGs. If the original cannot be resized it answers 502 with the path of the original, and 503 if `IMAGES` is not bound. It never returns a blank image. A deployment needs the `[images]` binding.
+
+### feat(studio): an authenticated sweep route for a deployment with no cron
+
+`POST /api/internal/sweep` runs the same pass the cron runs, for a deployment that cannot attach a cron trigger to the studio Worker. Without it, a film job nobody polls never advances and a long film is accepted and never starts. It is off by default: it exists only when the new optional `SWEEP_TOKEN` secret is set, takes only `Authorization: Bearer <SWEEP_TOKEN>`, and answers `202 { "ok": true }`. Any other request reads exactly like an unknown path. The studio's own tokens never open it. The cron and the route now share one pass under a short R2 lease, so two passes do not overlap; the cron had no pass-level guard before.
+
+### fix(video-finish): keep apostrophes and colons in titles
+
+A title with an apostrophe lost it, and one with a colon as well failed the render. Title, subtitle and credit text now goes to drawtext unquoted and escaped for both parsers, with `expansion=none`. Needs a container deploy.
+
+### fix(finish-upscale): ask again before a shot stands out in the film
+
+A door that soft-degraded an upscale passed the small clip through at once, so one shot could sit in a film beside upscaled ones. For a cause that may pass, the step now reports `transient`, so the core holds and re-dispatches it. A wall-clock guard expiry gets no retry: each try can run 570 s, about $0.55, and a clip too heavy usually fails them all. It stands as a limit on the film's report, for a person to retry.
+
+### feat(r2): support temporary R2 S3 credentials
+
+The studio presigner and the `cf-grok-video` upload presigner read an optional `R2_S3_SESSION_TOKEN`. When set, presigned URLs sign `X-Amz-Security-Token`, so the R2 S3 pair can be an R2 temporary credential. When unset, URLs are byte-identical to before. The token is stripped from tenant and dispatch env with the rest of the credential (vivijure-cf#1232).
+
+### feat(plan-enhance): reach Opus through the AI binding without a token
+
+With `GATEWAY_ID` and the new opt-in var `ENHANCE_OPUS_BINDING = "1"`, plan-enhance calls Opus with `env.AI.run` and the AI Gateway catalog id, so it needs no `CF_AIG_TOKEN`. A deployment with a token is unchanged, and so is one with a gateway and no opt-in, which stays on the free local model. `GET /ready` reports the transport as `opus`.
+
+## v1.42.2 -- 2026-10-31
+
+### fix(finish): title cards, captions, mux and frames take a film over 256 MB (#1129)
+
+These routes capped the whole film at the 256 MB clip limit, so a film past a few minutes lost its cards and captions. They now use the size assemble admits, 6.85 GB. Film transfers are bounded at 30 minutes with a stall check, not 120 s, and a whole-film encode at three times the film's length, never below 20 minutes. Title cards remove the source once it is normalized, so peak disk is two copies of the film, about 16 GB at the cap against the 20 GB disk.
+
+### chore(deps): vivijure-core 1.28.4
+
+A finish retry that succeeds no longer reads as degraded. Archived clip takes are bounded at 3 per clip: a render copies only the clip its door replaces, and older copies go when that shot next renders.
+
+## v1.42.1 -- 2026-10-30
+
+### fix(modules): a failure after a track or line is bought no longer buys it again (#1107)
+
+`music-gen` and `chatterbox` ran the provider call, the download and the R2 write in one retried step. A failed write bought the track three times at $0.15 each, or a Chatterbox line four times. The call is now its own step, and the store step retries alone. A write that keeps failing reports that the audio was not stored and will not be bought again. `dialogue-gen` is unchanged: Aura returns bytes that a step cannot checkpoint, and a repeat costs about $0.001.
+
+### fix(finish): a finish retry says why it did not start (#1114)
+
+`POST /api/render/film/:id/finish-retry` answered "no finish step to retry" for a film that was only busy. The 409 now has a `code`: `busy` with `Retry-After: 30`, `nothing_to_retry`, or `cannot_deliver`. With core 1.28.3, `clip_deliveries` reports the frames a clip has, and marks them `measured: true` (#1125).
+
+## v1.42.0 -- 2026-10-30
+
+### fix(finish): title cards and captions are sized for a vertical frame (#1111)
+
+On a vertical film the title ran off both sides of the card, and one line of dialogue wrapped to six lines across the speaker. Cards now scale by the frame's short side, and captions by its aspect against 16:9. At 720x1280 a title is 53px, and that line of dialogue is two lines. A frame at least as wide as it is tall keeps its sizes. A title too long for the card wraps to at most three lines and shrinks, on any frame, so a landscape title that ran off the edge now stays on.
+
+**Fix: deleting a render frees its film-scoped finish clips (vivijure-core#379).**
+
+Deleting a render now frees its folder at `renders/<project>/clips/<film_id>/`, including intermediate clips that no record names.
+
+### fix(finish-upscale): the default is the delivery height, not a factor (vivijure-core#389)
+
+The schema default of `scale: 2` was filled into every config, so every upscale counted as an explicit 2x and the delivery-height route never ran. The default is now `0`, shown as "to delivery height". An explicit 2x or 4x still wins. A clip already at the target calls no door. The module declares `finish_scales_frame`, so a core from 1.28.2 prices the film at that frame before it spends.
+
+## v1.41.0 -- 2026-10-30
+
+**Fix: a cancelled film can stop a running GPU finish step (#1109).**
+
+`finish-rife`, `finish-upscale` and `finish-blender` now implement `POST /cancel` and set `cancelable: true`. It needs a vivijure-core with vivijure-core#378 to be called.
+
+`film-titles` and `subtitle` stay uncancelable, because the video-finish container has no cancel route. `audio-master` returns synchronously, so it has no running job to stop.
+
+### feat(finish): films queue for a finish slot in order, and a missing step is never a clean finish
+
+Films now take finish slots first come, first served, and a poll shows "waiting, position 3". A transient failure in any finish step holds the film; a permanent one, or a wait that runs out, leaves the film `done` with `finish_incomplete`, which the panel shows as a warning with a retry that re-renders no clip. Adds migration 0023. Requires core 1.28.0.
+
+### chore(deps): undici 7.30.1
+
+The root npm override now pins undici to 7.30.1. That release fixes five development-scope advisories in the root lockfile: cache poisoning via cross-origin redirects (GHSA-4w7w-5xrc-9h26), a TLS certificate validation bypass (GHSA-2m5v-pch6-74hx), denial of service via TLS 1.2 renegotiation (GHSA-qrxm-fqhp-jwvm), unbounded WebSocket PONG buffering (GHSA-9fm3-97px-rjf6), and denial of service via excessive content-encodings (GHSA-xjj6-f33q-929c).
+
+## v1.40.1 -- 2026-10-30
+
+### fix(modules): a failure after the provider succeeds no longer buys the run again
+
+The cloud video doors did the model call, the parse, the download and the R2 write in one retried workflow step, so a failure after a paid success bought the clip up to three times. The call is now its own step, the parse runs once, and the download and write retry on their own step without reaching the provider. A failed parse or store fails the render with a clear error. A provider call that throws still retries.
+
+### feat(motion): a spoken shot is the cast line on InfiniteTalk (cf#983)
+
+The hosted default for a board with a line is InfiniteTalk when that driving-only
+door is installed. own-gpu and alibaba-wan are not that default. A kept Cast
+sample does not switch the default to Seedance. `generate_audio` stays off when
+the module declares it, and the voice-sample clip is not sent. A board with no
+line uses one silent catalog door. The clip is the shot still. The ten cast
+training refs are not attached.
+
+This code shipped in v1.38.0 (#987). Its note was held by mistake until now, so it appears in a later release than the code.
+
+### fix(modules): cf-kling-v4 declares the sound the model returns
+
+The door said silent, and the model returns its own soundtrack with no field to turn it off. The door now says so and reports `has_audio`. A board with a spoken line is still refused.
+
+### fix(modules): cf-minimax-h3 reads the wrapped response
+
+The gateway returns `{ state, result: { task } }`, and the door read `task` from the top. Every clip was generated and billed, then thrown away with "model completed but returned no video URL", and the workflow retried it twice more. The door now reads both shapes.
+
+### fix(modules): cf-veo sends bare base64
+
+The provider rejected the data URI with "Invalid base64 encoded bytes", so `image_input` is now the base64 of the keyframe with no prefix.
+
+### fix(finish): the standalone video-finish door gives each film its own instance
+
+Every title and subtitle job ran in one fixed `standard-1` instance, so `max_instances` could not be reached and concurrent films piled into one small container. The door now routes on `x-vivijure-finish-affinity`, which `film-titles` and `subtitle` send on submit and on status, and it runs `standard-4` with `max_instances = 20`. A full door answers 429. A request with no header goes to the old instance. A `v*` tag now deploys this door too, on a GitHub-hosted runner, under the same gates as the studio. About USD 0.03 per film with cards.
+
+## v1.40.0 -- 2026-10-30
+
+### fix(finish): a finished job gives its instance back sooner
+
+A finish container now sleeps 5 minutes after core reads a terminal status, in place of 10. While a job can still be running the timer stays at 10 minutes. This doubles the rate at which short films can start, and halves the idle bill per film.
+
+### fix(ci): the changelog assembler respects holds, and the fragment gate refuses a bad root
+
+`scripts/changelog-assemble.py` now leaves a held fragment in place and names it, and it refuses a fragment with only one half of a hold. It reads the rule from `scripts/changelog-fragments-consumed.py`, so the two cannot disagree. That gate now exits 2 on a root with no `changelog.d/`, where a version passed by mistake used to report OK on 0 fragments.
+
+### fix(cf-seedance): send each Seedance model the body its Cloudflare schema allows (cf#1071)
+
+The default model is `bytedance/seedance-2.5`. That schema rejects `reference_video`, `1080p`, `4k`, and `9:21`, and it requires `output_format`. The kept voice sample now goes out as one `reference_videos` item on 2.5 and as `reference_video` on the 2.0 family. Duration follows the model: 4-30s on 2.5, 4-12s on 2.0, Fast, and Mini. With a first and last still, 2.5 sends aspect ratio `adaptive`, so a vertical clip depends on a 9:16 keyframe.
+
+### feat(modules): add a p-video-avatar door (cf#1072)
+
+Portrait plus Cast audio on Cloudflare AI Gateway (`pruna/p-video-avatar`).
+720p is $0.025/s and 1080p is $0.045/s. The provider page lists no duration
+and no aspect ratio. The door is installable and is not a spoken or silent default.
+
+### feat(modules): add a kling-v4 door (cf#1073)
+
+Silent clips on Cloudflare AI Gateway (`klingai/kling-v4`). 3 to 30 seconds.
+720p is $0.157/s and 1080p is $0.235/s. The door defaults to 720p. It
+is installable and is not a spoken or silent default.
+
+### feat(modules): add a minimax h3 door (cf#1074)
+
+Silent clips on Cloudflare AI Gateway (`minimax/h3`). 4 to 15 seconds.
+768P is $0.08/s and 2K is $0.13/s. The schema states no resolution default
+and no native audio output, so the door stays silent and sends 768P unless
+you choose 2K. The door is installable and is not a spoken or silent default.
+
+### fix(modules): cf-vidu-q3-turbo reports has_audio, and retired doors leave the examples
+
+`cf-vidu-q3-turbo` now reports `has_audio` on poll, as `cf-seedance` does, so the clip record says whether it carries talking audio. The expert JSON example in the planner names `cf-seedance`, because the old example named a retired door and returned a missing-door error when copied. Stale provider lists in module READMEs, comments and the deploy runbook no longer name retired doors.
+
+### feat(modules)!: retire seedance, google-veo, and vidu-q3 (cf#1075)
+
+RunPod marks Seedance 1.5 Pro Deprecated. `google-veo` is the same model
+family as `cf-veo` at a higher RunPod rate. `vidu-q3` is replaced by
+`cf-vidu-q3-turbo` (`vidu/q3-turbo` on Cloudflare). `minimax-hailuo` stays:
+the $0.19 unit is not settled. `hostedMotionFallback` does not name RunPod
+Seedance; the spoken selector is InfiniteTalk.
+
+The plane catalog still names the three retired doors. The mirror matches
+the plane. Do not cut a release until the plane drops those rows.
+
+### feat(modules): refresh image model enums against the catalog (cf#1076)
+
+`google/imagen-4` is gone: its model page and schema-input.json 404. The picker
+offers `openai/gpt-image-2`; `gpt-image-1.5` stays runnable for a saved session
+and is still the transparent-PNG path. Keyframe can select `google/nano-banana-2.1`
+and `pruna/p-image-edit`. Cast references can select `black-forest-labs/flux-3-image-klein`.
+The image catalog can select `bytedance/seedream-5-lite`. No default changed.
+
+`google/imagen-4` leaves the picker and stays runnable, so a saved config still resolves. A live check is still owed before it is dropped. A saved `cloud-keyframe` model is now honoured when it is in the module's list. Anything else falls to `google/nano-banana-2`.
+
+### fix(catalog): the tenant catalog mirror drops the retired doors
+
+`seedance`, `google-veo` and `vidu-q3` leave `scripts/tenant-module-catalog.txt`, matching `TENANT_MODULE_CATALOG` in the control plane (cp#569). The mirror goes from 16 entries to 13.
+
+### fix(modules): cf-veo sends the keyframe as base64
+
+The model's schema takes `image_input` as a base64 image, and the door sent a presigned URL. Every render failed in seconds with `AiGatewayError: 2002: Error`. The door now reads the keyframe and sends a data URI.
+
+### fix(keyframe): forward the backend's reused flag to the core
+
+The keyframe module dropped `reused`, so the core would stamp its config provenance on a still the job did not draw (core#372).
+
+### fix(containers): one fetch setting across the CPU containers
+
+`guarded_get` and `guarded_put` now set `allow_redirects=False` themselves, so all five containers behave the same way and no call site has to repeat it.
+
+### ci: pin the docker actions to commit shas
+
+`docker/setup-buildx-action`, `docker/login-action` and `docker/build-push-action` now name a commit, with the tag in a comment.
+
+### fix(ci): the smoke citation prints before any verdict
+
+The container smoke script printed the image id after it read the published port, and a container that died first exited before that line. The control then failed on a race and blocked a tag deploy. The citation now prints right after the container starts. A new case forces the early path with a docker shim. See the v1.39.0 tag run.
+
+## v1.39.0 -- 2026-10-30
+
+### fix(modules)!: retire the kling-o1-r2v door (cf#1057)
+
+The provider requires a reference video, and the `motion.backend` hook has no video to
+send, so every render on this door failed after submit. The door is removed and no
+longer offered. The other silent motion doors are unchanged. Remove the
+`MODULE_KLING_O1_R2V` binding from a rendered `wrangler.toml` before the next deploy.
+
+### fix(cloud-keyframe): concurrent renders of one project keep their own stills (cf#1059)
+
+Each job now writes `renders/<project>/keyframes/<job>/<shot>.png`. A flat key let one render replace
+another's still, which failed the keyframe similarity gate on an otherwise good clip. The GPU `keyframe`
+door is unchanged. The render route contract now states that a mismatched `project` is remapped. A film delete now also removes that film's own job-scoped stills. The contract records the 5-minute settle window.
+
+### fix(core): move vivijure-core to 1.27.0
+
+This jump passes over core 1.26.0, so a render can now fail where it used to report success. A concat that did not run fails the film and keeps the clips. A song that could not be read or attached fails the film and keeps the silent cut. A film with no song still finishes on its silent cut.
+
+A failed film now gets `clip_urls` for its kept clips, and the panel says the clips are kept. A full finish tier is a wait once the door change lands. A lone unstamped clip is adopted only after 5 minutes.
+
+### fix(finish): name a full finish tier, and route retries to one instance
+
+The video-finish door now answers 429 with `capacity_exhausted` when the container instance limit refuses a submit. The base Container class reports that limit as a 500, so core could not tell it from a crash. Other refusals pass through unchanged.
+
+When core names the film (`x-vivijure-finish-affinity`), the routing key comes from the film id, so a retry and the mux leg reach one instance. Without the header the door mints a random key as before. With core 1.27.0 a full tier now holds the film in its phase and retries, up to 6 hours, in place of failing it.
+
+### fix(mcp): move vivijure-mcp to 2.0.1
+
+The Studio MCP Worker deploys from this tag, so agents now read film tool text that matches the retired scatter contract. No tool or argument changes.
+
+## v1.38.2 -- 2026-10-30
+
+### fix(modules): silent doors stop promising a muxed Cast voice (cf#1055)
+
+Six silent motion door cards said a spoken line would be the Cast voice, muxed. Submit
+refuses that board, and that refusal is the contract. The cards and docs now say a
+board with a line needs a talking door. The gate is unchanged.
+
+### fix(preflight): a shot is checked against the door the caller named (cf#926)
+
+Preflight now reads the named door's `usage`. A shot over `max_seconds` is an error. A
+shot under `min_seconds` or between `duration_steps` is a warning. A door that is not
+installed is an error, where it used to pass with `ok: true`. `motion_backend` is read
+as well as `motionBackend`, because the snake_case key was dropped with no word.
+
+### infra(finish): raise FinishContainer max_instances from 3 to 20
+
+Three instances left two job slots, and a finished job holds its slot for the 10 minute idle tail. Six films were refused in five minutes on 2026-10-30. The worst case at 20 is about USD 8 per hour at full CPU, and nothing at rest. The cost basis is in docs/containers-control-plane.md. This applies on the next `v*` tag deploy.
+
+## v1.38.1 -- 2026-10-29
+
+### fix(ci): a dead container with no publish is exit 4
+
+The smoke control can die before `docker port` shows a mapping.
+That case is now exit 4.
+A live container with no publish stays exit 3.
+See #1053.
+
+## v1.38.0 -- 2026-10-29
+
+### feat(keyframe): photoreal and anime still looks
+
+The keyframe module offers two still looks.
+Photoreal uses RealVisXL.
+Anime uses Animagine XL 4.0.
+The panel reads the look from the module catalog.
+See #1037.
+
+### feat(finish): opt-in polish and a still-look knob
+
+Finish polish is opt-in.
+A still-look knob follows the keyframe look.
+Anime final does not turn GFPGAN on by itself.
+See #1039.
+
+### feat(finish): isolate media doors on Cloudflare Containers
+
+video-finish, image-prep, audio-mix, audio-beat-sync, and audio-master each have an isolated Worker.
+Each Worker owns one Cloudflare Container.
+The studio points at those doors by URL.
+See #1041, #1043, #1047, #1048, and #1049.
+
+## v1.37.1 -- 2026-10-19
+
+### fix(ci): the post-deploy gate self-check exits 0 when every host passes
+
+The `deploy` job's `Post-deploy gate self-check` step ended with a bare `exit 1` after the `for HOST in $patterns` loop's `done`, so the step failed even when every host returned the 403 it asserts. It was unconditional: no input made that step succeed.
+
+At `v1.35.0` the step read ONE host and its success path was `exit 0`, so the trailing `exit 1` was a fall-through reachable only on failure. The change that generalised the check to every route pattern (`#977`) correctly replaced that `exit 0` with `break`, because with more than one host you cannot exit on the first pass, and correctly added a per-host `exit 1` inside the failure branch. The trailing `exit 1` was left behind, and `break` no longer leaves the step, so the loop now runs to completion on success and falls straight into it.
+
+`studio-release` carries `needs: deploy`, so the hosted `STUDIO_RELEASE` pin can never move ahead of the deploy it names. That dependency is correct, and it is what turned this from a red check into a release outage: `v1.36.0` and `v1.37.0` both deployed the core Worker at step 9 and then aborted at step 10, so neither published a studio release artifact, the hosted pin stayed at `v1.35.0` from 2026-09-27, the `vivijure-studio-mcp` Worker was not redeployed on either tag, and the `/welcome` edge-cache purge did not run.
+
+It failed in the safe direction, which is why it survived two releases. The cost was still real in two ways: it froze the hosted pin silently, and a gate that always fails cannot distinguish an open studio from a correctly gated one, so the fail-closed assertion this step exists to make was not being made.
+
+The fix is one line. Everything else in the step is correct and unchanged: the per-host loop, the 403 assertion, the retry window, the distinct error for a 200 (which means the API served an unauthenticated caller), and the real `exit 1` inside the failure branch.
+
+Verified by extracting the step's own text and driving it against a stubbed `curl` and a two-pattern `wrangler.toml`: with every host returning 403 it exits 0, the unfixed script exits 1 on that same input (reproducing the outage, so the harness is not vacuous), and a forced 200 or 522 still exits 1 naming the host. Green became reachable without red becoming unreachable.
+
+A sweep of all 47 `run:` blocks across the 9 workflow files found two other trailing base-indentation non-zero exits, both correct and both left alone: `ci.yml`'s "Prove an image was actually built" exits 0 on its success path first, so its trailing `exit 1` is a true fall-through, and `endpoint-liveness.yml`'s "Instrument unusable" step is gated by a step-level `if:` and failing loudly is its entire purpose.
+
+## v1.37.0 -- 2026-10-19
+
+### fix(delete): project and render delete now free their R2 objects (cf#1007, cf#779)
+
+`PRIVACY.md` Section 7 promises that the studio's delete actions "remove the
+corresponding records and free their stored files". Cast delete has done that
+since #298; project and render delete dropped the D1 row and freed nothing, and
+because `r2-orphan-reconcile.ts` treats every non-cast key as out-of-scope, the
+row was the last thing that named those objects.
+
+Both routes now reclaim before the row goes. Candidates come from the RECORDS,
+never from a prefix: the row's key columns, its film and clips job documents
+(including takes, which `archiveExistingClipTakes` records nowhere else), its
+`shot_records`, its own `renders/<job_id>/` tree, the `renders/logs/<job_id>.txt`
+log that nothing in D1 names, and the suffix sidecars of each key that is
+actually going. A project delete reclaims all of its renders as one operation
+and drops them with it.
+
+Every candidate is gated on not being referenced by a surviving record.
+`renders/<project>/...` is a cross-render namespace that `assertProjectKey`
+enforces and that take-archiving and keyframe adoption both read, so a prefix
+sweep there would destroy a sibling render's only copy of its clips.
+`countOtherRowsWithOutputKey` is the gate for `output_key`, which is its first
+caller; it is used only for a single-row delete, because in a cascade it counts
+the other doomed rows as live.
+
+Ordering: R2 first, the row last, and only on a complete reclaim. An incomplete
+reclaim keeps the record and answers 409, so the keys stay findable and a retry
+converges. The reverse ordering turns one failed delete into a permanent
+invisible leak.
+
+Cast delete also collects `wan_lora_key_high` / `wan_lora_key_low`, and
+`voice_ref_key` when it is the member's own `cast/<id>/` object. The generated
+sample shape is ONE key shared by every cast member and is left behind
+deliberately; see cf#1008. The remaining orphan backlog is cf#1009.
+
+### feat(demo)!: the public demo door is removed entirely
+
+The public demo is gone, not deprecated, and it went in two steps: the `demo.vivijure.com` custom domain was removed on 2026-10-08, and the deployment was deleted on 2026-10-19 (the D1 database, the R2 bucket, both Worker scripts and the AI Gateway). No demo DNS record, worker route or custom domain remains on any zone, so every demo binding in this panel addressed something that no longer exists.
+
+Removed: the four `/api/demo/*` routes and their handlers, the seeded demo render and the capped open-weights assistant, the `AUTH_MODE=demo` gate branch, the eight `DEMO_*` vars in the `Env` interface and in the orchestrator var contract, the demo page CSP, the `host.readonly` / `host.render` / `host.assistant` fields on `GET /api/modules`, the demo-only remap of `/` to the planner, the two demo frontend shims with their styles, the demo D1 migrations, both demo wrangler templates, and `docs/demo-studio.md`.
+
+`AUTH_MODE` now accepts `token`, `access` and unset. A deploy that still sets it to `demo` is denied, which is the fail-closed path.
+
+The route table is 89 entries over 71 path patterns, down from 93 over 75. The published parity and contract numbers are re-measured from the table, not adjusted by hand.
+
+The `local-gpu` module stays. It is a live deployed worker that the ordinary render path reaches through the registry; only the demo-scoped door was dead.
+
+### test(migrations): guard against an ON DELETE CASCADE that would undo cf#1007
+
+Conrad ruled on 2026-10-19 that deleting a project deletes its renders. The
+schema does not say so: `renders.project_id` and `renders.parent_id` are
+comments (`-- logical FK`), and this schema declares no foreign keys at all.
+So "make the schema honest about the ruling" is a plausible future cleanup
+whose obvious spelling is `ON DELETE CASCADE`, and that would silently undo
+cf#1007.
+
+A cascade on either column deletes the rows that NAME a render's R2 keys
+inside the same statement that deletes the parent, so the reclaim in
+`hDeleteProject` / `hDeleteRender` can never run first. Every object is
+orphaned with nothing left to find it by, the orphan sweep is cast-only and
+will not collect it, and the DELETE succeeds with D1 looking perfectly
+consistent. It fails in the reassuring direction.
+
+`ON DELETE RESTRICT` was considered and rejected as the primary control. It
+orders the two D1 deletes against each other and says nothing about R2:
+deleting the render rows and then the project row satisfies it and leaks
+every object. It would also read as though the class were closed, which is
+worse than the prose it replaces.
+
+Test only. No FK is declared, no table is rebuilt, no handler changes.
+
+The detector strips SQL comments with quote tracking rather than by line,
+because a migration DOCUMENTING this prohibition is the likeliest thing to
+land in that directory, and a `--` inside a string literal would otherwise
+hide a real cascade. A second pass blanks string literals for the premise
+check, since the demo seed contains the English words "Training references".
+Both FK spellings are covered, both guarded columns, subdirectories included,
+and the scan asserts it read the tree so a wrong path cannot pass as a clean
+schema.
+
+### fix(cast-media): collect the superseded portrait on the staged-key path
+
+The JSON `{ key, mime }` branch of `handleCastPortraitUpload` wrote the row
+and returned, so every panel-staged portrait replacement left the previous
+object in the bucket with nothing pointing at it. The chat-artifact and
+raw-bytes branches already call `deleteSupersededPortrait` after the row
+write, and only when that write returned a row. The staged-key branch now
+does the same. The helper still returns immediately when the old key is
+empty or equal to the new key, so a same-key re-register does not delete
+the object just registered. No bucket sweep.
+
+Parity with vivijure-local#446.
+
+### docs(video-finish): the plane writes the tier-state var (cf#871)
+
+The comment said nothing sets `VIDEO_FINISH_TIER_STATE`. The control plane
+projects it on provision, studio upgrade, and the admin route. That sentence
+is removed. Precedence is unchanged: a live door or a non-empty URL is
+available, and the label applies only when both are absent.
+
+### fix(render): refuse when the bundle dialogue cannot be read (cf#927)
+
+`render-from-keyframes` and the agent door read the bundle outside the dialogue guard. A bundle that is not gzip now returns 503 and does not start the film. A missing bundle is still "no scenes".
+
+### docs(kling-o1-r2v): name Kling Video O1 R2V in the module headers (cf#928)
+
+The headers said Kling V2.1 I2V Pro. The worker submits to `kling-video-o1-r2v`. Comments only.
+
+### feat(cast): finish the character before a film (cf#982)
+
+The cast page binds a portrait with `{ from_chat_artifact }` (the copy form in
+CONTRACT 2.7). It no longer offers a Seedance voice sample. Hear one Aura-1 line
+and that `voice_id` stays on the member. When the reference job lands at least
+four stills, the studio starts the SDXL LoRA on the keyframe endpoint. The first
+storyboard does not train it. Wan cast training stays a separate button.
+
+### feat(shot): a shot is a Workflow over D1 and R2 (cf#984)
+
+The film job document in R2 stays the orchestrator's copy. `shot_records` is the
+per-shot step record: still key, wav key, clip key, and which step is running.
+A failed step retries that step. The clip call is a presigned URL. The studio
+worker does not buffer the MP4. A tenant worker and a dispatch module do not
+receive the R2 credential. Vendor modules that already have a Workflow are not
+wrapped again.
+
+### fix(film): a film is not done until it is joined
+
+The poll reports a film failed when the join did not run, including when the published package still marks that job done. A song starts a film only after beat-sync has read it. The analyze route stores that read in R2, and the film start doors refuse a song with no read. A spoken line whose word-count estimate is longer than 12 seconds is refused at those same doors when a song is attached. The planner sets a spoken shot to that estimate when the line fits the beat window, and it reports the shot when the line does not fit. The upload hint says a full song is mp3 or m4a, the cap is 32 MB, and a stereo 44.1 kHz WAV of about three minutes fills the cap.
+
+video-finish, audio-beat-sync, audio-mix, and audio-master run one image that contains ffmpeg and librosa. image-prep stays its own image. Compose selects the service with CPU_APP.
+
+A song analyzed before this marker existed has no `<audioKey>.beats.json`. Those doors refuse it until the track is analyzed again.
+
+## v1.36.0 -- 2026-10-14
+
+### fix(ci)!: the capability-matrix gate tolerates ONE declared transition, in both directions (vivijure#830)
+
+`scripts/check-capability-matrix.mjs` enforces agreement in both directions between `modules/` here and
+`docs/CAPABILITIES.md` in the hub, **read from the hub's `main`**. Those live in two repos, so the two
+edits cannot be atomic and **every order goes red mid-flight**: retiring hub-first leaves a module with
+no row, cf-first leaves a row with no module, and adding does the same in mirror image.
+
+**The part that made it urgent is not the inconvenience, it is where the red lands.** Because the gate
+reads the hub at `main`, it fails on PRs whose diff has nothing to do with either edit. A check that
+freezes unrelated merges over a condition outside their change is the shape this estate refuses
+everywhere else. My own header in that script said "the remedy is a one-row edit", which was wrong: the
+row is in another repo.
+
+**The generalisable rule, recorded because it is not specific to this gate:** a bidirectional
+consistency gate across two repos cannot be satisfied atomically, so it must tolerate one declared
+transitional state or it forbids the transition it exists to keep honest.
+
+`scripts/matrix-transition.txt` is that declaration, one line of `<module> <retiring|adding> <issue>`.
+It is deliberately hard to abuse, and each of these is a test:
+
+- **every entry is printed** with which side it currently exists on;
+- **an entry must exist on at least one side**, so it cannot be speculative;
+- **a COMPLETED transition is a hard FAIL, not a no-op.** `retiring` completes when module and row are
+  both gone; `adding` when both are present. **An exemption that cannot be left behind is not a hiding
+  place**, and that is the only property standing between this file and one;
+- **a `retiring` module whose row is already gone must be named in the hub's `## Retired` section.**
+  Erasing a capability from the matrix outright is the exact failure this gate exists to catch, so a
+  transition entry must not become the quiet way to do it;
+- **a malformed line FAILS the run.** A lenient parser would drop an exemption, which silently
+  reintroduces the deadlock while looking like the gate working.
+
+**Symmetric on purpose: this unblocks a module ADDITION exactly as it unblocks a retirement.** The
+deadlock hit `kling`'s retirement first, and it would have hit the next new door the same way.
+
+**The gate had ZERO tests while blocking two lanes**, and it exported `parseMatrixModules` "so a test
+can import it" with no such test ever existing. Its whole judgement is now the pure `evaluateMatrix`,
+with the I/O left in `main()`, so the verdicts can be driven directly instead of only against whatever
+state two live repos happen to be in. `scripts/check-capability-matrix.d.mts` types it for the test
+rather than casting to `any`.
+
+**Every tolerance has a paired control, because a widening is only safe if the un-widened cases still
+fail.** 15 cases in `tests/capability-matrix-gate-830.test.ts`, including: a module with no row still
+fails; a row naming a module that does not exist still fails **and is not excused by the Retired
+section alone**; over-crediting a module in more rows than it declares hooks still fails; and a
+transition exempts **only its own name**, never the rest of the disagreement.
+
+Both mutations were watched red rather than assumed. Making the exemption blanket (exempt every name
+once any transition is declared) fails 2 of 15, including "exempts ONLY its own name". Disabling the
+completed-transition checks fails exactly the 2 staleness cases. The controls discriminate instead of
+going red together.
+
+Gate: `npm run typecheck` exit 0; `npm test` exit 0 (3785 passed, 3 skipped); `conformance`,
+`check:catalog`, `check:matrix` all exit 0. `check:matrix` prints
+`TRANSITION kling (retiring, cf#921) -- in modules/, in the matrix; exempted`.
+
+**Ordering, which is the whole point:** this lands FIRST. With it on `main`, the hub row edit
+(`skyphusion-labs/vivijure` #829) and the `modules/kling` retirement (cf#921) are each independently
+green in either order, and the `kling` line gets deleted in the same PR as the second of the two.
+
+### fix(ci): an empty directory left by a merge is not a module (vivijure#831)
+
+`check-capability-matrix.mjs` counted a module by its DIRECTORY. **Git does not track empty
+directories**, so when a module's tracked files are removed by a merge, `git pull` leaves the parent
+behind, and the tree is then wrong in a way **no git instrument reports**: `git status` clean,
+`git ls-files` nothing, `git check-ignore` not-ignored, while `readdirSync` counts a module that does
+not exist.
+
+**So the gate fails LOCALLY while CI is green on the same commit**, because CI is a fresh checkout and
+never sees them. A developer cannot debug that with git: every git command agrees the tree is correct.
+
+Measured by mackaye on 2026-09-27: `finish-lipsync` and `speech-upscale` survived as empty directories
+after their retirement merges (cf#785, cf#787) and produced exactly that unexplainable local red,
+costing about twenty minutes. Reproduced deliberately here, both directions:
+
+```
+mkdir -p modules/ghost-empty-dir && npm run check:matrix
+  BEFORE: 35 modules on disk, 34 named in 12 matrix rows
+          FAIL -- 1 module(s) exist but are NOT in the matrix: ghost-empty-dir
+  AFTER:  34 modules on disk, 34 named in 12 matrix rows   OK
+```
+
+A directory is a module when it holds a module ENTRY FILE. `MODULE_ENTRY_FILES` is now shared between
+the population (`realModules`) and `declaredHookCount`, **which already read those same two paths** --
+so the two cannot drift into describing different sets, which was a latent second bug in the same
+file. `isModuleDirectory(name, exists)` takes its existence check as a parameter, so both answers are
+driven in a test without touching disk.
+
+Four cases added to `tests/capability-matrix-gate-830.test.ts`, and the control was watched red:
+making the predicate `return true` (every directory counts again) fails **exactly one** case, the one
+named "CONTROL: does NOT count a directory with no entry file -- the whole defect". It discriminates
+rather than going red alongside everything else.
+
+**The class, since this is not one gate's problem:** any check deriving a population from `readdirSync`
+over a directory of directories has it, and the failure is local-only, invisible in CI, and
+undebuggable with the tool a developer reaches for first. Other `readdirSync` populations in this repo
+were NOT swept; several read `modules/*/src/index.ts` directly and are immune by construction. Naming
+which are which is worth a deliberate pass rather than an assumption, and vivijure#831 says so.
+
+Also in this change, from the same review: `scripts/matrix-transition.txt` now states **how many PRs
+each order costs**. The transition file lives in this repo, so the line can only be deleted by a
+vivijure-cf PR. If the hub edit lands SECOND, the deletion cannot ride with it and the sequence is
+THREE PRs, not two. Neither order is wrong and both stay green; hub-first is simply one PR shorter.
+That was not obvious from the previous wording and it should not have to be rediscovered.
+
+### fix(cf): nine small residue items from the cf#764 doc audit (CB-9, MD-6, AC-9, SC-15, CX-3, CX-4, CX-6, CX-7, CX-8, cf#881)
+
+A maintenance sweep over the small items cf#764's audit left behind. Six landed as code/comment
+fixes, three were checked against the running code and reported without a change:
+
+- **CB-9**: `POST /api/cast/import` read the whole body with `arrayBuffer()` before the 80MB cap in
+  `importCastBundle` ever ran. Added a `Content-Length` precheck ahead of the read; the existing
+  post-read cap stays as the backstop (Content-Length can be absent or wrong under chunked
+  transfer).
+- **AC-9**: removed `assertConfigMapShape` / `assertModuleConfigMap` (and the `describeJsonType`
+  helper they alone used) from `src/index.ts` -- genuinely dead since `checkRenderRequestShape`
+  (src/render-door.ts) took over config-map shape checking; nothing else called them.
+- **CX-3**: `scripts/studio-consumer-token.sh mint` did a plain `INSERT`, but `name` is the
+  `api_tokens` primary key and `revoke` only sets `revoked_at` -- so a properly revoked name could
+  never be re-minted. Now clears the row first, but only when it was revoked, so a still-live name
+  still refuses (loud) instead of being silently overwritten.
+- **CX-4**: `scripts/install-module.ts` only ever sent CF Access service-token headers, so it could
+  not authenticate against a token-mode core (`AUTH_MODE=token`). Added an optional
+  `STUDIO_API_TOKEN` env var that sends `Authorization: Bearer`. Also fixed the usage comment's
+  `--hook-name` flag, which the arg parser never reads -- the real optional flag is `--name`.
+- **SC-15**: checked live; already fixed on `main` (8c12476d, PR #791/cf#790, landed after the audit
+  ran) -- `enforceSpendLimit`'s posture comment now correctly says fail-CLOSED. No change needed.
+- **CX-6**: checked live; `resolvePlanningTarget`'s sole-installed-module fallback already returns
+  the module's own declared id (or its name) as `config.model`, never the caller's unmatched string
+  -- covered by `tests/planning-models.test.ts` ("falls back to the sole installed module for an
+  unknown id"). No change needed.
+- **CX-7**: confirmed real (`servingForHook(preModules, "dialogue")[0]` with `config: {}`,
+  film-orchestrator.js), but the invoking code lives in the published `@skyphusion-labs/vivijure-core`
+  package, not in this repo's own `src/`. Out of scope for a vivijure-cf-only change; needs its own
+  vivijure-core issue.
+- **CX-8** (hygiene, comments only):
+  - `wrangler.toml.example`'s `MEDIA_FINISH_TOKEN` comment said "unset is fail-open"; an unseeded
+    store secret hard-fails `wrangler deploy` with CF error 10182, same as any other declared
+    `secrets_store_secrets` entry. Corrected.
+  - `containers/compose.yaml`'s header described routing over Workers VPC / a "VPC Service" per
+    container. `scripts/setup-media-vpc.py`'s own docstring says the opposite ("HOSTED DOES NOT USE
+    WORKERS VPC FOR MEDIA... This script does NOT create those VPC services"); the real path is a
+    Cloudflare Tunnel to Traefik over public HTTPS plus `MEDIA_FINISH_TOKEN`. Corrected throughout
+    the file.
+  - `withFilmDownloadUrl`'s comment said the presigned URL TTL is 24h; `FILM_DOWNLOAD_TTL_SECONDS`
+    is 6h. Corrected.
+  - `wrangler.demo.toml.example` and `migrations/demo/0001_demo_seed.sql` said the base schema was
+    `migrations/0001..0010`; it is 21 files now (and will drift again), so both now say "every
+    migrations/*.sql file" instead of a number range.
+  - `modules/google-veo`'s header comments said `generate_audio` defaults false; its `config_schema`
+    default is `true` and `cfg.generate_audio !== false` matches. Corrected in both `index.ts` and
+    `veo.ts`.
+  - `ci.yml`'s `VPC_VIDEO_FINISH_ID` / `VPC_AUDIO_BEAT_SYNC_ID` / `VPC_AUDIO_MASTER_ID` comment still
+    claimed they were "filled per-module below" and functional; per cf#840 (documented two lines
+    below in the same file) they substitute nothing. Added the same "no consumer" correction already
+    applied to the other VPC_* entries in that block. The secrets and env wiring themselves are left
+    in place, matching the same file's own precedent that removing them is "a separate deliberate
+    change", not a comment fix.
+  - `containers/compose.yaml`'s VPC routing description not covered above (not part of this sweep;
+    verified NOT stale -- `deploy.sh` still calls `scripts/setup-media-vpc.py` and `docker compose`).
+
+**Not fixed, reported instead**: **MD-6** (`scripts/install-module.ts` has no `uninstall` mode at
+all -- the CLI can install/rollback but never evicts a resident WfP script; `installed-modules.ts`'s
+own comment already describes the intended two-step design). Implementing an uninstall CLI mode is
+a real feature addition (new argument mode, core-route + WfP-eviction orchestration), not a small
+correctness fix, so it stays open on cf#881/a follow-up rather than being forced into this sweep.
+
+Gate: `npm run typecheck` exit 0; `npm test` exit 0 (3704 passed, 3 skipped); `npm run guard:resolve`,
+`npm run check:catalog`, `npm run check:matrix` all exit 0.
+
+### fix(deps+docs): vivijure-mcp 1.3.0, and a parity denominator that can hold two surfaces (cf#894)
+
+`@skyphusion-labs/vivijure-mcp` 1.2.1 -> 1.3.0. The bump was red because
+`tests/mcp-parity-317.test.ts` asserts a published denominator, which is the test working: the
+catalog changed shape and the doc had to change with it.
+
+**The growth is not what the issue assumed, and measuring it first changed the work.** 42 -> 109 is
+**37 new `cp_*` control-plane tools AND 30 new STUDIO tools**, not ~67 control-plane ones. Nothing
+was removed. The 30 studio tools are why curated route coverage moved **41 -> 70 of 92** rather
+than staying flat: module config, storage, prefs, demo, clips, frames and identity all gained
+purpose-built tools.
+
+**Split by CALL TARGET, not by name prefix.** Measured on 1.3.0: **37 tools are named `cp_*` and 38
+build a call with `target: "control_plane"`.** The one that differs is `control_plane_request` -- a
+control-plane escape hatch that a prefix test files as a studio tool. A name is a convention; the
+call's target is the contract. The disagreement is pinned by its own case so it cannot quietly
+become two.
+
+**`curatedCoverage()` was iterating every tool and skipping one name.** Control-plane tools' paths
+were going into the studio-route coverage map, and `control_plane_request` was being treated as a
+curated tool. Measured: **0 of 38 control-plane tools collide with a studio route key today** -- but
+only because control-plane paths happen to live under `/api/admin` and `/api/platform`, which
+nothing maintains against the route table. That accident is now a rule: a test asserts the
+collision set is empty *and* that there was a population to collide with, so a zero cannot come
+from an empty list.
+
+`PUBLISHED` now carries three tool numbers instead of one (`tools` 109, `studioTools` 71,
+`controlPlaneTools` 38) and asserts they reconcile, so a third target would fail to add up rather
+than vanish from both denominators. Route-relative counts are measured against studio tools only,
+because a control-plane tool cannot reach a studio route.
+
+Re-measured with 1.3.0: curated coverage **41 -> 70**, panel-reachable-with-no-curated-tool
+**34 -> 15**, path-only **38 -> 19**. `docs/mcp-parity.md` updated in the same change, which the
+suite enforces.
+
+Also fixes the sub-item the issue diagnosed: `placeholderArgs()` had no `boolean` case, so a
+required boolean fell through to the string `"PLACEHOLDER"` and 1.3.0's `set_module_enabled` threw
+`'enabled' must be a boolean` inside `build()`. **A missing type in that switch does not report as a
+missing type; it reports as whatever the tool does with a string it did not ask for.**
+
+Supersedes dependabot #676, which carried the bump without the denominator work.
+
+### fix(panel): derive the talking-door lists from the installed modules, not from a literal (cf#919)
+
+Two hardcoded lists told a filmmaker to pick doors this deploy does not have. On a hosted tenant both
+named **InfiniteTalk**, which is not in `TENANT_MODULE_CATALOG` and cannot be installed there, so the
+product surface named a door that is not in the picker.
+
+- **The spoken-lines refusal**, byte-identical at three render doors (`src/index.ts` panel,
+  render-from-keyframes, agent), was a literal naming seven doors while the predicate it guards
+  (`doorCanSpeakLines`) read the live module set one line above it. It now calls
+  `spokenLinesRefusalMessage(modules, chosen, audioOn)`, which projects the remedy from
+  `servingForHook(modules, "motion.backend")` filtered by that same predicate.
+- **`TALKING_VOICE_HONOR`**, shipped to the cast voice picker as `talking_doors` on `GET /api/voices`,
+  is now projected through the installed serving set by `talkingVoiceHonorFor`. `catalogForDeploy`
+  already refused to advertise capability a DEMO deploy lacks; this is that rule one deploy mode over,
+  except the authority is the live registry rather than a mode flag. Deploy mode does not scrub it.
+
+**Also fixed, same message, found while rewriting it:** the guard is `(door cannot speak) OR (talking
+audio off)` and ONE sentence served both causes, so a filmmaker who had already chosen the right door
+was told to go choose a different one. Three states now get three sentences, including an honest
+"this studio has no talking door installed" instead of an empty parenthetical.
+
+`moduleLabel` (`src/module-catalog.ts`) is exported rather than copied, so the refusal names a door
+the same way the catalog rows do; a second copy of that rule is how two surfaces start calling one
+module different things. `public/cast.js` gained an authored empty state, because an empty
+`talking_doors` is now a real answer rather than only a failed fetch.
+
+**Watched red before the fix, not after.** The route assertion in
+`tests/render-film-dialogue.test.ts` failed against the unfixed code with the live literal printed
+(`expected 'This storyboard has spoken lines. Pic...' not to match /infinitetalk/i`), in an env whose
+only bound talking door is `seedance`. Then the control of the control: re-hardcoding
+`talkingDoorLabels` to return the old seven names fails **8 of 14** cases in
+`tests/door-lists-projected-919.test.ts`, and the 6 that survive are the honor-table and audio-switch
+branches a door list cannot affect. The assertions are written about doors ABSENT from the installed
+set, because the present-door half is what a literal passes by accident.
+
+`tests/auth-gate.test.ts` now binds one talking door (`cf-seedance`) in both the demo and token envs
+and asserts the NEGATIVE half: `cf-veo` and `infinitetalk` are rows in the table, are not bound, and
+must not appear. Without a bound door the projection would be trivially empty and the test could not
+tell "projected" from "nothing installed" -- the same reasoning the neighbouring
+`planEnhanceBinding` comment already gives for the planning catalog.
+
+**Fixture correctness, worth recording:** `parseMotionUsage` rejects a PARTIAL `usage` block and
+discovery then drops the module entirely, so a stub like `usage: { native_audio: true }` is a module
+production cannot produce and it silently tested nothing. Every fixture here carries a full
+`MotionUsageDecl`.
+
+Docs: `docs/CONTRACT.md` 2.4 records that `talking_doors` is projected (and can be empty), and the
+2.20 refusal text is replaced by the three-state table plus a note that a client must not match on the
+old literal.
+
+**Scope of the two lists, measured rather than assumed.** Reading the `usage` block of each of the 17
+`motion.backend` manifests in `modules/` (a file-wide grep for `native_audio: true` is wrong here: it
+reports `kling`, `minimax-hailuo` and `cf-hailuo` as talking, and all three declare `native_audio:
+false` inside `usage`), there are **9** talking doors: `alibaba-wan`, `cf-flux-3-video`,
+`cf-grok-video`, `cf-seedance`, `cf-veo`, `google-veo`, `infinitetalk`, `seedance`, `vidu-q3`. The 9
+`TALKING_VOICE_HONOR` rows are exactly those 9, so that table was never wrong about WHICH doors talk;
+it was wrong to ship all 9 to a deploy that installs fewer. The retired literal named seven, which
+also collapsed the Cloudflare and RunPod pairs of one vendor into a single word.
+
+**Not claimed:** whether a hosted tenant can install InfiniteTalk is a control-plane question moving
+in parallel (`strummer` on cp#, cf#919's chain). This change makes the panel tell the truth about
+whatever set is installed; it does not decide what that set should be.
+
+### chore(ci): delete the spent kling transition line, unbreaking main (cf#921, vivijure#830)
+
+Both halves of the kling retirement are now on `main`: the hub row moved to Retired
+(`skyphusion-labs/vivijure`#829) and `modules/kling` is gone (cf#921, #958). **That completes the
+declared transition, and a completed transition is a hard FAIL by design**, so `main` went red on
+`check:matrix` the moment the second half landed:
+
+```
+check-capability-matrix: 33 modules on disk, 33 named in 12 matrix rows, 0 in declared transition
+FAIL -- scripts/matrix-transition.txt still lists "kling" as retiring (cf#921) but the retirement
+        is COMPLETE (NOT in modules/, NOT in the matrix). Delete the line; a spent exemption is a
+        standing hole.
+```
+
+**This is the mechanism working, not a defect.** The whole argument for letting a gate tolerate a
+transitional state was that the tolerance must not be able to outlive the transition, and the only
+thing that makes that true is failing loudly when it does. It did, in CI, on the real retirement,
+naming the file and the line. The file is now back to its steady state of no entries.
+
+**It is also the third PR of the sequence this same PR documents**, and the documentation was written
+before the sequence ran: the transition file lives in this repo, so when the hub edit lands SECOND the
+line cannot be deleted alongside it. cf-first costs three PRs. That prediction is now observed rather
+than reasoned about.
+
+Gate: `npm run typecheck` exit 0; `npm test` exit 0 (3776 passed, 3 skipped); `conformance`,
+`check:catalog`, `check:matrix` all exit 0, with `check:matrix` reading
+`33 modules on disk, 33 named in 12 matrix rows, 0 in declared transition ... OK`.
+
+### fix(modules)!: retire the kling door, the vendor no longer sells the capability (cf#921)
+
+`modules/kling` pinned the RunPod public slug `kling-v2-1-i2v-pro`, which returned 401 (exists) on
+2026-08-05 and returns **404 `endpoint not found`** now. Every render dispatched to that door failed
+at submit, and the scheduled liveness census (cf#934) re-filed it every run as cf#941.
+
+**Retiring rather than repointing is forced by the vendor, not chosen.** All 41 live RunPod public
+endpoints were enumerated (three `list-public-endpoints` pages, 41 of 41). Exactly two are Kling and
+neither does plain image-to-video: `kling-v2-6-std-motion-control` needs a reference motion VIDEO,
+which the `motion.backend` hook carries no field for, and `kling-video-o1-r2v` is multi-reference
+r2v, already shipped as the separate `kling-o1-r2v` door, which stays. Silent cinematic i2v is still
+served by the other doors in that capability row, so nothing is lost but a name that could not work.
+
+The estate had half-decided this already and never finished: `wrangler.toml.example` said "Kling 2.1
+stays in modules/kling but is NOT bound on hosted" with the binding commented out, while the tenant
+catalog shipped it anyway. cp#538 dropped the catalog row; this removes the module.
+
+**What went with it, because a retirement that leaves references behind is the next dead reference
+somebody finds in three weeks.** The module directory and its unit test; four test rosters; the
+commented binding block; `scripts/tenant-release-modules.txt`, so the bundle stops being published
+too; and **the demo seed**, which was still installing a door that 404s into every demo tenant
+(`migrations/demo/0001_demo_seed.sql`, caught by `security-demo-manifest-count-534`).
+
+**Ten count-bearing assertions moved with it, and that is the system working rather than churn.**
+Populations 1 (34 -> 33) and 3 (23 -> 22); the job-log writers (15 -> 14); the cost-door roster
+(eight -> seven); the `/ready` roster (24 -> 23); the vendored-contract census (34 -> 33 contracts,
+65 -> 63 arms, and the PollResponse/CancelResponse split beneath it); and the published page's
+prose denominators. Each one existed because somebody made this exact number wrong before.
+
+**The published-not-catalogued asymmetry CLOSES rather than becoming permanent.** `kling` spent one
+day as the only member of that set that arrived by SUBTRACTION (cp#538 took its row while the bundle
+stayed published) rather than by being published ahead of a capability. Retiring the module
+unpublishes the bundle, so the set is back to six and every member again has the single cause it had
+before. The page says so instead of leaving a reader to infer it.
+
+**This PR carries a DECLARED TRANSITION and that is deliberate.** `scripts/matrix-transition.txt`
+holds `kling retiring cf#921` (vivijure#830). The hub's row is still live, so the module is gone
+while the row remains, and the gate tolerates exactly that one declared name. **Proven load-bearing
+rather than assumed:** commenting the line out turns `check:matrix` red with
+`1 module(s) named in the matrix do NOT exist ... kling`, and with it the run reads
+`TRANSITION kling (retiring, cf#921) -- NOT in modules/, in the matrix; exempted`.
+
+**The line must be DELETED once `skyphusion-labs/vivijure`#829 merges**, and the gate enforces that
+rather than trusting anyone to remember: once both sides are consistent the transition is COMPLETE
+and a surviving entry is a hard FAIL.
+
+**Not in this change, and it is not mine:** `kling-v2-1-i2v-pro` stays in the control plane's
+`PUBLIC_ENDPOINT_ALLOWLIST`. That list is pinned by the plane's own `runpod-proxy-census.test.ts`,
+which states in its docstring that it does NOT re-scan this repo: it compares a constant to a
+constant and a comment to itself. **So this retirement will not turn the plane red; it will leave the
+plane green while the allowlist holds a slug for a module that no longer exists**, and that census is
+structurally unable to notice. Routed to the infra lane rather than worked around here.
+
+Gate: `npm run typecheck` exit 0; `npm test` exit 0 (3772 passed, 3 skipped); `conformance`,
+`guard:resolve`, `check:catalog`, `check:matrix` all exit 0.
+
+cf#941 is left OPEN on purpose. It should self-close on the next scheduled census run now that the
+slug is no longer in `modules/`, and that path has never executed. If it does not, that is a finding
+about the workflow and worth more than a tidy issue list.
+
+### fix(modules)!: send the keys the vendors actually read, and the values they actually accept (cf#922)
+
+Two RunPod motion doors sent parameter names the endpoint does not define. Both are fixed, and the
+vendor's behaviour is now MEASURED rather than assumed.
+
+- **`seedance`** sent `last_frame_image`; the endpoint reads **`last_image`**. The wrong name is the
+  Cloudflare bytedance door's key (`modules/cf-seedance`, where it is still correct) carried across.
+  `seedance-v1-5-pro-i2v` is the only endpoint in RunPod's public catalog that accepts an ending frame
+  at all, and this door's manifest declares `usage.first_last: true`, so the end frame meant to hold
+  the cut was riding on a key the endpoint ignores.
+- **`alibaba-wan`** sent `resolution: "720p"`; the endpoint reads **`size`**.
+
+**What the vendor actually does with an unknown key: IGNORES it. Measured, not inferred.** RunPod's
+public endpoints do no submit-time validation of the envelope; the worker validates with a pydantic
+model that does not forbid extra fields. A body carrying the unknown key `resolution` plus a bad
+`duration` came back with ONLY the duration complaint, from the upstream vendor, never a word about
+`resolution`. So our value was silently dropped and the vendor applied its own default. **That is why
+the 1270x726 clip measured last sprint looked correct: it was the vendor default and never a
+configured outcome.**
+
+The decisive pair is on `seedance`, identical garbage value on each key:
+
+| submitted | result |
+| --- | --- |
+| `last_image: "notaurl"` | **FAILED**, `Input must be a public http(s) URL, a data: URI, or a base64-encoded file` |
+| `last_frame_image: "notaurl"` | **COMPLETED** normally, $0.096 |
+
+The live key validates the value; the retired key was not looked at. Both outcomes producible, which
+is what makes this a reading rather than a guess.
+
+**RUNPOD'S DOCS ARE WRONG ABOUT THE `size` VALUE FORMAT, and the schema-conformant fix would have
+broken every wan shot.** The docs page says `size` takes `1280*720` / `1920*1080`. It does not. The
+worker forwards our value verbatim into the VENDOR's `resolution` field, and `size: "9999*9999"`
+returns the vendor's own enum: `field "resolution" must be one of ["720p", "1080p"]`. So this door now
+sends `720p` / `1080p`. Had this landed on the documented value, a silent wrong default would have
+become a hard 400 on every shot, which is the exact failure the seedance 1080p incident already cost
+us a film to learn.
+
+**The `size` knob is EARNED, which is the cf#935 test.** Rollins removed the infinitetalk `size` knob
+days ago for being inert at the vendor while RunPod billed 720p at double 480p. So this one is not
+added on the strength of a corrected key: `size: "1080p"` was submitted and the DELIVERED artifact
+measured **1920x1080 at 30fps** with `ffprobe`. A non-default delivery is the falsifiable positive, so
+this knob demonstrably moves pixels. It projects into a select automatically through the generic
+render path, no frontend wiring. **720p stays the default because 1080p bills $0.15/s against
+$0.10/s.** The published 1080p tier was unreachable before this, and the cause was our key, not the
+vendor.
+
+**Tests.** `tests/seedance.test.ts` asserted the same wrong key the module sent, so the suite was green
+while the wire was wrong; it now asserts `last_image` AND that `last_frame_image` is never present.
+Watched red first: `expected undefined to be 'https://r2/end.png'`. New cases pin the vendor's value
+space against RunPod's docs, and mutating the door back to the documented `1280*720` fails **4 of 12**
+cases in `tests/alibaba-wan.test.ts`.
+
+**Evidence (RunPod job ids, all on 2026-09-27):** unknown-key-ignored
+`sync-5333abdf-39aa-4634-9f8b-87e456abbee9-u2`; vendor enum for `size`
+`sync-7334e207-526d-4c70-8ca4-ffcb3284687b-u2`; 1080p delivered
+`sync-7eb360c7-9111-43da-91f8-8b2c80f5c72b-u1` ($0.75); `last_image` validated
+`sync-5b49ab0a-c139-4db9-afa9-b8b674e6c1c0-u2`; `last_frame_image` ignored
+`sync-0c87ae96-ebee-4c80-9fe0-e556bc6c1fb1-u1` ($0.096). Total billed **$0.846**; the four rejected
+probes returned no `cost` field. All three docs defects were reported upstream to RunPod.
+
+**Not claimed.** Whether the end frame VISIBLY holds the cut now. `last_image` is proven live and
+validated, which is strictly more than was known, but no one has compared final frames. Also unchanged:
+`modules/cf-seedance` keeps `last_frame_image`, which is correct for the Cloudflare API.
+
+### fix(modules): measure fps and frames from the delivered artifact, not the request (cf#923)
+
+Both talking doors declared `OUT_FPS = 24` and **neither delivered it**. `infinitetalk` returns 25,
+`alibaba-wan` returns 30. The constant had never been compared to a real file.
+
+Two shapes of the same bug. `infinitetalk` was half-measured: real container duration, multiplied by an
+assumed rate. `alibaba-wan` never opened the artifact at all, reporting `frames: st.seconds * 24` -- the
+**requested** seconds times an assumed rate -- so a 5s clip reported 120 frames against an actual 150,
+with the error scaling linearly (a 15s clip would report 360 against 450).
+
+The rule, since it generalises past these two fields: **a value computed from the request is not a
+measurement, no matter what the field is named.**
+
+Both doors now read the MP4 sample table. `frames` is the sum of `stts` sample counts, which *is* the
+frame count rather than an estimate; `fps` is that count over the track duration in the `mdhd`
+timescale. The video track is identified by its `hdlr` handler type, so an audio track cannot be
+mistaken for it.
+
+**Unmeasured is reported as `0/0`, never as a constant** -- and that is the contract's existing
+not-available channel rather than a new invention. Conformance checks `isNum(o.fps)`, not `> 0`, and
+core records a delivery only when `fps > 0 && frames > 0`. So an unparseable container costs a telemetry
+field and never a render: the clip still ships, and nothing downstream stores a rate nobody measured.
+
+The parser lives in `modules/_shared/mp4-timing.ts` rather than being vendored into each door, a
+deliberate departure from the per-module vendoring convention: **the defect WAS a vendored copy**, one
+constant pasted into two modules where nobody re-checked it. A copied helper forks at copy time and
+inherits the assumption without inheriting the check. A test asserts both doors return identical values
+for identical bytes, as the guard against the copy returning.
+
+Fixtures are real libx264-muxed containers at 25 and 30fps, not hand-built byte arrays, because a
+hand-built fixture encodes the same assumptions the parser makes and cannot falsify it. The parser was
+first validated against three real delivered clips and agrees with `ffprobe` exactly: 25fps/73 frames
+twice, 30fps/150 frames once.
+
+An existing assertion expected 72 frames and passed. It measured nothing -- 72 is 3s times an assumed
+24. Corrected in place, and it now pins the unmeasured case, since that fixture is an `mvhd`-only stub
+with no video track.
+
+No module version bumps here: cf#935 and cf#929 bump `infinitetalk` to `0.2.0` and `alibaba-wan` to
+`0.2.1` in the same unreleased cycle, and a second bump per module would be noise.
+
+### feat(renders): record what the modules were actually told, not just which door ran (cf#924)
+
+A render recorded **which** door ran (`motion_backend` / `keyframe_backend`, cf#393) and never **what it
+was told to do**. The config bag was accepted at submit, carried into the job, handed to the module, and
+then dropped, so the knobs a render actually used were unreadable afterwards -- including the one that
+doubles the price on a door.
+
+New `output.applied_module_config` on every film render, carrying the resolved config each module
+received, the raw config the caller requested, and both door names.
+
+**Resolved and requested are separate fields and never conflated.** `motion_resolved` is what core's
+`validateConfig` produced per shot and the module actually received (core already retains it as
+`shot.config`, #767). `motion_requested` is the raw caller bag. `keyframe_requested` is labelled
+requested-only, because the keyframe worker resolves its own config and the host never sees that value.
+They differ exactly when something coerced, which is the case worth seeing. Per-shot configs collapse to
+a single object when every shot agrees (compared by value with sorted keys, so a reordered bag is not a
+disagreement) and fall back to `motion_resolved_by_shot` when a per-shot backend override makes them
+genuinely differ.
+
+**Absent means NOT RECORDED**, never "no config was used": the builder returns `null` rather than an
+empty shape, which is the honest answer for legacy rows and for a film that has not reached the clips
+phase.
+
+The specific thing this prevents: a `size: "720p"` request to `infinitetalk` produced an 832x464
+artifact, and separating "the value never reached the vendor" from "the vendor ignored it" took reading
+four files and running the real compiled `validateConfig` against a probe table, and **still ended
+undetermined** -- resolved only later by a direct vendor submit (cf#935). One recorded field answers it
+in a single read. It also catches the inverse error made in the same sprint: reading 832x464 as proof
+the 480p request was *honoured*, when 480p is the schema default and the artifact cannot distinguish
+"applied" from "never arrived".
+
+Carried on the `output` bag rather than a new column, matching the relay core already uses for
+`clip_deliveries` / `keyframes_incomplete` and the host already uses for `wan_lora_projection` (cf#392).
+`NewRenderRow`, `buildInsertRenderStmt` and the `SELECT` projection all live in `vivijure-core`, so a
+first-class column would need a core change, a D1 migration, a core release and a pin bump here. The
+field is queryable in D1 via `json_extract`, and **if a real column is wanted later this field is what
+backfills it** -- the option stays open rather than foreclosed.
+
+### docs(modules): correct the stale cp#284 catalog claim in 10 wrangler.toml, and the infinitetalk header (cf#925)
+
+Comment-only; no binding, no `compatibility_date`, no code path changed.
+
+- Ten module `wrangler.toml` files (`alibaba-wan`, `alibaba-wan-lora`, `google-veo`, `kling`,
+  `kling-o1-r2v`, `minimax-hailuo`, `narration-gen`, `seedance`, `vidu-q3`, `infinitetalk`) carried
+  a byte-identical block asserting "TENANT_MODULE_CATALOG is six entries, none of them these" and
+  concluding "every row this binding writes is our own traffic". cp#284 was answered "tenants get
+  the cost door" by cp#317 and the comment never moved: measured against
+  `vivijure-control-plane@main` by the array BOUNDS, the catalog is 17 entries and eight of them are
+  exactly these modules. `npm run check:catalog` prints the same 17 from the live authority.
+- The cross-tenant `TELEMETRY_DB` write that block predicted has not happened, and the replacement
+  says why it structurally cannot: `scripts/build-module-release.ts` publishes a manifest of
+  `{module, worker.sha256, compatibility_date, compatibility_flags}` and no bindings, so the plane's
+  binding array is the complete set a tenant module gets, and it binds `R2_RENDERS` to the tenant
+  bucket and `TELEMETRY_DB` to the tenant D1, throwing rather than falling back in both cases. The
+  two changes that WOULD break it are named in the new block.
+- `modules/infinitetalk/wrangler.toml` and `modules/infinitetalk/src/index.ts` both described the
+  worker as "Kuaishou Kling V2.1 I2V Pro on RunPod". It is MeiGen-AI InfiniteTalk on the RunPod
+  public endpoint `api.runpod.ai/v2/infinitetalk`. Both also called it "the second motion.backend
+  backend"; the live projection serves 15 on that hook.
+
+Found while establishing what blocks a hosted tenant from lip-synced dialogue
+(vivijure-control-plane#524).
+
+### docs(alibaba-wan): disclose that the mouth keeps moving after the line ends (cf#929)
+
+Wan 2.6 keeps the speaker articulating once the driving line stops. The vendor doing that is the
+vendor's business; what was ours is that **nothing we published let a user predict it**. The blurb
+stopped at "Mouth follows the storyboard line", which reads as a promise that it tracks the line;
+`ui.limits` never mentioned the tail; and `duration_steps: [5, 10, 15]` read as a menu when it is a
+floor plus a rounding rule.
+
+Measured against an `infinitetalk` control on the identical keyframe and the identical Cast track, so
+only the door differed. A **1.4s line in a 5s clip**:
+
+| | InfiniteTalk | Wan 2.6 |
+|---|---|---|
+| mouth motion, speaking | 7.724 | 3.256 |
+| mouth motion, silence | **0.744** | **3.787** |
+| speech -> silence | **10.4x quieter** | **1.16x LOUDER** |
+| mouth/audio correlation, whole clip | +0.693 | **+0.066** |
+
+Read the within-clip change rather than the absolute means: frame-to-frame pixel delta shrinks as fps
+rises and these clips are 25fps vs 30fps, so only the speech-to-silence ratio is comparable across
+doors. Wan's whole-clip correlation of **+0.066** is the summary -- across the clip there is no
+relationship between mouth motion and the audio. **72% of that clip is the speaker mouthing nothing.**
+
+Not an audio-provenance problem: the output audio is our Cast track at raw-sample `r=+0.9996` at zero
+lag, with `infinitetalk` as a known-good control at `r=+0.9997`. Wan took the driving path, used our
+track, and carried on past it.
+
+`clampDuration` snaps **up** to the next of `{5, 10, 15}`, so a line shorter than 5s cannot produce a
+clip shorter than 5s. Ordinary dialogue is shorter than 5s, which makes the tail the normal case rather
+than an edge case.
+
+Disclosure only -- no behaviour change. The blurb now says the mouth keeps moving after the line ends,
+two `limits` entries name the tail and the short-line case that guarantees it, the duration limit says a
+shorter shot is rounded up, and a comment on `duration_steps` records the floor-plus-rounding reading.
+Module `0.2.0` -> `0.2.1`.
+
+A machine-readable `usage` flag for the property is deliberately **not** added: it shares a contract
+surface with the `length_follows_audio` question and should not land twice in different shapes.
+
+### fix(infinitetalk)!: remove the size knob the vendor ignores (cf#935)
+
+`infinitetalk` advertised a `size` choice of `480p` or `720p`. The provider ignores it: both values
+deliver **832x464**. The knob is removed from `config_schema` rather than defaulted, a `ui.limits` entry
+states the real output so the removal is not a silent loss, and the reason sits at the call site in
+`kling.ts` so it is not re-added from the vendor docs later.
+
+Measured three ways across two independent paths -- a full film, a clips-door render with
+`size: "720p"`, and a **direct submit to RunPod that bypassed this worker, core, `validateConfig` and
+the invoke transport entirely** (job `d159bf34-3f84-41fa-a472-1d3875178638-u1`). All three returned
+832x464, dimensions read off the artifact rather than a response field. Our pipeline is exonerated: the
+value reaches the vendor and the vendor discards it.
+
+This had a money edge. RunPod publishes InfiniteTalk at **$0.25 (480p) and $0.50 (720p)**, so a user
+selecting 720p could pay double for byte-identical pixels. Whether RunPod bills on the requested or the
+delivered size is **unmeasured and currently unmeasurable** -- their billing API has read $0.00 for all
+of September while renders demonstrably ran (`vivijure-control-plane#525`) -- so no figure is asserted
+here.
+
+RunPod's own documentation still lists `input.size` as required with both values valid, and prices each
+tier. The parameter is documented, priced, accepted, and inert; reporting that upstream is a separate
+decision.
+
+An existing test expected `size: "720p"` back and passed. It was not measuring the vendor, it was
+measuring our own ternary echoing the caller -- a green test confirming a knob that never worked.
+Corrected in place rather than deleted, so the wrong expectation stays visible in history.
+
+**BREAKING**: `size` is removed from `infinitetalk`'s `config_schema` (module `0.1.1` -> `0.2.0`). A
+caller still passing it is unaffected in behaviour, since 480p was always what the vendor produced.
+
+### feat(release): the module release manifest carries the bindings a module DECLARES (cf#942)
+
+The manifest carried `{module, main_module, compatibility_date, compatibility_flags, worker}` and no
+bindings at all, so the array the control plane builds at upload WAS the complete binding set a
+tenant module got -- derived from a hand-maintained catalog on the other side of a repo boundary.
+That is why four catalogued motion doors and the hosted `dialogue` door cannot be given their
+Workflows binding: nothing tells the plane they need one.
+
+`build-module-release.ts` now reads each module's own `[[workflows]]` blocks out of the
+`wrangler.toml` the bundle was built from, and publishes them as `bindings_required.workflows`:
+
+```json
+"bindings_required": { "workflows": [
+  { "binding": "DIALOGUE_WORKFLOW", "class_name": "DialogueGenWorkflow", "name": "dialogue-gen" }
+] }
+```
+
+**The split is by who can possibly know each part.** The module knows WHAT it needs, and its own
+config is the only copy of that fact which cannot drift from the code calling `env.X.create()`. Only
+the plane knows WHO it is for, so the plane composes the account-scoped resource name from the
+tenant, exactly as it already derives the script name. Neither half is hand-maintained, which is the
+point: a triple typed into `TENANT_MODULE_CATALOG` would be the third hand-maintained list to rot in
+this estate in a month.
+
+**Always present, even empty, and that is load-bearing rather than tidy.** `"workflows": []` means
+"declares none"; the whole field being ABSENT means the artifact predates this contract and cannot
+say. Only the second is a reason for a consumer to refuse, and collapsing them is how a module that
+needs a binding provisions silently unbound -- which the live API measurably accepts
+(vivijure-control-plane cp#526), so it is invisible until the first invoke.
+
+A partial `[[workflows]]` block (missing `binding`, `class_name` or `name`) fails the RELEASE BUILD
+rather than publishing a requirement the plane cannot act on: at build beats at provision, and at
+provision beats a green install that throws.
+
+The parser is line-oriented and tracks the current table header, because the alternatives produce a
+plausible wrong answer rather than an error: a pattern matching `name =` anywhere picks up the
+worker's own top-level name, and a block reader that does not stop at the next header absorbs
+`binding` from the `[[secrets_store_secrets]]` block that follows in six of these files. Both traps
+have a test, and both were watched RED against a mutation that removed the header boundary -- along
+with a third case that only discriminates because the mutation showed it did not.
+
+### feat(release): publish `dialogue-gen` as a tenant bundle (cp#524)
+
+A hosted tenant has had no way to synthesize a spoken line at all. Both `dialogue` providers,
+`dialogue-gen` and `chatterbox`, were absent from `scripts/tenant-release-modules.txt`, so no studio
+release published either as a tenant bundle -- and nothing withheld them: a `grep -rc` of the
+control plane returns `chatterbox` 0 and `dialogue-gen` 0 against positive controls `keyframe` 29
+and `seedance` 3. It was never a decision, only an unwired lane.
+
+`dialogue-gen` goes first because it is the simpler of the two: Deepgram Aura-1 through our own AI
+Gateway, so it needs the AI-Gateway trio the plane already binds plus the tenant R2 bucket.
+`chatterbox` additionally reaches a RunPod public slug (`chatterbox-turbo`, which is not in the
+plane's `PUBLIC_ENDPOINT_ALLOWLIST`) and so carries a second decision; it stays unpublished here.
+
+**This publishes a bundle and catalogues nothing**, which is the established shape: a published
+bundle with no `TENANT_MODULE_CATALOG` row uploads nothing to anybody, and it exists so the plane
+can add the row in one repo instead of the two taking turns. The row genuinely cannot land yet --
+`dialogue-gen` declares a Workflows binding (`DIALOGUE_WORKFLOW`) and the plane cannot emit one.
+cp#526 grew the `workflow` variant and live-proved Workers for Platforms accepts it and reads it
+back, and the same run measured that a bound upload does NOT create the account-scoped Workflow, so
+an emitter owes both. Until then a catalog row would give a tenant a door that provisions, passes
+`/ready` (which reports `gateway_id` and nothing else) and throws at the first invoke.
+
+Ordering, which is the trap on this change and is why the bundle leads: a catalog row naming a
+module the pinned `STUDIO_RELEASE` does not publish fails EVERY provision at `modules_upload`, and
+typecheck cannot see it. The bundle has to exist in a released artifact before the plane may name it.
+
+Population 3 goes 22 to 23 in `docs/module-readiness-coverage.md`, and the published-not-catalogued
+set gains a third distinct reason alongside `image-generate`'s operator credential and the four
+own-iron finishing modules' VPC binding.
+
+### docs(keyframe): 1344x768 is 1.75, not 16:9 -- correct four comments that asserted the wrong ratio (cf#945)
+
+Comment and README text only. **No behaviour change, no default changed.**
+
+`modules/keyframe`, `modules/cloud-keyframe` and `modules/local-gpu` all default the keyframe to
+**1344x768**, and four places described that as "16:9":
+
+- `modules/keyframe/src/manifest.ts` (block comment above the default, said 16:9 four times)
+- `modules/cloud-keyframe/src/index.ts` (block comment above the default, three times)
+- `modules/keyframe/README.md` (config table: "16:9 so the whole chain stays 16:9")
+- `modules/cloud-keyframe/README.md` (same table row)
+
+**1344 / 768 = 1.75 (7:4). 16:9 is 1.7778.** 16:9 at width 1344 would be height **756**. Each comment
+was otherwise accurate, which is what made it durable: 1344x768 really is a standard SDXL bucket, and
+"image-to-video backends conform the clip to the keyframe's aspect ratio" is exactly right and was
+confirmed by render this sprint. One wrong token sat inside two true sentences, on the line a reader
+checks to confirm the ratio, so every downstream assumption that clips arrive 16:9 traced back to a
+line that said so.
+
+Measured consequence (vivijure#826, three live `alibaba/wan-2.7-i2v` renders): i2v doors preserve the
+caller's aspect ratio and fill the requested class's pixel budget, so a 1.75 keyframe yields 1270x726
+at 720P and 1904x1088 at 1080P, and `containers/video-finish`'s fixed 1920x1080 target must then
+pillarbox them (content box 1890x1080, black bars 14px left / 16px right, baked in at crf 18). A 16:9
+keyframe yields exactly 1280x720, which scales to 1920x1080 with no bars at all.
+
+Each corrected comment now states the ratio **numerically** rather than by label, so the next reader
+gets a number to check instead of a word to trust, and points at cf#945 for the residual mismatch.
+
+**Deliberately NOT changed here**, and tracked on cf#945:
+
+- The `1344`/`768` defaults themselves. 16:9 is unreachable at height 768 (768 x 16/9 = 1365.33), so
+  the candidates are 1280x720 or 1920x1080, and whether SDXL keyframe quality holds at either is
+  unmeasured. That measurement is the content of that change, not the arithmetic.
+- `modules/local-gpu/src/manifest.ts` carries the same defaults with no comment, so it had no wrong
+  token to correct. It is named on cf#945 so the three do not drift apart when the defaults move.
+- `nearestAspectRatio(1344, 768) === "16:9"` in `modules/cloud-keyframe/src/image-gen.ts` is correct
+  and intentional: it snaps to the nearest ratio a proxied model accepts so the provider *composes*
+  for that shape, and `normalizeKeyframe` then crops to the exact configured dimensions. Its test
+  comment already reads "1.75 -> nearest 16:9", which is honest about the snap.
+
+Gate: `npm run typecheck` exit 0; `npm test` exit 0; `npm run guard:resolve`, `npm run check:catalog`,
+`npm run check:matrix` exit 0.
+
+### chore(mirror): follow the plane dropping the `kling` catalog row (cp#538)
+
+The control plane removed `kling` from `TENANT_MODULE_CATALOG` because its RunPod slug
+`kling-v2-1-i2v-pro` returns 404 endpoint-not-found -- it answered 401-exists on 2026-08-05, so it
+was retired upstream between those dates (cf#921, and the scheduled liveness census cf#941 is what
+keeps reporting it). A catalogued door with nothing behind it fails 100% of submits, which is worse
+than absent, and `wrangler.toml.example:387` had already said Kling 2.1 is NOT bound on hosted while
+the catalog shipped it to hosted tenants anyway.
+
+This repo's mirror, its provenance stanza and every population-4 denominator follow: population 4
+goes 17 to 16, `16 of 34` replaces `17 of 34` in both places the prose states it, the
+not-provisioned bullet goes 17 names to 18, and `kling` joins the published-not-catalogued set as
+its fourth distinct reason -- the only one there that is not waiting on something we could build.
+
+**The BUNDLE keeps publishing.** `kling` stays in `tenant-release-modules.txt`: whether
+`modules/kling` itself is retired is cf#921, in this repo, and a published bundle with no catalog
+row uploads to nobody. The plane's catalog and this repo's module tree are allowed to disagree in
+that direction, which is the whole point of the gap.
+
+**This PR is RED until cp#539 merges, by design.** `check-tenant-module-catalog.mjs` fetches the
+plane's `main` and asserts set-equality, so a mirror corrected before the authority moves is a
+mirror that disagrees with it. The check currently reports, precisely: `in the plane, NOT in the
+mirror: kling`. It inverts to green the moment the plane's PR lands, and that ordering cannot be
+reversed without defeating the control.
+
+### fix(tests): the RunPod-reaching census classified COMMENTS as code, and four copies of it drifted from their own comment (cf#951)
+
+Four census tests classified a module as RunPod-reaching with a substring match over the whole
+file. `cf#289`'s own comment states the assumption that rested on: those strings "only ever live in
+index.ts" as RUNTIME CODE. **Nothing enforced it.** A module that merely CITES
+`_shared/runpod-route` in a comment was enrolled in the RunPod population and then required to
+carry a plane-refusal guard for a plane it never calls.
+
+Found building `modules/fal-wan-27`, a fal-only door with no RunPod import anywhere, enrolled by
+one comment line. **In CI that is a loud red. In the cf#289 / cf#578 / cf#604 censuses it silently
+inflates a denominator published as fact**, and it trains authors to delete accurate citations to
+go green, which is the wrong pressure to put on anyone.
+
+The suite already had a sharp negative control for a lookalike **behaviour** (`local-gpu` polls
+`<LOCAL_BACKEND_URL>/status/<id>` and is correctly excluded) and none for a lookalike **mention**.
+Right instinct, one level too shallow.
+
+**The fix is one shared classifier**, `tests/runpod-census.ts`, imported by all four censuses in
+place of four inline copies. It strips comments and then applies the same two-part predicate, so
+the author's stated intent (runtime code only) is now enforced rather than assumed.
+
+**The stripper is string-aware, and that is the sharp edge rather than a detail.** The host matched
+for is `https://api.runpod.ai/...`, which CONTAINS `//`. A naive line-comment stripper deletes the
+rest of that line and the host half of the predicate silently goes to ZERO. That is not
+hypothetical: this suite already survived it once, when cf#394 moved the base URL into the shared
+helper and, in cf#289's own words, "THE HOST-ONLY PREDICATE WENT TO ZERO THE MOMENT THAT LANDED".
+`tests/runpod-census.test.ts` asserts the stripper preserves a URL inside a string literal, across
+single quotes, double quotes, backticks and escapes.
+
+**Proven behaviour-preserving before landing:** both predicates were run over all 35 modules.
+Old 16, new 16, zero dropped and zero added. With the offending comment restored in the fal door,
+old 17 and new 16, dropped exactly `fal-wan-27`. The fix removes the false positive and moves
+nothing else.
+
+**A second defect, in the comment that described the first.** `cf#398` said the predicate was
+shared with "the cf#289 and cf#394 censuses" and that "the three cannot drift into three different
+populations". Both halves were wrong: **cf#394 does not carry the predicate, and the files that do
+are four, not three** (cf#289, cf#398, cf#578, cf#604). Anyone following that comment to fix all
+three would have edited a file with nothing to fix and missed two that had, producing the exact
+drift the sentence warned against. Corrected, and the wish is now a mechanism: one function, four
+importers.
+
+Gate: `npm run typecheck` exit 0; `npm test` exit 0; `npm run guard:resolve`, `npm run
+check:catalog`, `npm run check:matrix` exit 0.
+
+### docs(flip-control): make the `data:` URI the default way to supply the flipped frame (cf#954)
+
+The flip control needs an end frame that does not exist anywhere public: you make it locally, so the
+bytes have to reach the vendor somehow. **The obvious move is to host or proxy it, and that is the
+move that fails.**
+
+Measured on `seedance-v1-5-pro-i2v`, 2026-09-27, after doing it the hard way first. Serving the flip
+through `images.weserv.nl` was verified from the caller (HTTP 200, and 2.71 mean-abs-diff against the
+local flip, i.e. re-encode noise only). The vendor answered:
+
+> `Could not download the input from images.weserv.nl (HTTP 403)`
+
+**Reachable by us, 403 to them.** That cost a render, and it cost it to the person who had already
+written "the images must be reachable BY THE VENDOR" into this very file. The compliant path
+(presign, or find a host the vendor will fetch) was more expensive than the convenient one, so the
+convenient one got used. **A warning that costs more to obey than to ignore is not a mechanism**,
+which is why this lands as a documented default rather than a sharper warning.
+
+**The `data:` URI is a first-class accepted form, in the endpoint's own words:**
+
+> `Input must be a public http(s) URL, a data: URI, or a base64-encoded file`
+
+It needs no bucket, no presigning, no proxy and no public URL, and the bytes the vendor reads are
+byte-identical to the ones the caller measures against, which removes re-encoding from the comparison
+as well. Verified end to end: a `data:` URI flip was accepted and rendered
+(`sync-492c7275-2c2c-498c-a216-f8fc4d1086a3-u2`). Size is the only real constraint, so the note gives
+a worked figure: 256x144 at moderate JPEG quality is about 4KB, roughly 5.4KB base64, and the flip
+should match the start frame's dimensions or the door may reject or letterbox the pair.
+
+Also here, in `scripts/check-capability-matrix.mjs`: **when NOT to copy the cross-repo gate pattern**,
+recorded because it nearly was (cp#541). That gate is correct only when the two sides are genuinely
+the same set. `modules/` and the capability matrix are. The control plane's
+`PUBLIC_ENDPOINT_ALLOWLIST` looked like the same shape and is not: **nine cf modules declare a literal
+`ENDPOINT_ID` while `narration-gen` is catalogued and allow-listed and declares none**, so a gate
+equating that allow-list with cf's module-declared slugs would be **red on a correct estate, in both
+directions at once**. strummer read this file before deciding not to copy it and asserted the
+allow-list against the plane's catalog instead, which is the set it actually mirrors. The header now
+says to ask what the two populations ARE before reusing the shape, rather than what they look like.
+
+Comments only; no behaviour change. Gate: `npm run typecheck` exit 0; `flip-control` and
+`capability-matrix-gate-830` suites 24 passed; `check:matrix` exit 0.
+
+### test(flip-control): a shared end-frame control that can return every verdict, including VOID (cf#954)
+
+`usage.first_last: true` is a DECLARATION. Five doors carry it and, measured on `main` before
+cf#922 landed, **only one had been proven to honour it**. A door that accepts an end frame and
+silently discards it produces a perfectly plausible clip, so nothing in the output betrays it.
+
+This adds the instrument that does, as **one shared helper** rather than a copy per door.
+
+**The trick:** render with an end frame that is a **horizontal flip of the start frame**. Honoured
+and ignored then give different readings, because a door that discarded the end frame ends near the
+START image while one that used it ends near the flipped image. Without the flip the two inputs
+look alike and both verdicts produce identical numbers.
+
+**It carries its own control of the control.** `startVsEnd` is the discriminator's discriminator:
+if the two INPUT images barely differ, no reading of the output can separate the verdicts, and the
+answer is **VOID** rather than a confident "honoured". `endFrameReport` surfaces
+`controlSeparation` and `controlOk` so a caller asserts on the numbers rather than on a boolean,
+because a helper that hides the control line lets a near-identical input pair report a confident
+nothing.
+
+`tests/flip-control.test.ts` asserts **all four verdicts are reachable** (honoured, ignored, void,
+ambiguous) before any door is judged. **A flip control that can only report "honoured" is worth
+less than no control at all**, and this repo has now fixed two instruments with that shape in one
+day (cf#951's census, and a resolution check that could not distinguish a live knob from an inert
+one defaulting to the same value).
+
+Calibration reading baked into the test, from the one door proven to honour an end frame:
+
+```
+inputs differ by 62.25    (near-zero here voids the test)
+FIRST frame  vs start  2.01   vs end 62.89  -> START
+LAST  frame  vs start 62.63   vs end  3.75  -> END       verdict: honoured
+```
+
+Carries two field notes measured by joan on `seedance-v1-5-pro-i2v` the same day, because both
+change how a caller must use it: **the images must be reachable BY THE VENDOR** (a Wikimedia thumb
+URL 400s where a resolved direct URL works), and **RunPod public endpoints do NO submit-time
+envelope validation** -- `{"input": {}}` is accepted, starts a worker and fails after ~47s, and
+unknown keys are silently ignored. So a malformed probe is not free, and **the absence of a schema
+error proves nothing about whether a key was read**.
+
+No module or `src/` change. Helper plus its own tests only; no door consumes it yet.
+
+Gate: `npm run typecheck` exit 0; `npm test` exit 0; `npm run guard:resolve`, `npm run
+check:catalog`, `npm run check:matrix` exit 0.
+
+### feat(host): serve the studio on app.studio.vivijure.com
+
+The flagship worker gains a custom domain for `app.studio.vivijure.com`. It is the same Worker, the same D1, and the same R2. `vivijure.skyphusion.org` stays until that host is proven. The route is `SELFHOST-SKIP`, so a self-host still has one route and `deploy.sh` retargets it.
+
+The post-deploy auth check now requests every custom domain. It used to stop at the first pattern.
+
+A merge to `main` does not deploy this worker. The deploy job runs only on a `v*` tag.
+
+## v1.35.0 -- 2026-09-27
+
+**READ BEFORE UPGRADING. This release changes what SUCCESS MEANS, which is why it is a MINOR and
+not a PATCH.**
+
+**cf#834 -- films that used to succeed silently now fail loudly.** A dialogue leg that could not
+deliver answered four failure branches with a `console.warn` and a silent finish, on **13 of 15
+live motion doors**. A film shipped silent and booked COMPLETE. From this release those fail. **If
+you have automation keyed on a film reaching `done`, you will see new failures that were
+previously silent successes.** Those renders were already broken; they are only now saying so. Do
+not roll this back to make the failures go away.
+
+**cf#893 / cf#906 / cf#910 -- the container bearer gate now fails CLOSED, and this changes what
+your deployment must supply.** A media container with neither variable set **refuses to start**
+rather than serving media routes unauthenticated.
+
+- **Hosted (Cloudflare Containers):** handled for you. `FinishContainer` declares
+  `envVars = { LOCAL_FINISH_ALLOW_UNAUTHENTICATED: "true" }`, because the `[[containers]]` binding
+  IS the private boundary and a token would not work on that path at all -- the bound branch is
+  taken before the token lookup, so an Authorization header is never attached and a configured
+  token would 401 every call.
+- **Self-host (`containers/compose.yaml`):** **you must set ONE of the two explicitly. Neither is
+  defaulted and the hosted opt-out is NOT inherited** -- compose passes both through as empty, so
+  a stack that sets neither will refuse to start after upgrading. Use `LOCAL_FINISH_TOKEN` for
+  anything reachable beyond loopback; `LOCAL_FINISH_ALLOW_UNAUTHENTICATED=true` is defensible only
+  where the deployment itself is the boundary.
+
+**Expect a WARNING in your container logs when the opt-out is active**, naming that media routes
+are served with no authentication. On the hosted path that line is EXPECTED and is the positive
+signal that the opt-out reached the container. On a self-host it is a prompt to check that the
+deployment really is the boundary.
+
+**cf#813 -- your output dimensions change.** The assembled film now matches the measured source
+instead of a constant 1920x1080. Measured on the outgoing v1.34.3 build, choosing 480p saved 58.4%
+on the clip leg and only 4.6% on the delivered film, because the assemble upscaled it back. If you
+relied on every film arriving at 1080p regardless of what you asked for, that stops here.
+
+**cf#836 -- new payload surface.** Three per-stage degrade keys (`speech`, `master`, `dialogue`)
+become observable on the render payload.
+
+**Under-numbering a release that changes the meaning of a terminal state is worse than
+over-numbering one.** None of the Conventional Commit types below can express "the meaning of done
+changed", so the version number is the only place it can be said.
+
+### fix(finish): make every submit attempt attributable to the instance record it creates (cf#843)
+
+`routingKey()` is minted per submit ATTEMPT, so every attempt addresses a fresh Durable Object and
+creates a fresh container instance record. During `film-40e0cd09` the application's instance list grew
+by one about every five minutes while assemble was stuck, and when those records were read back
+**nothing could say which attempt created which**: the instances endpoint carries only
+`{application_id, id, image, name, status}` (cf#844). cf#843 could not attribute `0706ec71...` to
+either a second attempt or a first request landing late, and declined to guess. **This is the line that
+makes the next occurrence answerable.**
+
+Each submit now emits two structured lines, `{"ev":"finish.submit",...}`:
+
+| phase | fields | when |
+|---|---|---|
+| `attempt` | `routing_key`, `path` | **before** the call |
+| `outcome` | `routing_key`, `outcome`, `status`, `container_job_id` | after, one of `accepted` / `rejected` / `unparseable` / `malformed` / `threw` |
+
+**The pre-call line is the load-bearing one.** The record is created by ADDRESSING the object, so if the
+fetch throws or the isolate dies, the record exists and a post-hoc-only line would be exactly the
+missing evidence again. A throwing submit logs `threw` and **rethrows unchanged**: core still reads it
+as a failed submit and no behaviour is altered.
+
+**6 of 10 is not a leak count, and this logging exists partly to stop that reading.** Measured
+2026-09-27, six of the application's ten instance records carry 32-hex names. A SUCCESSFUL submit also
+mints a key and creates a record, so the six are a mix of successes and orphans and there is no way to
+split them retroactively. Attribution is the only thing that can, which is why it ships before any
+change to how keys are minted.
+
+**The line is a leak vector before it is an observability feature.** The submit payload carries
+SigV4-presigned R2 URLs, and `tests/tenant-r2-forward.test.ts` exists because console output is how they
+would escape. Fields are enumerated explicitly rather than spread, `init` and the body are never
+touched, and the routing key is our own random hex identifying an instance rather than a credential.
+Six guards in `tests/video-finish-binding-cf810.test.ts` cover it, appended there rather than in a new
+file so the fake-namespace harness is not copied.
+
+**Watched red, twice:**
+
+- removing the pre-call `attempt` line fails **five** cases, including the leak guard, whose control
+  asserts two lines were emitted so it cannot pass on silence;
+- logging `init` instead of enumerated fields fails **exactly one**, the leak guard, and nothing else.
+
+## What this does NOT do
+
+**The deterministic per-job routing key is not in here, deliberately.** It is the other half of cf#843
+and it interacts with `vivijure-core#308` (both assemble guards sit downstream of a successful submit,
+so a submit that never succeeds is unbounded, OPEN, rollins). Whether a retry should reuse the same
+object depends on whether a failed submit should be retried at all, and cf#843 says the two should be
+decided together rather than separately. Changing the key scheme first would settle that question by
+accident, in the wrong repo.
+
+So cf#843 stays OPEN for the key change. What this closes is the reason it could not be investigated:
+the next stuck film leaves a trail.
+
+### docs(containers): what the Containers control plane can prove, and what it cannot (cf#844)
+
+cf#844 was filed because an empty instances list had been read as proof that nothing was running, and
+therefore nothing billing, at rest. **Measured against the live account, it proves neither, and the
+failure mode is that it answers confidently rather than erroring.**
+
+Two endpoints read **678 ms apart with one credential**:
+
+| reading | value |
+|---|---|
+| `application.instances` | **3** |
+| `application.max_instances` | **3** |
+| rows from `/containers/applications/{id}/instances` | **10** |
+| rows whose `status.state` is anything but `inactive` | **0** |
+
+**`application.instances` is not an observed count.** It read 3 while zero instances were active and ten
+were listed, and it equals `max_instances` exactly. A reader asking "how many are up?" gets a small,
+plausible, wrong integer. `max_instances = 3` also does not bound the number of instance RECORDS, of
+which there were ten.
+
+**An instance row is a record, not a running container**, and the union of keys across all ten rows is
+exactly `application_id`, `id`, `image`, `name`, `status`. **There is no `started_at` field** -- not
+null, absent. cf#844 saw `started_at` appear on one instance and read `null` minutes later and suspected
+it was not a start time; it is no longer in the shape at all, so nothing in that response can carry a
+billing claim about duration.
+
+So the endpoint answers "which instance records exist, and what state each was last seen in", which is
+useful and is not the question it was asked. The 04:49:33Z empty list and the 04:52:33Z record claiming a
+04:01:50Z start can both be true OF THE RECORD while neither speaks to what was running.
+
+## The second instrument, which is the transferable part
+
+cf#844's methodological complaint was that two people checking the same endpoint with different
+credentials treated their agreement as independent confirmation: **two credentials against one endpoint
+is one instrument.** So the doc includes a check that never consults the API about its own reliability.
+
+`SYNC_POOL_SIZE` is 1 and `poolIndex()` is `Math.floor(Math.random() * SYNC_POOL_SIZE)`, so the only
+pool name current code can mint is `sync-0`. The live list contains `sync-0` through **`sync-3`**. Since
+`sync-3` needs `SYNC_POOL_SIZE >= 4` to have ever been minted and cf#810 dropped the pool to 1, those
+records predate the current configuration: **the list is historical, proven by arithmetic about how
+names are generated.**
+
+## The guard exists because the doc would otherwise rot into the defect it describes
+
+That argument is only valid while `SYNC_POOL_SIZE` is actually 1. Raise the pool to 4 and `sync-3`
+becomes mintable, the inference silently inverts, and the doc keeps asserting it -- which is precisely
+the comment-asserting-a-property-the-code-lacks class this repo has spent a sprint clearing. Shipping the
+doc ungated would have been a fresh instance of it.
+
+`tests/containers-control-plane-doc-cf844.test.ts` DERIVES the number from `src/video-finish-binding.ts`
+and fails if the doc quotes a different one, or if the `sync-N` the doc argues from becomes a name
+current code can mint. **Watched red:** raising `SYNC_POOL_SIZE` to 4 fails both, with the message
+telling the next author to update the doc's argument rather than the test. It is not a second definition
+of `tests/video-finish-pool-ceiling-cf810.test.ts`, which pins the
+`SYNC_POOL_SIZE + RESERVED_JOB_INSTANCES <= max_instances` inequality; this one pins the doc against the
+source.
+
+## No gate on the endpoint itself, deliberately
+
+Nothing in this repo reads `containers/applications` or an instances list (`grep -rniE` over `*.ts`,
+`*.sh`, `*.py`, `*.yml`, `*.md`, excluding `node_modules` and `CHANGELOG.md`: the only hit is the word
+"instances" in an unrelated comment). **There is no consumer to guard**, so a gate would be a control
+with no subject, and reading intent out of source text is not something a grep can do. When a consumer
+appears it should be guarded then. Until then the doc is the artifact and the standing rule is cf#844's
+own last line: say "the endpoint reported nothing", not "nothing is running".
+
+Six of the ten rows are 32-hex names, the per-attempt `routingKey()` shape, which is cf#843's subject
+rather than this one's.
+
+### fix(image-prep): bound the DECODED pixels, not just the compressed bytes (cf#869)
+
+`MAX_INPUT_BYTES` gates **compressed** bytes. The decoded bitmap is a function of **pixel
+dimensions**, and nothing bounded those, so the only size gate measured the wrong quantity -- and
+measured it confidently.
+
+Demonstrated rather than argued: a structurally valid **69-byte** PNG whose IHDR claims
+`20000x20000` decodes to about **1.5 GiB** as RGBA. It passes the 32 MB byte cap by four orders of
+magnitude, because compressed size is not a bound on decoded size and an attacker picks the ratio.
+
+`MAX_INPUT_PIXELS` (default `4096x4096`, env-tunable like the other container constants) now bounds
+the decode. Three details are load-bearing:
+
+- **It runs before `rembg`, not before `Image.open`.** `rembg.remove()` decodes the input itself,
+  ahead of any Pillow call in this module, so a guard placed at `Image.open` would have sat *behind*
+  the allocation it exists to prevent.
+- **It reads the HEADER only.** `Image.open` is lazy, so `.size` costs nothing and no pixel is
+  decoded to decide whether decoding is affordable.
+- **Pillow's own bomb check is suspended for that header read, and restored immediately.** Pillow
+  raises `DecompressionBombError` above 2x `MAX_IMAGE_PIXELS`, which pre-empted the check and
+  surfaced a 400 MP image as *"could not identify image"* -- refused, but for the wrong reason,
+  which is the same two-states-as-one defect this guard exists to close. **That was caught by the
+  new test, in the first version of this fix.** The global limit stays set as defense in depth for
+  any decode that does not come through the probe.
+
+The ceiling is derived rather than round: the subject is a single cast reference portrait, and
+`4096x4096` comfortably covers a 12 MP phone photo (`4032x3024`) while bounding the decode at about
+64 MiB RGBA. Both ends are pinned by tests, because a ceiling only tested from above could be far
+too tight and still look correct.
+
+Refusal is a **413 naming the decoded dimensions** and the ceiling applied, so an operator can tell
+"your image is too large to decode" from "the container fell over". An unidentifiable image is now
+refused **400** rather than passed to rembg: what cannot be read cannot be bounded, and it would
+have failed after the allocation anyway.
+
+`containers/image-prep/test_decode_bound.py`, 12 checks, added to the CI list. It builds the bomb by
+hand from a PNG header rather than asking Pillow to create one, because allocating 1.2 GB in a test
+is the very thing being prevented. Watched it go red: removing the bound fails exactly the two
+refusal checks and leaves every positive control green.
+
+CI installs `Pillow==12.3.0` for that job, pinned to what image-prep itself ships. Not the whole
+image-prep requirements file, which pulls rembg and onnxruntime, hundreds of MB of ML runtime this
+test never touches.
+
+The README's "residual, stated rather than hidden" paragraph is gone, because the residual is gone.
+
+### ci(python): fail on an undefined name, because nothing in this repo was asking (cf#874)
+
+`grep -rniE "ruff|pyflakes|flake8|pylint" .github/workflows/` returned **nothing**. There was no Python
+linter in CI at all, and it cost two live outages in one night. The second:
+`containers/video-finish/app.py` called `_parse_partial_urls(raw)` inside `_finish_work(body)` where
+`raw` was never bound, so **every non-remux finish raised `NameError`** until `cedba5a` (PR #875).
+
+**Why nothing caught it.** `py_compile` passes on that file, because a `NameError` is a runtime event
+and not a syntax one, so "it imports" was never evidence. The unit suite covers `_finish_chunked` (5
+call sites) and `_parse_partial_urls` (4) and `_finish_work` (0): both components tested, **the line
+joining them untested**, and no realistic unit test would have covered it without standing up the whole
+handler. And the cf#857 smoke gate cannot see it either -- `/health` answers, the process is healthy,
+and the defect sits on a handler path a boot check never touches. Three layers now, each with a stated
+boundary, none a substitute for another.
+
+**`scripts/lint-python-undefined.sh`** runs pyflakes over every tracked `*.py` (68 of them, derived from
+`git ls-files` rather than a hand-scoped subdirectory, because the defect class is not
+container-specific and a hand-kept list is the artifact that drifts).
+
+- **Undefined names FAIL.** That is the class that shipped.
+- **Style is REPORTED and does not block.** Unused imports, unused locals and placeholder-less
+  f-strings print as `::warning::`. **Eight** such findings existed when this landed and are visible in
+  the step's log. That count is read off the gate's own output (`8 non-blocking finding(s)`), not from
+  my notes: I first wrote nine, having counted the blocking undefined name among the non-blocking ones.
+  Nine was the total of ALL findings on the pre-fix tree, one of which was the outage. A gate that fails a release over an unused import is a gate somebody deletes, and then it
+  is a gate nobody runs.
+- **pyflakes, PINNED at 3.4.0.** A linter whose ruleset moves under you is a gate whose findings change
+  with no commit. `ruff --select F` is the same ruleset plus a large surface that would need
+  configuring to stay quiet; if the repo ever wants that, this script is what it replaces.
+
+**The control is the load-bearing half, because this gate decides by MATCHING TEXT** (`undefined name`)
+in the linter's output. A reworded or silent pyflakes would stop failing and read green forever. So
+`tests/lint-python-undefined.test.sh` drives the shipped script against fixtures and asserts the exact
+exit status plus the reason on each:
+
+| case | expected |
+|---|---|
+| undefined name | **1** |
+| clean file | **0** (the positive control; without it the gate might always fail) |
+| unused import only | **0**, with a non-blocking warning |
+| no `.py` in the population | **1**, could-not-measure is not a pass |
+| linter missing | **2**, an unavailable instrument is a failure and not a skip |
+| **linter that reports NOTHING** | **2**, the gate must REFUSE rather than pass |
+
+That last case is the one that makes the rest mean anything: a clean result from a silent instrument is
+indistinguishable from a clean tree. It uses a stub written by the test, after the first version reached
+for `/bin/true` and got the right exit code **for the wrong reason** (`not found`: macOS has only
+`/usr/bin/true`). The reason assertion caught it; an exit-code-only check would have called it a pass.
+
+**Both directions on the real artifact, no planted defect**, exactly as the issue required. Run against
+two worktrees:
+
+```
+cedba5a~1 (ff7f542)  containers/video-finish/app.py:443:40: undefined name 'raw'   exit 1
+origin/main (8499bc2)  no undefined names in 68 file(s)                            exit 0
+```
+
+Wired into `container-tests`, which already runs unconditionally and is already in the `deploy` job's
+`needs`, so this gates a release without adding a new conditional dependency to the release path.
+
+### ci(deploy): report which media-door hosts do not resolve, and never refuse a release for it (cf#886)
+
+cf#850 landed the config half: `BOUND` or `EMPTY` per media-door var, with one contradiction refused.
+**It says nothing about whether a bound origin resolves**, and the `v1.34.3` deploy is the proof. Its
+log reads:
+
+```
+origin-vars: 7 media-door var(s) in wrangler.toml: 7 bound, 0 empty.
+origin-vars: [[containers]] is bound and VIDEO_FINISH_URL is non-empty, so the finish tier reads as installed.
+```
+
+Rendered from the committed template with the live repo-variable values, the new report beside it reads:
+
+```
+reachability: 10 host(s) in the media-door values: 0 resolve, 10 do not.
+```
+
+**Zero of ten.** `BOUND` is a statement about the CONFIG; this is the cheapest available statement about
+the world. About seven lookups in practice, sub-second, no egress, no credential.
+
+**Correcting my own denominator while I am here:** I previously reported "11 of 13 hostnames NXDOMAIN".
+That 13 counted a non-door hostname I probed by mistake (`studio-mcp.skyphusion.org`, where the live var
+is `studio-mcp.vivijure.com`). Measured properly: **all 12 door hostnames across the 8 origin-bearing
+repo variables are NXDOMAIN**, and **10 of those reach the rendered config** (`SPEECH_UPSCALE_DOORS`
+has no consumer in the template since the module was excised), all 10 unresolvable.
+
+## Report-only is the contract, and it is structural rather than promised
+
+An HTTP probe in the deploy gate was refused on posture and this inherits the reasoning: **a release
+gate that depends on a third party being up is a gate that can block an unrelated release.** A door
+being down has nothing to do with whether the change in front of it is safe to ship, and the first time
+it blocks someone at 2am it goes on the bypass list permanently -- the same family as a jail that can
+ban your own ingress path. An HTTP probe would also need `MEDIA_FINISH_TOKEN`, putting a credential in a
+path that needs none.
+
+So the never-refuse property lives in the artifact, not in a comment promising good behaviour: its own
+file, **no `set -e`**, `exit 0` as the last line, and invoked BARE in `ci.yml` with no `||`, no `&&` and
+no `exit`. `tests/origin-reachability-cf886.test.ts` asserts every one of those, including the script's
+own text, because **if this ever gains the power to refuse it has become the gate that was refused.**
+
+**Not taken on trust, two mutations, both caught, both restored:**
+
+- make it exit non-zero when a host is dead -> the two "still exits 0" cases fail;
+- add `set -e` -> **three** cases fail, including both UNMEASURED paths. That second result is the
+  interesting one: `set -e` does not merely risk refusal in theory, it actually converts an
+  unmeasurable run into a non-zero exit, because a resolver returning non-zero terminates the script.
+  The absence of `set -e` is load-bearing, not stylistic.
+
+## An unmeasured run says so, because absence reads exactly like cleanliness
+
+- No resolver at all (no `getent`, no `python3`, no injected `$RESOLVER`) -> a warning saying
+  UNMEASURED and explicitly "this is not a clean result", and it does **not** go on to print per-host
+  verdicts it could not have obtained.
+- A resolver that fails on everything -> caught by a `localhost` probe first, so a broken tool reads as
+  a broken tool rather than as a catastrophic ten-host outage.
+- Every door empty -> "0 hosts ... nothing to resolve", said out loud rather than printed as silence.
+- A missing rendered config -> UNMEASURED, exit 0.
+
+## The blind spot, named
+
+**A host that RESOLVES but is DEAD reads as fine here.** DNS is not an availability check, and cf#851
+is the proof that this matters: that door was a Durable Object binding with no hostname at all, so this
+script would have had nothing to say during those six hours. cf#887 is the readiness surface that
+answers "is the tier SERVING now", filed rather than built, and it records why it does not reopen
+`core#327`'s ruling that the RENDER PATH reads the submit outcome and never a predicate.
+
+No network in the tests: `localhost` resolves from `/etc/hosts` and `*.invalid` is reserved by RFC 2606
+and never resolves, so both answers are deterministic offline. The resolver is injectable so the
+instrument-failure paths are driven without touching the machine's DNS, and a stub that resolves
+everything is the positive control on the injection seam itself.
+
+### docs(modules): correct README default for `enable_safety_checker`, four repo-wide (cf#891)
+
+`config_schema` declares `enable_safety_checker: default: false` in every module that carries it
+("off: we already refuse CSAM"), and all six call sites read `cfg.enable_safety_checker === true`, so
+the filter only turns on when a caller explicitly sets it. Four READMEs said the opposite: `kling`,
+`kling-o1-r2v` and `infinitetalk` documented `default true` / `(default on)`, and `alibaba-wan-lora`
+went further, stating "only an explicit `false` disables it" -- precisely inverted.
+
+Corrected all four to `default false`, carrying the schema's own rationale. `alibaba-wan-lora`'s
+inverted sentence is deleted rather than flipped in place (flipping alone would have left the
+surrounding paragraph still implying a safe-by-default posture); replaced with a line stating the
+filter becomes `true` only when explicitly set.
+
+Repo-wide `grep -rln "enable_safety_checker" --include="*.md" .` confirms exactly these four; `alibaba-wan`
+and `vidu-q3` (same call-site pattern, no README hit) were read in full and say nothing about the
+setting either way, left alone. Docs only: no schema field, default, or call site touched.
+
+### BREAKING fix(containers): the bearer gate fails CLOSED, and every media container now has one (cf#893, GHSA-v8g8-gmcm-22gr)
+
+**BREAKING FOR SELF-HOSTERS. A running deployment with no `LOCAL_FINISH_TOKEN` set will stop
+starting.** That is the correct outcome and it is deliberate, not a side effect.
+
+The one-line fix:
+
+```bash
+export LOCAL_FINISH_TOKEN="$(openssl rand -hex 32)"   # must match the store secret FINISH_DOOR_TOKEN
+```
+
+If a deployment is genuinely loopback-only and wants no authentication, ask for it **by name** with
+`LOCAL_FINISH_ALLOW_UNAUTHENTICATED=true`. Unset is not a request for it. The insecure state is
+choosable; it is never defaulted into.
+
+**What was wrong.** `bearer_middleware` passed every request through when `LOCAL_FINISH_TOKEN` was
+unset, and the docstring justified it: *"That is the current VPC path, which sends no credential.
+Arming the token is a later flip."* Those doors moved onto public HTTPS three commits later the same
+day, nothing re-armed the gate when the boundary moved, and the later flip never happened. A
+fail-open default is defensible behind a private network boundary and is not defensible on a public
+hostname, which is where a self-hoster following `compose.yaml` plus a tunnel ends up having never
+been told a token existed.
+
+**`image-prep` and `audio-master` had no gate at all**, only `url_guard.py`. Both now have one. Their
+Dockerfiles were missing the `COPY` for it, caught by the cf#857 file-set guard, which is the same
+defect class that crashed `video-finish` on startup earlier (`concat_guard.py` imported and never
+copied).
+
+**The next container inherits this rather than remembering it**, which is the actual fix for how two
+containers ended up ungated:
+
+- `tests/container-bearer-gate.test.py` **derives** the container list from which `app.py` builds a
+  `web.Application`, so a new service cannot ship without a gate. A hardcoded list stays true while
+  the population moves underneath it.
+- It asserts all five vendor a **byte-identical** `bearer.py` and wire the middleware and the startup
+  check.
+- `compose.yaml` plumbs both env vars on the shared `x-common` anchor, so a new service inherits them
+  from `*common`.
+
+`GET /health` stays open with no credential, asserted explicitly at the wire, because swarm and
+Traefik healthchecks depend on it: closing it would break orchestration instead of the auth hole. It
+answers even when the container is misconfigured, so a bad deployment reports itself to its scheduler
+rather than looking dead.
+
+**Two layers, each meaningful.** `require_bearer_config()` runs at `__main__` and refuses to bind;
+`bearer_middleware` independently answers **503** on every media route when no token is set, so a
+future factory that forgets the startup call cannot silently reopen the gate.
+
+**A stale test was passing for the wrong reason and is fixed here.** All three `test_bearer.py` files
+asserted `r.status != 401` for an unset token under the label *"(fail-open)"*. That assertion **kept
+passing** after the gate closed, because the new refusal is 503 and 503 is also `!= 401`. They now
+assert the exact status. And **none of the three were in the CI list at all** -- two are now, which
+is why the false claim survived unnoticed. `audio-beat-sync`'s is deliberately left out: it imports
+`librosa`, and installing an audio-analysis stack to assert an HTTP status is a worse trade than the
+structural coverage the repo-level test already gives it.
+
+Also corrected: `wrangler.toml.example` claimed *"Unset is fail-open"* for `MEDIA_FINISH_TOKEN` while
+`mediaDoorFetch` throws `MediaFinishAuthError` in exactly that case. Wrong in the SAFE direction,
+which is still wrong: a reader trusting it reasons wrongly about the whole auth posture, and a
+comment that under-claims a control is how the control gets "simplified" by someone who believes it
+is not load-bearing.
+
+### ci(changelog): refuse a tag whose `changelog.d/` still holds an unconsumed fragment (cf#901)
+
+**Three times in one night a change shipped inside a tag with no changelog entry and nothing
+refused.** One of them was a child-safety fix.
+
+- `v1.34.1` was HAND-WRITTEN instead of assembled, so both its fragments went unconsumed.
+  `810-pool-vs-max-instances.md` survived only by the accident of the author writing the same
+  content twice; `804-storage-posture-comment.md` was lost and had to be folded back afterwards as
+  a post-publication correction.
+- `v1.34.2` was assembled correctly and then two more PRs merged before the tag -- cf#858 (the
+  shared CSAM needle) and cf#859 -- and then two more again, cf#862 and cf#863.
+
+**IT RUNS AT TAG TIME, AND THAT IS THE DESIGN.** Only the first instance is a cut-time failure. The
+others were fragments that did not exist when the assembler ran, so a cut-time check would have
+passed honestly and the tag would still have shipped undescribed changes. **The tag is the last
+boundary the artifact crosses, so it is the one that has to ask.**
+
+**A HOLD IS DISTINGUISHED FROM AN OVERSIGHT, because `804` was held on purpose for hours.** A gate
+that is wrong about the legitimate case is one somebody disables. The distinction reuses the
+mechanism this repo already proved in `scripts/changelog-corrections.txt` (cp#245): **both halves
+required, neither waives alone** -- the fragment listed in `scripts/changelog-holds.txt`, AND a
+**first-line** `<!-- HELD: reason -->` marker in the fragment. Listed-but-unmarked is refused;
+marked-but-unlisted is refused; a stale hold naming a fragment that no longer exists is refused;
+and a reason under 12 characters is not a reason.
+
+The marker is pinned to line 1 because cp#245's own regression was a waiver living in the content,
+so a section merely DOCUMENTING the mechanism disarmed itself.
+`tests/changelog-fragments-consumed.test.py` plants exactly that -- a fragment quoting
+`<!-- HELD: ... -->` below its first line -- and requires a refusal.
+
+**IT CAN REFUSE, and the control proves it before anything asserts a pass.** 12 planted cases, run
+FIRST, including an unconsumed fragment and each half of the waiver alone. Not
+`continue-on-error`: the `changelog-immutability` step in this repo is, and its green tick
+therefore cannot tell a reader whether a waiver was accepted -- that had to be established by
+running the script by hand during #899. **A gate that cannot refuse is documentation with a tick
+next to it**, which is worse than nothing because the tick reads as an answer.
+
+The gate runs in `assert-tag-version`; its control runs in the `changelog` workflow on **every**
+PR, so the ability to refuse is exercised continuously rather than only on release days.
+
+### fix(containers): give the hosted container the bearer config cf#893 requires, and make the smoke gate able to see it (cf#906)
+
+cf#893 made the media containers refuse to start without a bearer configuration. **Nothing gave the
+Cloudflare-hosted `FinishContainer` one**, so the next deploy would have killed the hosted finish
+tier: the container exits at `require_bearer_config()` before binding, and the platform reports
+`Container crashed while checking for ports` -- the same shape a missing `COPY` produced earlier.
+
+Measured rather than inferred. `envVars` defaults to `{}` in `@cloudflare/containers`, the
+`[[containers]]` block carries no env, the Dockerfile sets none, and `src/` had zero `envVars` hits.
+Running the container's real entry point with that environment exits **1**; with the variable below
+it binds and serves.
+
+**The opt-out rather than a token, and the reason removes the choice rather than weighing it.**
+`mediaDoorFetch` takes the bound branch first (`if (bound) return bound.fetch(...)`) and returns
+**before** the token lookup, so the binding path never attaches an `Authorization` header -- as
+`src/video-finish-binding.ts:15` says in its own words: *"the door is the BINDING. No hostname, no
+DNS, no edge hop, no bearer required."* A token on the container turns every Worker call into 401.
+
+And it is right on the merits: GHSA-v8g8 found a fail-open default defensible behind a private
+network boundary and indefensible on a public hostname. **The `[[containers]]` binding IS that
+private boundary.** This is the one deployment where the old docstring was telling the truth, so the
+insecure-looking state is now **CHOSEN there by name, with the argument at the site**, instead of
+being the silent default everywhere including the public hostnames the advisory was about.
+
+**The smoke gate could not see any of this, and that is the more important half.**
+`container-smoke` injected `LOCAL_FINISH_TOKEN=ci-smoke-token`, which **production has no way to
+set**, so it went green on an image the hosted tier cannot start. That is cf#857's own defect class
+reappearing *inside the gate built to close it*. It now supplies what the deployment supplies.
+
+**The seam is closed by a test that crosses the language boundary**, because the two halves were
+each correct and nobody ran one against the other: `tests/container-bearer-gate.test.py` parses the
+`envVars` that `src/finish-container.ts` declares and drives the real Python `require_bearer_config`
+with exactly those variables. A TypeScript test could assert the property exists; only this asserts
+it **satisfies the gate**. It also pins that the smoke gate does not inject a token and does supply
+the declared var.
+
+Watched red on both halves: removing `envVars` fails 3 checks, and restoring the injected token in
+the smoke gate fails 2.
+
+Authenticating the binding hop itself is a real improvement and a contract change on core's bound
+path. Tracked separately; GHSA-v8g8 is closed by this, not by that.
+
+### test(fixtures): model the container's R2 write, so the film key can be absent then present (cf#833)
+
+Test-only. No behaviour change, no dependency move: this lands on the current core pin and is green
+against it.
+
+`cf#833` made the film key one whose presence **changes during a single advance**:
+
+- **before** assemble it must be ABSENT, or the self-heal short-circuit fires and the real assemble
+  path never runs, which several fixtures deliberately arrange;
+- **after** assemble it must be PRESENT, because core now heads it before calling a film
+  deliverable.
+
+A static `head: async () => null` cannot be both. The WORKER never performs that PUT either -- the
+container writes the film straight to R2 through a presigned URL -- so no Worker-side mock can
+observe it through `put`, and every fixture modelled an R2 in which the film never landed. That was
+harmless only while nothing looked.
+
+`tests/install-vf-fetch.ts` now owns the transition instead of each fixture guessing at it. The door
+records the key it was ASKED to write (from the request, since core content-hashes the mux output
+and a fixture cannot name `film-audio-<hash>.mp4`), a per-test registry cleared in `afterEach` holds
+it, and `vfHead()` reads it. `recordContainerWrite` does the same for a module, called from inside
+the `/invoke` and `/poll` mocks.
+
+**Reaching the mock is the write; declaring a response is not.** That distinction is the whole
+design: `#600`'s in-flight guard supplies an invoke response precisely to assert the module was
+NEVER dispatched, so recording from the response object would assert an artifact that fixture says
+does not exist.
+
+Two things were tried and backed out for that reason, and both looked like write records:
+
+- the job's declared output keys -- asserts presence for the entire test, so the key is never absent;
+- the module invoke response's echoed `film_key` -- intent, not execution.
+
+Each broke exactly one fixture whose premise is absence. Two sources survive: explicit `presentKeys`
+for artifacts that existed BEFORE a test, and the time-modelled registry for what was written DURING
+it. A failed job and a refused submit record nothing, so the gate's refusal arm stays reachable.
+
+Sizes sit above the 2048-byte floor deliberately: ABSENT and TRUNCATED are different refusals, and a
+1-byte stub trips the second while reading like the first.
+
+Three fixtures keep a per-fixture rule instead, each stating its scenario at the site: `masterEnv`
+declares the shape of the content-hashed mux output it expects, and `degradeEnv` declares the silent
+cut present (it was assembled in an earlier phase) while leaving the mux output absent.
+
+**Verified by diffing failing-test NAMES against the pre-change baseline, not counts.** The count was
+12 both times a backed-out attempt was measured; a count would have reported "no change" while one
+fixture had been silently traded for another.
+
+### chore(deps): pin `@skyphusion-labs/vivijure-core` to `^1.25.0` (cf#834, cf#856, cf#813)
+
+Moves the studio onto core 1.25.0, which carries ten fragments including `core#306`
+(`InvokeFailureReason`), `core#307` (assemble admission), `core#321`, `core#322` and `core#833`.
+
+**`cf#834` IS A BEHAVIOUR CHANGE, NOT A BUGFIX, and it reaches users on this bump.** The post-clips
+dialogue leg now **FAILS** what it cannot deliver instead of shipping a silent film booked as
+complete, across **13 of 15 live motion doors** including `cf-seedance`. That is the fix, and it is
+the last of the four "reports success without producing a film" defects. It also means **output that
+currently `succeeds` will start failing wherever dialogue was being silently dropped.** A red render
+downstream of this bump is the gate working, not a regression introduced by it.
+
+Two more behaviour changes ride along and they are NOT the same condition, so do not collapse them:
+
+- **`core#327`** -- an **unreachable** finish tier now delivers the declared clips rather than
+  hard-failing.
+- **`core#330`** -- a container that **answers and refuses** still fails **loud**.
+
+Down and refusing are different states with different outcomes, which is the whole point.
+
+**`cf#813` lands here too.** `core#322` matches the assemble delivery target to the measured source
+instead of a fixed 1920x1080, so films stop being upscaled from whatever the door produced (12 of 15
+installed doors were upscaled at default config) and a 4k source stops being destroyed to hit a
+constant.
+
+Three test assertions move with the pin because they encode behaviour that only exists at 1.25.0,
+and each now asserts the NEW contract rather than merely flipping a boolean:
+
+- **`core#321`** split `{unreachable: true}` from `null`. A transport failure and a 2xx answer with
+  an unparseable body used to collapse to the same value, and only the first should trip the
+  per-pass breaker. Both arms are pinned now, including a case added for the `null` arm.
+- **`cf#856`** records `content_unmeasured` / `validated_unmeasured` when a gate could not run, so
+  `changed` is now true on a skip. Measured on a live film at **5 skips, 0 passes**, with nothing
+  anywhere recording that the pixel gate never looked at a single clip.
+
+The fixture work this bump needed landed separately in the PR below it, so this change is the pin
+plus those three assertions.
+
+## v1.34.3 -- 2026-09-27
+
+### fix(containers): stream the audio-master and audio-mix uploads instead of reading them into RAM (cf#814)
+
+`audio-master` and `audio-mix` each did `out_bytes = f.read()` and then `data=out_bytes`, so the whole
+produced artifact was materialised in memory before the PUT began. Both now stream from a file handle
+through a vendored `_put_file` helper, the same fix #808 applied to `video-finish`.
+
+**Why it matters most in `audio-master`.** Its output `format` defaults to **`wav`**, not mp3, and the
+source bed is bounded only by `MAX_BED_BYTES` (256 MB), which makes it the largest buffer of the CPU
+set. `audio-mix` accepts `wav` too, and a film-length stereo WAV runs about 10 MB per minute.
+
+**`Content-Length` is set explicitly, and that is the part that is easy to get wrong.** aiohttp falls
+back to chunked transfer-encoding for a file object with no length, and a presigned PUT will not accept
+chunked -- streaming without the header trades an OOM for a 4xx. The behavioural half of each new test
+asserts the header, so a future refactor cannot drop it silently.
+
+The helper is **vendored per directory**, matching how `url_guard.py` already lives in each container.
+No shared import path is introduced across `containers/`; each image builds from its own directory.
+
+**The wire contract is unchanged.** A non-2xx PUT still answers 502 with the exact string `output put
+<status>`; it now travels as a `_PutFailed` the route catches rather than an inline early return. The
+reported `bytes` is the real file size from `os.path.getsize`, not the length of a buffer that no
+longer exists.
+
+**The control is carried across with the fix, which is the point.** Each container gets its own
+`test_upload_streams.py`, registered in the `container-tests` CI list (the executed-script floor moves
+14 -> 16). Each pairs a behavioural check, driving the real `_put_file` against a fake session and
+inspecting what reaches `session.put`, with an **`ast`-based structural scan** that refuses the
+read-then-upload shape anywhere in `app.py`. Parsed, not grepped, deliberately: a line-regex version of
+this scan was measured blind to a handle named anything other than `f` and to a `guarded_put(` whose
+`data=` sat on a continuation line, and both are ordinary hand-written formatting. Each scan carries
+its own planted-violation positive control, so it cannot pass vacuously.
+
+That half is not decoration. This shape reached four sites in `video-finish` by being copied from a
+neighbouring route, and it reached both audio containers the same way -- `audio-master/app.py` says in
+its own docstring that it is "Modeled on `containers/audio-mix/app.py`", and that file says it is
+modeled on `video-finish`. A fix without the scan is one copy-paste from being undone.
+
+**`image-prep` is documented, not changed.** Its bytes are produced in memory by rembg and never
+written to disk, so streaming there needs a spill-to-disk first; that is a redesign, not a call-site
+swap, and bundling it here would have hidden it. Its README now carries a written note on why the
+buffer is acceptable (bounded by `MAX_INPUT_BYTES`, 32 MB, one portrait, not a function of film
+length), and states the residual it does NOT cover: that bound is on compressed bytes, so a small,
+highly compressed image still decodes large.
+
+No behaviour change for callers, no new runtime dependency.
+
+### fix(config): retire a dead shim, delete an unimplemented promised key, and document two live vars
+
+Three findings from the cf#839 census, each verified with a positive control before being acted on.
+
+**`src/shard-count.ts` is retired.** It had no production importer, and its own header named its
+sunset condition: "keep in sync with vivijure-core until the host pins a core that exports it
+(1.19.0)". Core is pinned at **1.24.0** and does export `resolveShardCount`, so the condition fired
+four minors ago. Retired only after enumerating **every** invocation path rather than on one
+zero-reference count: static import, dynamic import, all **four** exported symbols by name, the route
+table, the `scheduled` cron handler, the one Durable Object class, and the fact that this Worker
+declares no `queue`, `email` or `tail` handler at all. `RENDER_SHARD_MAX` went with it, having
+appeared exactly once in the tree: its own declaration.
+
+The census had said the file held two exports. It holds four; `scatterViewAsFilmSummary` was missed,
+and scatter is retired behind a 410, so it had no live subject either.
+
+**`XAI_API_KEY` is deleted.** It was declared in `Env` and documented to operators in three places,
+one of them a literal `wrangler secret put` recipe, and **read by no code**. An operator who followed
+the instruction set a secret, got no error, and gained nothing. A documented instruction for a
+capability that does not exist is worse than an undocumented one, because it terminates the reader's
+search. xAI **is** reachable and always was, by this estate's normal route: the AI Gateway on Unified
+Billing, keyless, which is exactly why no per-provider key is needed.
+
+**Two live vars now appear in the file an operator edits.** `ALLOW_UNAUTHENTICATED` is read by live
+code and is in the canonical var contract (`src/platform/orchestrator-vars.ts`, which flows to the
+release manifest), so the hosted control plane knew about it while it appeared in **none** of the five
+committed wrangler examples. `VIDEO_FINISH_TIER_STATE` is read by the host, written by the control
+plane, and is not in that canonical list at all. A var that is live and undocumented is worse than a
+documented dead one: the dead one wastes a reader's time, the undocumented live one means a deploy
+silently lacks a capability with nothing saying so.
+
+**And the denominator is now asserted, so it cannot drift back.**
+`tests/orchestrator-vars-documented-cf839.test.ts` derives the population from
+`ORCHESTRATOR_VAR_KEYS` and requires every entry to be visible in some example or carry a declared
+reason for its absence (two do: a dev-only mock gate and a control-plane-owned URL). Measured: 27
+canonical vars, 11 absent from the main example, 8 of those living in the demo example, leaving
+exactly three with no home anywhere.
+
+### ci(deploy): report which media doors the core render actually BOUND, and refuse the one contradiction (cf#850)
+
+cf#840 closed the module render's silent-strip. **The CORE render had the same shape and nothing reported
+there.** Its fail-closed check is `grep -qF '${'` over non-comment lines, which catches a var MISSING
+from the `envsubst` shell-format list because the literal `${FOO}` survives. It cannot catch a var that
+is **listed and empty**: `envsubst` substitutes it to `""`, the config reads `FINISH_UPSCALE_DOORS = ""`,
+every guard in the step passes, and the deploy is green with the door off. A deliberate opt-out and a
+forgotten variable render byte-identically, so nothing downstream can tell them apart.
+
+**Measured on the real committed template rather than a fixture**, which is also the proof of the gap:
+render `wrangler.toml.example` through `strip-local-gpu.sh` and `envsubst` with the live repo-variable
+values and the new reporter prints `7 bound, 0 empty`, exit 0. Unset one var and line 110 renders
+`VIDEO_FINISH_URL = ""`; the reporter warns, then refuses, exit 1. **And the pre-existing placeholder
+guard PASSES on that same file** -- it is structurally blind to the state, which is what this closes.
+
+**It reports rather than fails on empty, and that is deliberate.** The template documents empty as
+meaningful ("Empty = that service is off") and the three door-list modules read an empty list as "use
+RunPod", so a self-host legitimately ships most of these empty. A gate that is wrong about the ordinary
+case gets routed around, and a routed-around gate costs more than no gate because it also costs the next
+author an argument. So every door is named `BOUND` or `EMPTY`, each empty one gets a `::warning::`, the
+denominator is printed, and the exit status is unchanged.
+
+**The one hard fail is a contradiction inside a single config, not an opinion about which tiers we run.**
+If the config binds `[[containers]]` while `VIDEO_FINISH_URL` renders empty, the finish container IS the
+door (cf#810: `MEDIA_DOOR_FETCHERS` is keyed by the var NAME and synthesised from the binding, so the
+value is never fetched) but `src/video-finish-availability.ts` reads a non-empty var as "the tier is
+installed". That deploy degrades the assemble phase while a working door sits bound. The two halves of
+one file disagree, which is a state an operator arrives at by accident rather than chooses.
+
+**Both directions are pinned, because a one-sided control is the defect this issue is about.**
+`tests/origin-vars-report-cf850.test.ts` drives the shipped script: a fully bound config passes naming
+every door; an optional door left empty stays GREEN and is reported; the same empty `VIDEO_FINISH_URL`
+goes RED **with** a `[[containers]]` block and stays GREEN **without** one, which is the pair that
+matters -- identical var state, opposite verdicts, decided by the other half of the config. Without that
+second case the refusal would read as "empty VIDEO_FINISH_URL is banned", which would be wrong about
+every self-host. Plus: a render with no door vars at all is could-not-measure rather than a pass, a
+missing file fails rather than skips, and no origin VALUE is ever printed on any path.
+
+**Wired to the render that uses REAL values, and deliberately to no other.** `bundle-gate`,
+`container-deploy-shape` and `studio-release` render the same template with EMPTY or dummy
+substitutions on purpose, so all three would hit the contradiction refusal for a reason that is not a
+defect. The test pins the single live invocation in the deploy job AND its absence from the others,
+because **this is a control that would be WRONG if generalised** -- worth pinning rather than leaving to
+whoever reads the file next.
+
+## The reachability question, PRICED and not built
+
+A `BOUND` report is about the CONFIG, not the world: measured 2026-09-27, **eleven of the thirteen
+hostnames across these seven vars were NXDOMAIN while every var was non-empty**. Three options, with
+what each buys and costs:
+
+1. **DNS resolve per door host, report-only, in the deploy log.** ~7 lookups, under a second, no egress,
+   no auth. Would have caught all eleven. Cannot see a host that resolves but is dead. Roughly five
+   lines next to the reporter.
+2. **HTTP HEAD/GET per door with a short timeout.** Catches a dead host too, but needs
+   `MEDIA_FINISH_TOKEN` to avoid 401s, and it puts a **network dependency in a release gate**: a door
+   being down would block an unrelated release.
+3. **Readiness instead of CI.** The studio already has a hook/availability surface; reachability is a
+   property of the running system, and asking it there answers "is the tier up now" rather than "was it
+   up when we deployed".
+
+Recommendation: (1) as a non-blocking report, and (3) for the real answer. **Not (2) in a deploy gate.**
+Left to a ruling rather than assumed, because adding a network dependency to the release path is a
+posture decision, not a tweak.
+
+### fix(video-finish): `_finish_work` passed an undefined name, so every assemble failed (cf#851)
+
+With the container finally able to START (the `concat_guard.py` COPY fix in v1.34.2), the next
+request down the `/async/finish` path failed with `name 'raw' is not defined`. Film
+`film-443ae588` reached `assemble`, the job container reached `running` for the first time, ran
+for **620 seconds**, and then the handler raised.
+
+`app.py`, inside `async def _finish_work(body)`:
+
+```python
+partial_urls = _parse_partial_urls(raw)   # `raw` is never bound anywhere in app.py
+```
+
+The enclosing parameter is `body`, every other read in the function uses `body`, and the next line
+passes `body` to `_finish_chunked(body, partial_urls, t0)`. One call site, one word.
+
+**The line is unconditional, above the chunked branch, so it broke every assemble and not only the
+chunked path.** Introduced by `0cdd5fca6` (#801) at 2026-09-27T01:52:20Z, **34 minutes after the
+COPY defect that made it unreachable** -- two container-breaking bugs from the same hour, the
+first masking the second for six hours, because nothing could reach this line while the process
+was dying at `app.py:32`.
+
+**WHY THE SUITE DID NOT CATCH IT, which is the part worth keeping.**
+
+```
+_parse_partial_urls   3 references in test_chunked_contract.py, 2 in test_local_chunked.py
+_finish_chunked       5 references in tests
+_finish_work          0 references anywhere in the suite
+```
+
+The helper was proven correct and passing all night. **The single line that invokes it was never
+executed by a test.** Both components either side of the defect were covered; the wiring between
+them was not.
+
+`tests/../test_finish_work_call_site.py` now enters `_finish_work` for real and reaches that line.
+`_finish_chunked` is the ONLY thing stubbed, so `_parse_partial_urls` and all the validation above
+the call site run for real; stubbing the helper would have re-tested the half that already worked.
+**Driven RED against the shipped line first** (6 failures, exit 1) and green after (exit 0), and it
+carries two controls: a NameError planted at the call site must be caught and reported, and that
+planted failure must stop the run before `_finish_chunked`, so the assertions cannot pass on a run
+that never reached the line at all.
+
+**A draft of that test made a real network call while its own docstring said "no network".** The
+no-pool branch falls through to the download path; it failed with an SSL handshake error against
+`r2.cloudflarestorage.com` and **still reported PASS**, because the assertion was "did not raise
+NameError" and any other exception satisfies that. It would have gone on passing with the call
+site arbitrarily broken. That case is removed and its absence is documented in the file rather
+than left as a silent gap.
+
+**A linter catches this class for nothing and there is no Python linter in CI at all**
+(`app.py:443:40: undefined name 'raw'`, measured on the unfixed file). `py_compile` passes,
+because a `NameError` is runtime and not syntax, so "it imports" was never evidence. cf#874 tracks
+the gate.
+
+### ci(containers): start the image and make it SERVE, because BUILT was never the property we wanted (cf#857)
+
+`container-deploy-shape` was built in cf#817/cf#818 and it proves an image was **built**.
+`container-tests` runs the container's python scripts against the **repo checkout**. Neither one ever
+starts the image. So the one property anybody wants from a container gate, does this boot and bind its
+port, was unasserted, and the `v1.34.1` tag run (`36296493766`) went green on all ten jobs over an
+image that crashes on every startup (cf#851: `Container crashed while checking for ports`, 12
+occurrences in one tail session, assemble to failure in 3,211 ms). Built and runs are different
+properties, and only the second one is the product.
+
+**`scripts/container-smoke.sh`** starts an image, maps its port on loopback, and polls `/health`.
+Distinct exit codes, because a control that accepts any non-zero cannot tell a working guard from one
+broken in a new way: `2` instrument unavailable, `3` image will not run at all, `4` container exited
+before serving (the cf#851 shape), `5` running but nothing bound, `6` bound but not 2xx. An exited
+container is answered in milliseconds rather than after the full timeout, so a red here never trains
+the reader to think "slow". It passes NO env, deliberately: the deployed `[[containers]]` block sets
+none, so a boot that depends on an env var must fail here exactly as it does in production. Every
+unavailable instrument is a FAILURE, never a skip, including a missing docker CLI, because a gate
+whose cheapest satisfaction is not running the container is the same defect one level up.
+
+**`tests/container-smoke.test.sh`** is the control, and cf#857 is precisely a gate that could not
+fail, so it is not optional. It builds three fixtures and asserts the exact exit code AND the reason
+text for each: one that serves (`0`, the POSITIVE control, without which "it went red on the broken
+image" would not distinguish a working gate from one that always fails), one whose entry script
+imports a module the image does not contain (`4`, the cf#851 shape planted in two lines), one that
+stays up bound to a port nothing probes (`5`), plus a non-existent image ref (`3`, an instrument
+failure is a failure). The fixtures are built in the test rather than committed as a directory so the
+planted failure sits next to the assertion about it.
+
+**It cites the artifact it judged.** Both the pass and the failure paths print the image id read off
+the CONTAINER (`docker inspect --format '{{.Image}}'`), i.e. the bytes this run actually used, rather
+than resolving the mutable tag a second time, plus RepoDigests where the image has been pushed and an
+explicit `(none: locally built, never pushed)` where it has not, because an empty field reads like a
+missing value. A verdict nobody can attach to a specific image cannot be checked later, and "the broken
+one versus the fixed one" is the comparison this gate exists to make. The control asserts the citation
+on every case where a container actually started, so the capability is proven rather than hoped for.
+
+**`tests/container-image-file-set.test.py`** is the fast, docker-free half, and it is the gate that
+would have caught cf#851 in the PR that caused it. For every `containers/*/Dockerfile` on disk (the
+denominator read from the tree, never a hand-kept list) it walks the import graph from the entry
+script named by `CMD`/`ENTRYPOINT` and fails if any reachable LOCAL sibling module is not `COPY`ed
+into the image. Imports at any scope count: a function-scope import of a missing sibling fires on the
+first request down that path instead of at boot, which is strictly worse to debug. It names the
+missing file, which is the difference between a red gate and a red gate you can act on. Three controls
+run first: a fully-copied image reports nothing (it does not cry wolf), a planted missing module is
+reported, and a function-scope import two hops from the entry is still caught.
+
+**The detect denominator was too narrow, and that is a second finding.** `container-deploy-shape-detect`
+matched only the Dockerfile PATH, but a Dockerfile's build context is its DIRECTORY, so every file
+copied into the image can change what the image contains without the Dockerfile appearing in the diff.
+Proven against real history by running the SHIPPED detect text out of each `ci.yml` version against
+`3802502` (#712, which touched `containers/video-finish/app.py`, `photometric_gate.py` and a test, and
+no Dockerfile): the old text returns `needed=false`, so that PR ran NEITHER container gate; the new
+text returns `needed=true` and names each context file. Negative control on a docs-and-modules commit
+(`c7b5850`): still `false`, so the widening adds the context rather than selecting everything.
+
+**And the release now waits for it.** `deploy` listed `container-tests` and `migrations-gate` but
+nothing that starts the container, and `container-deploy-shape` is not in that array either, so a tag
+could deploy with it RED and the deploy job would never look. `container-smoke` is added, with the
+deadlock check that belongs on any `needs:` widening: it is the only member carrying an `if:`, and a
+SKIPPED dependency skips the dependent job, which would silently turn a release into a no-op, so its
+condition includes `startsWith(github.ref, 'refs/tags/v')` explicitly rather than trusting a shell
+script's output two hops away. `container-deploy-shape` is deliberately not added: it proves a BUILD,
+and the smoke job builds each image itself before starting it.
+
+### test(panel): the stage-degrade projection is now asserted to reach the screen, in both directions
+
+Four stage signals (`speech`, `master`, `dialogue`, `film_finish`) were decided by thoroughly tested
+logic and rendered by DOM code nothing asserted. The gap is closed, and the half that mattered is the
+negative one: **a clean stage and a never-reached stage must render nothing.** A block that appears on
+a healthy render is worse than none, because people learn to ignore it and then it reads as coverage.
+
+**A new shared seam, `public/stage-degrade-view.js`.** cf#853 wired the signals into two surfaces by
+writing the same block-building loop twice, in `planner-render.js` and `planner-history-row.js` -- two
+loops that must agree forever with nothing asserting they do. There is now one place a stage degrade
+becomes DOM, both consumers go through it, and a ratchet asserts no third copy comes back.
+
+It also made the rendering testable at all. Neither host function can be unit-called
+(`buildHistoryRow` is ~980 lines reaching ~40 helpers declared in sibling planner files;
+`renderDegradeNote` resolves live DOM through `$()`), which is why the wiring had only been asserted
+by grep. `document` is a parameter rather than a global read, so the builder runs under plain Node
+with a small element stub, the same pattern `finish-degrade.js` uses.
+
+**The enumeration moved into the seam too, and that is load-bearing.** `stageBlocks()` alone can only
+ever be handed already-reported stages, so asserting it returns nothing for an empty list is trivially
+true and proves nothing about a clean payload. With `reportedStages()` in the same module, a test
+drives a RAW payload end to end and watches the negative direction actually hold. It also means the
+`limited` flag and the blocks share one enumeration and cannot disagree about which stages reported.
+
+**Every zero-block assertion carries a witness that the path ran.** A negative assertion is the
+easiest kind to make hollow: "no block rendered" passes just as happily when the enumeration was never
+entered as when it ran and correctly declined. Each such case therefore asserts either that a spy saw
+all four stage keys interrogated, or that a sibling stage in the same call DID render. Seven planted
+defects were each driven red first, including one that short-circuits the enumeration -- which is what
+proves the witness can tell those two states apart.
+
+### docs(video-finish): stop quoting a reject ceiling as an expected payload, and correct the finalize peak-disk claim (cf#813)
+
+Comment and docstring only. **The executable AST with docstrings stripped is byte-identical**, so
+there is no behaviour change in this PR at all.
+
+**`MAX_CLIPS x MAX_CLIP_BYTES` is not a payload, in three places that said it was**
+(`app.py:49-50`, `app.py:184`, `README.md:69`). That product is 20.0 GB and was presented as the
+route's "contracted maximum", i.e. an input size to design against. `MAX_CLIP_BYTES` is a **reject
+ceiling** -- the argument to `_download(s, url, dst, MAX_CLIP_BYTES)` at `:285` and `:416`, the size
+at which a download is REFUSED -- so the product is the largest input the route will not reject, not
+one it expects.
+
+At this container's settings a 256 MB clip is 3.2 to 15.6 minutes of video; clips are 4 to 8
+seconds. Measured, a 32-clip film normalizes to roughly 70-350 MB and a full 80-clip film to about
+750 MB, so the product sits **23x to 120x above a real film** and nothing approaches the 20 GB
+ephemeral disk. That is the part worth fixing rather than tidying: **a disk gate written against
+20 GB could never fire.** The README now sizes the route by bitrate x duration x count with the
+measured bands, and carries the proxy provenance and its direction of error, because those numbers
+came from pans over a photographic still rather than from real generated clips.
+
+**The 3x peak-disk multiplier is a budget, not a measurement**, and is now labelled as one. It is
+only right if a normalized copy is about the size of its source; the measured ratio spans 0.98x to
+5.09x and is dominated by the source's own bitrate. One component of it WAS structural, the fixed
+1920x1080 upscale worth about 1.95x on a 720p source, and `vivijure-core#322` removes that at its
+cause by matching the assemble target to the measured source.
+
+**Peak disk at finalize is TWO full-length copies, not one.** `_silent.mp4` is written at `:315`
+(chunked) and `:864` (single-pass), `_mux_bed_onto` (`:780`) writes `final.mp4` FROM it, and nothing
+deletes the silent cut: `grep -n "os.remove" app.py` returns exactly `:266` and `:270`, both reaping
+batch partials. **Those two hits are the positive control that the zero for `_silent.mp4` is a real
+zero rather than a broken pattern.** `_remux_audio_only` (`:650`) has the same shape.
+
+Not a correctness bug today: a real film measures in the hundreds of MB against a 20 GB disk.
+
+**The removal of `_silent.mp4` is deliberately DEFERRED, and this inverts the usual rule.** Normally
+the fix is the code, not a comment corrected to match it. It is held because this container is being
+repaired and re-deployed right now, and an unrelated allocation change does not belong in front of
+the first confirmed-serving build. The comment is corrected **now** because a wrong comment in this
+directory has already cost a live debugging effort real time. The deferral and its reason are stated
+at the site, so whoever lands the removal finds the argument rather than re-deriving it.
+
+## v1.34.2 -- 2026-09-27
+
+### fix(cast-media): a failed cast-row write answers 404 with a diagnostic, not `200 { cast: null }`
+
+Port of `vivijure-local#351` to the hosted door (cf#754). Every image-registration POST on
+`src/cast-media.ts` answered `200 { cast: null }` when the D1 row write produced no row: a failed
+write reported as a success, with the failure and the success rendering as the same state to any
+caller that does not inspect a field legitimately absent in neither case.
+
+This was never a tidiness fix. The panel assigns `state.cast[idx] = data.cast` before it reads
+anything, so the null landed in panel state; the editor populate then threw a JavaScript
+null-property error instead of naming the write that failed, and the list kept rendering stale data
+until an unrelated re-render hit the null. With a 404 the panel `api()` helper throws
+`Error(body.error)` and every existing catch produces the right message, with no panel change.
+
+**The failure body carries no `cast` field at all.** `404 { cast: null }` would still put null into
+panel state, so the status alone does not close this; both halves are asserted separately.
+
+Measured denominator on `main` at 4e2fe52, because the issue body's count was stale:
+`grep -c "row ? toPublicCast(row) : null" src/cast-media.ts` returned **9**, not two -- 3 doors
+(portrait / ref / source) x 3 entry forms (chat-artifact copy, staged key, raw bytes). Six were
+live defects; the three staged-key sites already threw 404 one line above, so their null arm was
+unreachable dead code. Two further `result.row ? ... : null` dead ternaries in the REMOVE handlers,
+which that grep string does not match, were removed in the same pass: unreachable, but the exact
+shape a new handler gets written by copying.
+
+All nine now route through one `castRowResponse(row, op, id)` helper whose diagnostic names the
+door and the entry form, so the nine 404s stay distinguishable from each other and from the
+`cast not found` 404 for a missing member.
+
+The truthy-`row` delete guard from #753 is KEPT, deliberately. It is redundant against the new
+throw, but the ordering claim lives in the guard, not in the throw, and
+`tests/cast-portrait-delete-ordering-local407.test.ts` still passes. Two cases in that file moved
+from `status: 200` to `status: 404`; their claim (the superseded object survives a row write that
+produced nothing) is untouched, only the expected literal.
+
+Covered by `tests/cast-row-write-404-754.test.ts`: 9 failure cases and **9 positive controls**,
+because nine 404s are otherwise exactly as consistent with nine handlers that never ran. Each
+control proves by the recorded R2 op log and the key handed to the db mock that THAT site executed
+(the copy form reads the source first, the raw-bytes form only puts, the staged form touches R2 not
+at all). The structural guard strips comments before matching and carries a control of its own
+showing each matcher producing a positive, since both this file and `cast-media.ts` quote
+`{ cast: null }` in their prose.
+
+Driven red first: with the source change stashed and the tests kept, 11 of 21 fail (all 9 failure
+cases plus both structural guards), and the 9 controls stay green, which is what a control is for.
+
+### docs(modules): justify the finish ceilings, gate the 1800 crossover (cf#762)
+
+Three modules declare `max_invocation_seconds`, not five: `speech-upscale` and `finish-lipsync` were
+excised and took their 300 and 900 with them. `finish-blender`, `finish-rife` and `finish-upscale`
+each declared **900** with nothing at the edit site saying what that number does.
+
+It is not a local number. Core derives the effective phase deadline in `phaseCeiling`:
+
+```
+required  = FINISH_STEP_MAX_ATTEMPTS(3) * max(declared ceiling over the steps that run next)
+effective = max(PHASE_HARD_DEADLINE_SECONDS(5400), required)
+```
+
+At 900 `required` is 2700 and the floor wins. Above **5400/3 = 1800** the derivation overtakes the
+floor and a GLOBAL per-phase deadline moves for every film whose finish chain can REACH the module,
+including the films that never invoke it, because the derivation takes the max over the steps that
+COULD run next.
+
+**Basis per module, stated at each declaration site.** `finish-blender` keeps 900 because that is the
+worker's own deploy configuration (`EXECUTION_TIMEOUT_MS` default `900000` in `vivijure-blender`
+`deploy.sh`, passed as `executionTimeoutMs` on endpoint create); it is NOT a live reading, and the
+comment says so, because no `vivijure-blender` endpoint exists (RunPod `list-endpoints` returns
+`total: 2`, and the control plane carries no blender pin). **The 5400 proposed by the superseded PR is
+refuted and was backwards:** 5400 is that repo's own `PHASE_HARD_DEADLINE_SECONDS`, the ceiling the
+door must stay UNDER, not a duration the worker permits; its real worst case,
+`declared_budget_seconds("composite")`, is 4320s and is itself a sum of per-leg guards.
+`finish-rife` and `finish-upscale` are declared **uniform with a stated reason** rather than given an
+invented number: rife's endpoint (`vivijure-backend`) reports `timeout: 0`, no execution timeout is
+configured and the Worker sends no per-request `policy.executionTimeout`; upscale's endpoint no
+longer exists at all (cf#757). There is nothing to measure, and saying so is the honest value.
+
+**A comment is not a mechanism, so the threshold is enforced.**
+`modules/_shared/finish-ceiling.ts` derives the crossover from core's two constants (never a typed
+1800) and holds the acknowledgement registry, empty. `tests/finish-ceiling-crossover-cf762.test.ts`
+scans every module's manifest source and fails on a declaration above the crossover with no
+registered acknowledgement, a stale or reasonless acknowledgement, an acknowledgement outliving its
+declaration, or a declaration site that does not name the threshold. It runs core's own
+`phaseCeiling` at 1800 and 1801 rather than restating the arithmetic, and it checks its own
+instrument: the scan must account for every module that mentions the field, so a broken regex cannot
+pass vacuously. Both failure paths were watched RED (rife at 1801; the comment stripped) and
+reverted.
+
+Fix-forward: `modules/_shared/video-finish-404.ts` still claimed no finish-chain module declares a
+ceiling. Three do; corrected, with the stale sentence recorded so the correction is not re-derived.
+
+No behaviour change: every declared value is unchanged at 900, so core's effective ceiling stays on
+its 5400 floor exactly as before.
+
+### test(shared): the served-prefix rule now fails CI when the two repos' lists diverge (cf#789)
+
+The rule "which R2 prefixes are served, and therefore what may be copied into them" was stated in
+four places across two repos, and the lists had already drifted in both directions. Nothing was
+vulnerable; the risk was that widening any one of them silently reopens a closed class in a file
+nobody would think to connect to it.
+
+This adds neither a fifth restatement nor a shared list. It adds the **ICD**: one declared table of
+the intended delta in `docs/CONTRACT.md`, and `tests/served-prefix-icd-789.test.ts`, which checks
+both repos by EXECUTION against their real functions rather than by reading either list.
+
+Why a check and not one source of truth: core's `RENDERS_AUDIO_PREFIXES` is a module-private `const`
+and is not exported, so cf cannot import it, and making it importable is a core change plus a
+publish plus a dependency bump before any drift becomes visible here. The two lists also answer
+different questions -- cf's is "may this be SERVED", core's is "may this be STAGED as audio" -- so
+collapsing them would either widen cf's serve surface or break core's staging.
+
+The declared delta, both directions pinned: `dialogue/` is staged by core and not served by cf;
+`cast/` is served by cf and refused by core. `quarantine/` is refused by both, which cf#789 found was
+true only by accident of construction and is now an assertion.
+
+Watched it go red in both directions, because a drift check that has never seen drift is decoration:
+
+- adding a prefix to cf's `ARTIFACT_PREFIXES` fails the denominator case;
+- adding `cast/` to core's `RENDERS_AUDIO_PREFIXES` fails `core refuses cast/` -- which is literally
+  the failure scenario the issue was filed to prevent.
+
+Carries a positive control on each side, since 9 of the 13 core assertions are of the form "it
+refused" and a core that refused everything would satisfy all nine.
+
+### fix(tests): stop billing the worker entrypoint's import to a single test case (cf#807)
+
+Two cases sat at roughly a 2.7x margin under the 5000ms `testTimeout` and flipped to red on machine
+speed rather than on code. The cause is not that the work is large. It is that both files reached
+`src/index` through `await import("../src/index")` from **inside a test body**, so the one-time cost
+of transforming and importing a 92-route module graph was charged against whichever case happened to
+trigger it first.
+
+Measured on this suite, not inferred from the shape:
+
+- a case whose entire body is `await import("../src/index")` takes **2049ms**; a second import takes
+  **0ms**;
+- the two named cases took **1192ms** and **1194ms** while every sibling case in the same two files
+  took **0-3ms**.
+
+So the case was measuring the import, and the code under test contributed about 1ms.
+
+Denominator, because the population matters: of 251 test files, **41** import `src/index`
+statically, and a static top-level import is paid during collection and is billed to no case.
+**Exactly 2** imported it dynamically from inside a case, and those 2 are precisely the two files in
+the issue. The correlation is total.
+
+The fix hoists the import into `beforeAll`, which is charged to `hookTimeout` (10000ms) rather than
+to any case. A static import, which is what the other 41 suites use, is **not** available in these
+two files: `vi.mock` is hoisted above the module body, so a static import of `src/index` would run
+the mock factory before the `vi.fn` consts it closes over are initialised.
+
+Result: **1192ms to 23ms** and **1194ms to 24ms**. The margin under the default timeout goes from
+2.7x to about 208x, and the number a case reports is now a property of the code it exercises.
+
+Watched it go red: replacing the hook body with `API_ROUTES = []` fails all 7 cases in
+`patch-module-config-387.test.ts` with `route PATCH /api/modules/:name/config is not in API_ROUTES`,
+so the speedup is not the tests quietly ceasing to run. `testTimeout` is left at its default; nothing
+was raised to buy the pass.
+
+### test(storage): the R2 storage ceiling can now be watched failing in CI (cf#811)
+
+The storage-quota gate can answer 507, and its fail-closed posture can answer 503, and neither had a
+test. `git grep -ln "checkStorageQuota\|R2_STORAGE_QUOTA_BYTES" -- tests/` returned nothing, so the
+control had never been observed going red and a refactor that silenced it would have landed green.
+
+18 cases driving `worker.fetch` at the wire, not `checkStorageQuota` directly. That distinction is
+the point: a unit test of core's function stays green through the exact regression this file exists
+to catch, which is someone deleting the `isPanelStorageSubmitRoute` block from `src/index.ts`.
+
+Telling the two 503s apart is the whole difficulty, and it is why no case here asserts on a bare
+status. The spend gate sits immediately above this one and also fails closed to 503 on a broken
+check, so every case binds a PASSING `SPEND_RATE_LIMITER` and asserts on the MESSAGE. A case that
+asserted only `status === 503` would pass with the storage gate deleted outright.
+
+Covered: the 507 on all four panel-supplement routes; the 503 for an unbound DB and, separately, for
+a usage read that throws; `meter` mode declining to deny and declining to 503; an unrecognised mode
+falling back to `deny` rather than to `meter`; an unstamped ledger still denying at the ceiling; and
+`SPEND_LIMIT_FAIL_CLOSED` having no effect on this gate, which is what stops the two being
+"unified" on the strength of the comment cf#804 corrected.
+
+Nine of the eighteen are CONTROLS, because N refusals are equally consistent with N routes that are
+simply broken in the fixture env: each route is also driven with usage UNDER the ceiling and must be
+admitted, the knob is unset to show the refusal is caused by the knob, and `/voice-sample/keep` must
+NOT be gated so the anchored patterns cannot quietly widen. A DENOMINATOR case asserts the file has
+one route per entry in `PANEL_STORAGE_SUBMIT_PATTERNS`, so a fifth byte-writing route fails here
+rather than going silently uncovered.
+
+Watched it go red, twice, because a gate that has never been seen to fail is decoration:
+
+- removing the gate block from `src/index.ts` fails **9 of 18**, every refusal case, while all nine
+  controls stay green;
+- narrowing `isPanelStorageSubmitRoute` back to core's list alone (the fc#2250 defect shape, where
+  the ceiling denied the front door and left the side door open) fails the same 9.
+
+Test-only. No behaviour change, and `R2_STORAGE_QUOTA_BYTES` remains off by default.
+
+### fix(docs): correct 7 stale denominators in module-readiness-coverage.md, and gate them (cf#829)
+
+The page exists so that a reader who quotes a readiness result quotes the right denominator, and it
+records having got that number wrong twice already. It was wrong a third time, in seven places, and
+it contradicted its own table: the bullet naming the modules a tenant provision does not reach
+named four modules the catalog DOES provision and omitted five it does not.
+
+The table body was gated row for row; the prose around it was not. `expect(doc).toContain("17 of
+34")` covered exactly one number, and the row-for-row check only reads lines whose first cell is a
+module name, so neither instrument could see the population table, the `/ready` sentence or the
+bullet. The suite was green with all seven values wrong.
+
+Corrected, and the prose is now derived rather than typed: population sizes are parsed by
+population number and compared to the measured tree, the `/ready` count is asserted against the
+anchored matcher, and the not-provisioned bullet is asserted as a SET DIFFERENCE. The new gate was
+driven red on all five defect shapes (each of the four population sizes, the `/ready` count, a name
+added to the bullet, a name dropped from it) before being trusted.
+
+### fix(config): stop asserting a Hetzner-era topology in operator-facing config (cf#837)
+
+Three artifacts encoded a topology that cannot work, and the worst of them sat in the file operators
+render their own config from.
+
+**1. `wrangler.toml.example` told operators a Worker route fronts the finish container.** It does not,
+and it cannot: `src/video-finish-binding.ts:3-13` records the cf#810 measurement that killed cf#797's
+premise. Core is a LIBRARY running inside this Worker, so a route on this Worker means the Worker
+fetches itself, and Cloudflare documents that same-zone Worker-to-Worker global `fetch()` fails. The
+comment now says what the var IS in each of the two deploys that exist: with `FINISH_CONTAINER` bound
+the door is the BINDING and the var NAME is only the lookup key core reads
+(`MEDIA_DOOR_FETCHERS.VIDEO_FINISH_URL`, synthesised in `src/orchestrator-env.ts`), so the VALUE is
+never fetched though it must stay non-empty for `src/video-finish-availability.ts` to call the tier
+installed; without the binding the value IS the origin, exactly as before.
+
+**Measured while correcting it, and this part is new:** the hosted deploy injects
+`VIDEO_FINISH_URL=https://video-finish.skyphusion.org` from a repo Actions variable and that hostname
+is **NXDOMAIN**. The hosted core is masked from it because the binding wins first; the two module
+workers that reach the same door over plain HTTPS (`modules/film-titles`, `modules/subtitle`) are not
+masked. Eleven of the thirteen media-door hostnames in those variables are NXDOMAIN. That is live
+deploy state, it is tracked in cf#780 / cf#746, and it is deliberately not changed from a repo PR:
+cf#746 records that emptying `FINISH_BLENDER_DOORS` un-parks a parked GPU endpoint, which is a spend
+decision.
+
+**2. `modules/_shared/video-finish-404.ts` derived a live retry policy from a deleted VIP.** Its
+`P(miss) = 2/3` came from three cloudflared connectors in front of a 3-replica swarm service at
+`10.0.1.90`. The measurement is kept and now labelled HISTORICAL rather than presented as the current
+basis, because it is still the right arithmetic for any door that fans out across replicas (a
+self-hoster with three containers behind a load balancer reproduces the ambiguity exactly) and only
+the ownership of that topology changed. The header now states who the callers actually are, that they
+were NOT migrated to the cf#810 binding, and that against a single-instance door the same streak is
+restart and registration-race tolerance rather than peer arithmetic. `CONTAINER_NOTFOUND_STREAK`
+is deliberately UNCHANGED: the suite already pins that it cannot increment in production shape, so the
+real terminal is the 90-minute `submittedAt` backstop, and re-deriving a number with no live subject
+would be arithmetic about nothing.
+
+**3. `build-media-images.yml` described its output as feeding the decommissioned fleet swarm stack.**
+Corrected to the live self-host path (`containers/compose.yaml`, the GHCR names published in
+`containers/README.md`), with the distinction cf#838 drew kept intact: these images are real
+operator-facing artifacts, and what died is the hosted consumer of the pushed images, not the images.
+
+**The comment is a rule, so it gets a mechanism.** `tests/video-finish-not-a-route-cf837.test.ts`
+asserts against the REAL exported `API_ROUTES` table that no route serves an `async` path, and that
+`studioEnv` synthesises the bound door even when `VIDEO_FINISH_URL` is deliberately set to a
+route-shaped URL on this Worker's own host, which is the deploy that would silently fetch itself.
+Both carry positive controls, because both load-bearing assertions are negatives and a negative over
+an empty collection observes nothing. **Watched red:** inserting `POST /async/finish` into
+`API_ROUTES` fails the first with `expected [ 'POST /async/finish' ] to deeply equal []`, and
+disabling the door synthesis fails the second with `expected null not to be null`, vitest exit 1,
+while the negative control keeps passing so neither failure is a blanket one.
+
+**Fix-forward, found by accident and worth naming.** Adding the corrected comment to
+`build-media-images.yml` turned `tests/local-gpu-strip-cf560.test.ts` RED. That guard DERIVES the
+population of hosted render paths from the workflows, and it enrolled a workflow on a PROSE MENTION of
+`wrangler.toml.example`: build-media-images renders no config at all. The file already states the
+right rule in its own words for the other half of the matcher, "A MENTION IS NOT A CALLER... anchor on
+a line that RUNS it"; it was never applied to the population side. `rendersHostedConfig()` now drops
+comment lines before matching, in both directions, because a `#` line cannot render anything in YAML
+or in a `run:` block. A control that fires on a comment punishes documentation, and the next author's
+cheapest fix is to delete the sentence instead of looking.
+
+The union that made that matcher robust is untouched and was re-proven, not assumed. Two mutations,
+both RED, both restored: deleting the strip from `studio-release.yml` and rendering the template
+directly (the literal historical cf#560 defect) fails 2 of 21 with `expected false to be true`; and
+the vanish shape, where the strip is gone AND the template is named zero times in the whole file
+(`grep -c` = 0), still keeps the path in the population through the `> wrangler.toml` signal and still
+fails. An assertion that can vanish is worse than one that can be wrong, and it still cannot vanish.
+
+Not fixed here: `HOSTED_FINISH_POLL_BOXES = ["jello", "descendents", "badbrains"]` lives in
+`@skyphusion-labs/vivijure-core`, not in this repo, so it is filed there and lands here as a pin bump
+when core is next cut. It is dead code rather than a live defect: `pollVideoFinishAsync`
+short-circuits when the `MEDIA_DOOR_FETCHERS` binding is present.
+
+### fix(tail): the tail pipeline reported success while delivering nothing (cf#838)
+
+`vivijure-tail` shipped the studio's render logs to a self-hosted Loki over Workers VPC. That host is
+deleted. The consumer stayed bound anyway, and **nothing anywhere said so**: measured on the live
+account 2026-09-27, `vivijure-studio` still carried
+`tail_consumers = [{ service = "vivijure-tail" }]`, `vivijure-tail` still carried its `LOKI_VPC`
+binding, and the worker was invoked **549 times in the preceding six hours** (Workers observability
+`/telemetry/query`, `cloudflare-workers` dataset), every one of them a drop. There is no cloudflared
+tunnel left for a monitoring host; `grafana.skyphusion.org` is NXDOMAIN.
+
+That is the worst shape a monitor can take. A tail consumer that drops every batch is
+indistinguishable from one that ships, so the question "are we logging?" answered yes for a quarter.
+
+**Three silent paths, now reported.** `pushToLoki` returned early on a missing binding, swallowed a
+throwing fetch in a bare `catch {}`, and never looked at the response status, so an unbound sink, an
+unreachable sink and a 413 from Loki all produced exactly the same nothing as a successful push. Each
+now emits ONE structured line per invocation, `{"ev":"tail.sink.drop","reason":...,"lines":N}`, with
+`reason` in `sink_unbound` / `sink_unreachable` / `sink_rejected` / `shape_failed` and `lines` as the
+count that did not arrive, so an under-delivery carries its own denominator. A shaping exception was
+silent too and is now `shape_failed`.
+
+**Why that report is not circular:** it lands in `vivijure-tail`'s OWN Workers Logs
+(`[observability.logs]` in `tail/wrangler.toml.example`), a different surface from the sink it feeds,
+which is the only reason a shipper can report its own sink being down. No loop is possible: nothing
+declares `tail_consumers` against `vivijure-tail`, so it is not a tail producer for itself. The worker
+still never throws back into the producer and still does all sink I/O under `ctx.waitUntil`.
+
+**The dark consumer comes off.** `tail_consumers` in `wrangler.toml.example` ships COMMENTED OUT, so
+the next core deploy unbinds it. Same call the MuseTalk excision made about its strip gate (`ci.yml`:
+a control with no subject comes off rather than staying on green). A stock deploy keeps Cloudflare
+Workers Logs (`observability.logs`, live and `persist = true`, measured) plus the status routes, which
+is what `docs/observability.md` already described as enough to operate a single-user studio.
+
+**The shipper is kept, not deleted, and stops being fleet-specific.** It is a documented opt-in tier
+(`docs/opt-in-tiers.md`) and the only dead part was our sink, so `biafra`, "the fleet Loki" and
+"recorded in the private store" come out of `tail/wrangler.toml.example` and `scripts/deploy-tail.sh`
+in favour of the operator supplying their own `LOKI_VPC_ID`. New optional `LOKI_PUSH_URL` var
+(mirrored in the tail worker's hand-authored `Env`) so an operator whose Loki answers on another name
+or port configures it instead of editing source; unset keeps the previous endpoint exactly.
+`LOKI_VPC` is now OPTIONAL in that `Env`, because a deploy without it is a real state the code always
+handled while the type claimed otherwise.
+
+`docs/observability.md` led with a pipeline diagram and a "it looks like the log was dropped, it was
+not, it is in Loki" line, both of which had become false. It now opens with the measured status and
+what the 549 invocations mean, and the network-isolated-Loki section is marked as the retired
+reference topology rather than deleted, because the topology generalises to any operator and only the
+hostnames died.
+
+Seven guards in `tests/tail.test.ts` drive the REAL `tail()` handler (not a stub of the push, which
+would encode an assumption about which branch runs) and assert on the report: each `reason` fires with
+its line count, a 204 accept stays SILENT so the drop line means something, `LOKI_PUSH_URL` is honoured
+and defaults correctly, the handler resolves rather than throwing on a poisoned event, and the reporter
+itself cannot throw. **Watched red:** restoring the original silent bodies fails exactly the four
+reason assertions with `expected [] to have a length of 1`, vitest exit 1, while the 204-silent and
+URL-default cases still pass, then restored.
+
+**Not fixed here, and escalated instead:** `docs/legal/PRIVACY.md` section 3.4 tells a hosted user
+that operational logs go to "a logging system (Grafana/Loki) that the operator runs on their own
+servers, NOT a third-party log vendor". With the consumer unbound, the hosted tier's operational logs
+live in Cloudflare Workers Logs with `persist = true`. That is a published privacy representation
+about the hosted door, not an infra comment, so it is not edited in an infra PR.
+
+### feat(modules): vendor `reason?: InvokeFailureReason` into all 34 module contracts, with one test holding them identical
+
+core#291 added an optional `reason?: InvokeFailureReason` to the module contract's `/invoke` failure
+arm: a closed union of eleven fault classes. This adopts it on the module side. **ABSENT still means
+the module has not adopted the field, and is never defaulted to a class.**
+
+**Why 34 copies rather than one import.** All 34 `modules/*/src/contract.ts` files are **import-free**,
+measured (`grep -l "^import "` returns 0), and four of them state the rationale: *"Dependency-free,
+which is the point: a module must be buildable and deployable without the core package."* So the union
+cannot be imported into them. Sharing a file would have been one line each and was rejected for
+breaking an invariant that currently holds in 34 of 34.
+
+**Why 34 of the 65 identical failure arms, which is a decision and not a partial migration.** The
+string `| { ok: false; error: string };` appears **65** times and serves **three** types:
+`InvokeResponse` 34, `PollResponse` 29, `CancelResponse` 2. The string cannot tell you which; only the
+enclosing declaration can, so a global replace would have widened the contract in **31** places with a
+diff that looked uniform and correct.
+
+`PollResponse` is excluded on core#306's own reasoning: it already carries a closed `outcome` set, and
+adding `reason` beside it would put two closed unions on one object **sharing two spellings with
+different meanings** (`backend-error` and `cancelled` are members of both, meaning "RunPod reported a
+backend error" in one and "our module classified this as a backend error" in the other). A shared
+spelling is not a shared meaning. That exclusion is now **asserted**, not merely omitted, so 34-of-65
+cannot be misread as unfinished.
+
+**The drift surface is closed by a test rather than a generator.** 34 copies of a closed vocabulary is
+the structure that produced GHSA-qgx2-5crw-9m4j earlier today: two copies of one safety rule that
+diverged, with the narrower copy's docstring asserting they were the same. A generator only helps if
+someone runs it, and a generator nobody runs is a rule with no mechanism. So
+`tests/invoke-failure-reason-vendored.test.ts` **derives the expected block from core's own
+`INVOKE_FAILURE_REASONS` at test time** and compares it byte-for-byte against all 34 files, printing
+the exact expected text on failure so the fix is a paste.
+
+Verified by watching it fail, not by assuming:
+
+- a **hand-edited copy** with the near-miss `not_configured` in one contract went red and named
+  `modules/cf-veo/src/contract.ts`
+- **core drift** went red end to end: a twelfth member added to the installed core's
+  `INVOKE_FAILURE_REASONS` failed both the count assertion and all 34 comparisons, and printed the new
+  canonical block including the new member
+
+Also asserted: the 34-contract denominator, so a shrinking sweep cannot pass; that the four plausible
+non-members (`not_configured`, `quota`, `rate_limited`, `backendError`) are rejected; and the bare-arm
+count **in both instruments**, because 31 arms are owned by the excluded types while only 30 are a
+standalone line (one `CancelResponse` is declared inline). Which number is "wrong" depends entirely on
+the instrument, so both are pinned and named.
+
+Core pin moves to `^1.24.0`, which is what makes the test able to read the canonical set from core.
+The 34 contract edits themselves need no pin, being vendored; the single-source **mechanism** does.
+
+### fix(video-finish): COPY `concat_guard.py` into the image, without which the container cannot start (cf#851)
+
+The video-finish container **could not start at all**, on every invocation, and had not been able
+to since 2026-09-27T01:18:31Z. Every film that reached `assemble` failed with
+`video-finish async submit failed (no jobId)`.
+
+`app.py` imports `concat_guard` at column 0:
+
+```
+app.py:32   from concat_guard import assert_no_dropped_parts
+app.py:1665 app.router.add_get("/health", health)
+app.py:1678 web.run_app(app, host="0.0.0.0", port=PORT, ...)
+```
+
+The module is in the repo. It was missing from the image, because the Dockerfile's only source
+COPY line never listed it. The interpreter therefore died at an import roughly 1,600 lines before
+anything bound port 8000, and the platform reported what it saw:
+
+```
+Container error: Error: Container crashed while checking for ports,
+did you start the container and setup the entrypoint correctly?
+```
+
+`cfa321f2d` (#792) ADDED `concat_guard.py` and never touched the Dockerfile, so **every image built
+after that commit was unstartable.** Both v1.34.0's image (`sha256:5ad58793...`) and v1.34.1's
+(`sha256:324167ae...`) were built from trees containing the module and a COPY line without it; the
+defect is one release older than the image roll that made it visible.
+
+The fix is the filename. What earns a changelog entry is the rest:
+
+**The test that covers this module made the suite greener while the image got worse.** #792 added
+`containers/video-finish/test_concat_guard.py` to `ci.yml` **in the same commit that broke the
+image**. That test runs against the repo checkout, where `concat_guard.py` is present, so it passed
+then and passes now. The image is never involved. A container whose every startup crashes shipped
+through a fully green tag run, and the commit that introduced the crash is the one that added a
+passing test for the module at the centre of it.
+
+**The gap is structural, not clerical:** nothing compares the set of local modules `app.py` imports
+against the set the Dockerfile copies. That comparison is a static check anybody can run, and today
+it reports 6 imported, 5 copied, 1 missing. cf#857 tracks the acceptance gate, which now has a real
+two-directional proof available for free: red against the broken image, green against this one.
+
+**A comment beside the sanity-encode block is corrected in the same change.** It asserted "Bind is
+immediate at runtime: app.py registers /health and binds :8000 before any ffmpeg subprocess (no
+startup warm thread to starve the port-ready check)." True about the ordering it names, no
+guarantee that the port ever comes up, and it steers a reader of a port-ready failure toward ffmpeg
+startup and away from the imports, which is precisely the wrong direction here. The replacement
+says to check the COPY line first.
+
+### fix(panel): read the speech, master and dialogue degrade keys, so completed-with-limits can light for them
+
+The panel now projects the three per-stage degrade keys `vivijure-core` emits (`speech`, `master`,
+`dialogue`), in the same `{ degraded, reasons }` vocabulary it already parses for `output.finish`. A
+film that was never mastered, whose speech chain passed everything through, or that shipped without
+generated voices is now separable from a clean one, on the live render view and in render history.
+
+**The ladder is three states, not two**, and keeping them apart is the whole point:
+
+    key ABSENT        the stage was never reached. NOT MEASURED. Show nothing.
+    degraded: 0       it ran and ran clean. Measured, and NOT a limit.
+    degraded: n > 0   it ran and degraded; the reasons are the studio's own words, rendered verbatim.
+
+The core omits the key entirely rather than writing a zero, so a parse that read a missing key as a
+clean run would throw away the distinction the core is spending a field to preserve. Absent maps to
+`unmeasured` and never to `none-reported`.
+
+`degraded` is the COUNT and `reasons` is DEDUPED, so `degraded >= reasons.length` and the two are not
+interchangeable: two shots failing for the same reason report `{ degraded: 2, reasons: [one] }`.
+Deriving the count from `reasons.length` under-reports exactly when several shots fail the same way.
+
+The existing clip-finish parser is GENERALISED rather than copied three times, since the shape is
+identical: one parse per stage, not a parser per stage. The combining rule is deliberately **not
+worst-of** -- it returns the composition, so "every stage measured, none degraded" stays
+distinguishable from "some stage never measured", and an unreadable signal does not light the badge
+as though the studio had named a limit.
+
+No user-visible change until `vivijure-core` #317 lands and the pin bumps: with the keys absent every
+stage reads `unmeasured` and nothing renders, which is the ladder's first rung working as designed.
+
+Also corrects a stale claim in `public/finish-degrade.d.ts` that `film_finish.degraded` "does not
+exist yet". It exists, `vivijure-core` emits it on both the single-film and scatter paths; what is
+true is that nothing in `public/` reads it yet. Wiring that is tracked separately.
+
+### fix(panel): read film_finish, so a film that shipped without its title cards stops looking complete
+
+`vivijure-core` has been projecting `film_finish` onto the render payload and nothing in `public/`
+read it, so title-card and caption degrades were outside every band on every row. This is the
+unfinished half of cf#549, which was filed about exactly that case.
+
+Unlike cf#853 this takes effect **immediately**: the field is already on the installed core, on both
+the single-film and the scatter path.
+
+**The same three-state ladder in a different shape.** Core emits
+`{ applied, adopted, degraded: string | null }`, and the whole object is `null` when the chain was
+never reached:
+
+    null / absent      the chain was never reached        -> unmeasured
+    degraded: null     it ran and applied cleanly         -> none-reported
+    degraded: "..."    it ran and SHIPPED UNCARDED        -> reported
+
+So this is an **adapter into the generic path**, not a fourth parser: one normalising function plus
+one entry in the stage list, and both panel surfaces pick it up through the machinery cf#853 landed
+with no new rendering code.
+
+**Strict on the degrade, forgiving on the ledgers.** An object with no `degraded` key at all reads as
+`unreadable`, not clean: core always emits that key, so its absence is a shape we do not recognise,
+and reading an unrecognised shape as "ran clean" is the one direction this projection must never fail
+in. A malformed `applied` / `adopted` does NOT decide the band, because the band is a statement about
+the degrade and nothing else.
+
+**`adopted` is carried, and cannot light a badge (fc#1662).** It counts the recovered re-encodes,
+steps whose artifact was found in R2 rather than run. That is the wasted-work signal and it is real,
+but it is not a degrade: a film that reused every step and applied its cards cleanly is not a limited
+film. It rides on the parsed info so a later surface can show it without re-deriving it, with a test
+whose job is to fail if it ever starts lighting the badge.
+
+### fix(abuse-report): attribute reported keys by derived ownership, and record unbound reports honestly
+
+The report door now derives a reported key's owning project instead of assuming one, and says so in
+the hold note when it cannot. `resolveKeyBinding` returns one of three outcomes per key:
+
+- **bound** -- ownership derived and it matches the reported project. Accepted.
+- **foreign** -- ownership derived and it belongs to a DIFFERENT project. **Refused.**
+- **unbound** -- ownership is not derivable. **Accepted**, and recorded as unbound.
+
+**Unbound is accepted rather than refused, deliberately.** `cast/`, `uploads/`, `character-refs/`
+and `cast-gen/` are where caller-supplied imagery lands, so they are the most likely home of
+genuinely offending content. A door that refused what it could not attribute would make that
+content unreportable, which trades a griefing bound for a takedown path that must not be narrowed.
+The door stays open; what it no longer does is claim an attribution it does not have.
+
+**Derivability is measured against the schema, not assumed.** `renders` carries `project` alongside
+`bundle_key` and `output_key`, so three key spaces resolve by exact match: `renders/` from the slug
+in the key itself, `bundles/` and `out/` by lookup. `cast_members` has no `project_id` and is
+globally slug-unique (`migrations/0001_init.sql`), so everything cast-shaped is deploy-wide by
+construction and genuinely has nothing to bind to. Nothing resolves by scanning a JSON column: a
+`LIKE` over `output_json` would be a guess wearing a lookup's clothes, and a wrong attribution here
+refuses a legitimate report.
+
+**The hold note is the record somebody may act on under a reporting duty**, so it no longer lets
+`project` read as a verified attribution. It now carries `project_is` (naming it as the reporter's
+claim), a per-key `bindings[]` with a closed-set `basis` token, and an explicit `attribution` field
+(`all-keys-bound` / `partially-bound` / `no-keys-bound`) alongside `bound_count` and
+`unbound_count`. `attribution` is a field rather than something a reader derives, because "every key
+attributed" and "no key attributed" would otherwise look identical to someone who did not think to
+divide two numbers, and a person acting on a hold is not going to do arithmetic.
+
+`basis` keeps two facts apart that would otherwise collapse: **`db-unavailable` means the lookup
+could not run, `no-owning-row` means it ran and found nothing.** Could not look is not the same as
+looked and found nothing.
+
+The resolver never throws and a broken lookup does not close the door, matching the posture this
+route already takes on its limiter (metered as a SAFETY route: throttled, never denied by a broken
+check). A safety door that shuts when a database hiccups is a safety door that is not there.
+
+Covered by `tests/abuse-report-key-scope.test.ts`, 18 cases. The denominator case asserts every one
+of the twelve `ARTIFACT_PREFIXES` members is classified derivable or not and that the two sets
+partition the list, so a thirteenth prefix cannot arrive without someone deciding which side it is
+on. Controls in both directions: an in-project key is accepted and removed, an out-of-project key is
+refused and its original survives, and a broken lookup still files the report.
+
+### fix(finish): a single shared CSAM needle, and a guard that keeps it single (GHSA-qgx2-5crw-9m4j)
+
+The CSAM refusal discriminator is now declared **once**, in `modules/_shared/finish-soft-degrade.ts`,
+and `modules/cloud-keyframe/src/image-gen.ts` imports it instead of declaring its own. A refusal is a
+HARD FAIL and never a polish degrade; that was always the intent, and it is now enforced by one
+predicate rather than promised by a docstring.
+
+Details of the prior behaviour are in advisory **GHSA-qgx2-5crw-9m4j**.
+
+**The drift surface is closed, not just the drift.** `tests/csam-needle-one-copy.test.ts` scans the
+shipped trees and fails if any file other than the single source applies a string test to a CSAM
+needle, so a second copy cannot be reintroduced. It carries its own controls: a positive control that
+the scanner can still see the real needle, so the count cannot pass vacuously on an empty population
+if the predicate is ever renamed out of its reach; a check that it does NOT flag the three `finish-*`
+modules that legitimately BUILD a `"csam refusal: "` message after calling the shared discriminator,
+because a guard that cries wolf on a legitimate caller is a guard someone disables; and it was
+verified by injecting a second matcher into a real file and confirming it named the exact file and
+line rather than only passing on synthetic input.
+
+**Widening is one-way, and that is documented in the code.** A false negative on this predicate is a
+missed refusal; a false positive is a film that hard-fails and gets looked at. Those costs are not
+comparable, so the needle only ever grows.
+
+**Two structural lessons kept in the code rather than here**, because they generalise past this fix:
+
+- `BACKEND_SOFT_DEGRADE` exists in that same file so "the four call sites cannot drift into four
+  spellings of it". Sharing a constant to prevent drift while duplicating the predicate beside it is
+  the shape to watch for; the comment says so at the point where someone would repeat it.
+- The existing suite was green throughout, because its positive cases were written against the same
+  single spelling as the implementation. **A test that shares its input vocabulary with the code it
+  tests cannot observe a divergence from a second implementation elsewhere.** That reasoning is now a
+  header comment in `tests/finish-soft-degrade-csam.test.ts` so the pattern is not restored. The new
+  cases were driven RED before the fix, against all three consumers rather than the predicate alone.
+
+### fix(modules): drop provider response bodies from thrown errors and returned error strings, keeping enumerated fields
+
+A module that calls a provider now reports a refusal using the provider's ENUMERATED fields
+(`error.code`, `error.type`) plus the HTTP status, and never the provider's free-text prose. Where a
+path has no enumerated field, the prose is replaced by `untrustedLabel()` from `src/log-scrub.ts`, so
+two reports of the same refusal still correlate and an operator can still see that a body was present.
+
+Three call sites changed: `modules/image-generate/src/image-gen.ts` on both its OpenAI-direct and
+AI-Gateway paths, and `modules/plan-enhance/src/provider.ts` on its Anthropic path.
+
+**The invariant is now load-bearing rather than hygiene, and is stated in the code and the docs:**
+`modules/plan-enhance/src/index.ts` folds an exception message into `output.notes` and into its
+returned `error`, so "no throw on a provider path carries a fetched body" is what keeps provider text
+out of persisted output. Two gates hold it: `tests/log-scrub.test.ts` behaviourally, against all
+three live call sites through the same specifiers the modules use, and
+`tests/modules-log-scrub-reexport.test.ts` statically, asserting no identifier assigned from a
+response body reaches a thrown template. The static half is file-scoped and says so: a ratchet, not
+a proof.
+
+`src/providers/openai-image.ts` is **deleted**. It had no production importer, so it was a second
+implementation of a live path that nothing ran; a patched file with no importer terminates a search.
+The shared label vocabulary now reaches modules through `modules/_shared/log-scrub.ts`, a re-export
+pointer at `src/log-scrub.ts` on the `modules/_shared/runpod-route.ts` precedent, because a copied
+helper forks at copy time. `src/log-scrub.ts` imports nothing, so a module bundling it gets three pure
+functions and no host coupling.
+
+`docs/privacy-residual-dataset.md` is corrected. Its census said "the studio source" while being
+scoped to `src/`, so every statement in it was true as written and false as read: `modules/` was never
+swept. It now publishes its denominator, carries the commands to reproduce it, and covers both trees.
+
+`tests/image-generate-module.test.ts` asserted that a provider's prose appeared in the returned error
+string, so it pinned the old behaviour in place and went red on this change. Its intent (fail loud on
+a refusal, never soft-degrade, name the model) is kept and the assertion is inverted.
+
+## v1.34.1 -- 2026-09-27
+
+### fix(finish): bound the stateless pool under the container application cap (cf#810)
+
+`SYNC_POOL_SIZE` was 4 against `max_instances = 3`, so the stateless pool alone could claim every
+instance slot before a single encode ran. It is now 1, leaving 2 slots as job headroom, and
+`tests/video-finish-pool-ceiling-cf810.test.ts` asserts `SYNC_POOL_SIZE + RESERVED_JOB_INSTANCES
+<= max_instances` against the real `wrangler.toml.example` so the two numbers cannot drift apart
+again.
+
+**CORRECTED AFTER PUBLICATION.** This section originally named the pool ceiling as the measured
+CAUSE of the assemble failure. Deploying this very release falsified that. On 2026-09-27 at
+05:24:30Z, film `film-28825997` was submitted in the identical shape against the deployed v1.34.1.
+The pool fix was confirmed live by the one instrument that survives scrutiny: `sync-0` was the only
+pool name that ever appeared, and `sync-1` / `sync-2` / `sync-3` stayed silent, so `SYNC_POOL_SIZE`
+was 1 and two instance slots were free. **The job container still did not start, and the film
+failed with the byte-identical error.** So the pool arithmetic was a real defect, and it was not
+the blocker. `#823` was necessary, shipped correctly, and did not fix the film; the actual cause
+is under investigation in cf#851.
+
+Two further claims in the text below are weaker than they read, and are left in place rather than
+edited away so the reasoning stays auditable. The container-side timestamps come from the
+Containers instances endpoint, which was subsequently measured reporting `state: running` with a
+`started_at` fourteen minutes in the past, so "a 32-hex routing-key instance appeared 5s ahead of
+the phase stamp" is not a second-accurate claim (cf#844). What does survive is the NAME evidence:
+a pool name is chosen at call time and cannot be a stale record of a name the deployed code can no
+longer emit.
+
+THE MEASUREMENT, which is worth more than the diff, because this is the one case where the
+predicted failure was watched happening rather than argued about. Film `film-40e0cd09` was
+submitted against the deployed v1.34.0 on 2026-09-27: 2 scenes, 480p, `draft`, no `finish_config`,
+so the path was keyframe -> clips -> assemble with the finish chain skipped.
+
+    04:49:31Z  keyframe                          container instances running: 0
+    04:50:12Z  clips (cf-seedance)               container instances running: 0
+    04:53:06Z  assemble                          job instance created, never reached `running`
+    04:57:46Z  failed: "video-finish async submit failed (no jobId)"
+
+Both cloud doors ran with the container correctly idle, which is the negative half of the result.
+At assemble the binding resolved and the Durable Object was created (a 32-hex routing-key instance
+appeared 5s ahead of the phase stamp), but the container could not START. The pool holding the cap
+was the explanation given here originally and it is WRONG, per the correction above. Pool size was
+nonetheless confirmed from the container side
+independently of the deployed script, because `poolIndex()` is `floor(random * SYNC_POOL_SIZE)` and
+indices 1, 2 and 3 are unreachable unless the pool is at least 4.
+
+Two further findings from that run, each filed separately rather than fixed here:
+
+- The over-cap refusal is NOT prompt. Core's `submitAsync` stalled for minutes rather than taking a
+  fast error, so the film presented as a hang in `assemble` before it failed. The comment on
+  `SYNC_POOL_SIZE` claimed it "ERRORS rather than queueing"; that was directionally right and
+  misleading about timing, and it is corrected in this release.
+- Each retry minted a FRESH routing key, so every attempt created another instance record that
+  could not start. The application's instance list grew from 4 to 5 while the film was stuck.
+
+What this release does NOT change: core failed the film loudly and named the leg. It did not set
+`phase: done`, and it did not ship the per-shot clips as a film. The honest failure is the
+behaviour under test here, and it held.
+
+**ALSO SHIPPED IN v1.34.1 AND OMITTED FROM THE ORIGINAL NOTE.** The entry below describes cf#804,
+which is in this tag (`dce29d0`, #822) and went undescribed. **The cause of the omission is worth
+more to a reader than the entry:** this section was HAND-WRITTEN instead of assembled by
+`scripts/changelog-assemble.py`, so the two `changelog.d/` fragments that belonged to it were never
+consumed. One of them described the pool fix that the section did cover, by accident of the author
+writing the same content twice; the other is this, and it was simply lost. A release note is only
+as complete as the mechanism that builds it, and bypassing that mechanism drops whatever the author
+did not happen to remember.
+
+### docs(storage): the storage ceiling does not share the spend gate's posture (cf#804)
+
+The comment above the storage-quota check in `src/index.ts` said *"Same posture as the spend gate
+above"*. It is not, and the difference is operationally load-bearing: the two gates are driven by
+different knobs, so an operator reading that line would reach for `SPEND_LIMIT_FAIL_CLOSED` to change
+a posture it does not control.
+
+- **spend gate:** `SPEND_LIMIT_FAIL_CLOSED`, default closed; a broken check is a 503 deny.
+- **storage ceiling:** core's `R2_STORAGE_QUOTA_MODE`, `deny` (default) or `meter`. Unset, empty or
+  any unrecognised value resolves to `deny` with a console warning, deliberately, because guessing
+  `meter` on a typo would silently turn a hard stop into unmetered spend.
+
+And `meter` does not merely soften the deny. It changes what a **broken** check does: with no DB or a
+failed usage read, `deny` answers 503 fail-closed while `meter` lets the submit **proceed** and
+reports the period as an unbillable metering gap. The two gates disagree about the broken case in the
+one direction that costs money, which is exactly the thing the old comment flattened.
+
+Comment only; no behaviour change. It is the fifth instance this sprint of a comment asserting a
+property the code does not hold, and this one sits in a spend path.
+
+## v1.34.0 -- 2026-09-27
+
+### fix(video-finish): stream the remaining artifact uploads instead of reading them into memory
+
+`/finish` was fixed alongside chunked assemble; `/film-titles`, `/subtitle` and `/frames` still
+read the whole produced artifact with `f.read()` before uploading it, and the first two produce a
+full film. A Cloudflare Container has no swap, so exceeding memory restarts the instance rather
+than paging, and because disk is ephemeral and resets to the image on wake, the work dir dies with
+it and the next poll finds no job. The film does not fail loudly, it fails as though it never ran.
+
+Output size is bounded nowhere (`MAX_OUTPUT` does not exist), so this was a live ceiling. Fixing
+only `/finish` would have moved the OOM to the subtitle path, where it would have presented as a
+new and unrelated symptom.
+
+All routes now share the `_put_file` helper, which streams from a file handle and sets
+`Content-Length` explicitly (a presigned PUT will not accept the chunked transfer-encoding aiohttp
+would otherwise use for a file object).
+
+Covered by `test_upload_streams.py`, which asserts the upload body is never a materialised buffer
+AND scans the source for the read-then-upload shape, so the pattern cannot be reintroduced by
+copying a neighbouring route -- which is how it reached four sites. The scan parses app.py with
+`ast` rather than grepping it: a line-regex version was measured blind to a read handle named
+anything but `f` and to a `guarded_put(` wrapped over several lines, both of which are ordinary
+formatting. It carries its own planted-violation control, which plants BOTH the shape that shipped
+and that evasion, and asserts the catch as a delta so a real violation cannot corrupt the control.
+
+`_put_file` also takes a `label` so its failure names the artifact it was actually uploading.
+Reusing the helper had made every route report `partial put <status>`, including `/frames`, which
+uploads a contact sheet and no partial at all.
+
+### feat(video-finish): chunked assemble, so peak disk is a fixed cost instead of 3-4x input
+
+`/finish` normalizes every clip through libx264 before the `-c copy` join and kept every
+intermediate in one work dir until the job ended, so peak disk ran 3-4x total input. At the
+route's own contracted maximum (`MAX_CLIPS` 80 x `MAX_CLIP_BYTES` 256 MB = 20.0 GB) the download
+stage alone exceeds the 20 GB ephemeral disk of the largest Cloudflare Container.
+
+Supplying the new optional `partialUrls` pool switches to a chunked assemble: byte-bounded
+batches, each normalized and concatenated to a partial, PUT to R2, work dir freed before the next
+batch. The final pass concatenates the partials straight from their presigned GET URLs, so they
+never return to disk and peak disk at the join is one film. Measured against a range-capable
+origin at 1.1 GB: byte-identical to a local join, range-seeking throughout, peak RSS flat at
+~43 MB.
+
+The container stays credentialless; it only ever writes to a URL the Worker handed it. Omitting
+`partialUrls` leaves the single-pass path byte-for-byte unchanged, so an older Worker is
+unaffected.
+
+Refuses rather than degrading quietly: crossfade with more than one batch (a crossfade cannot span
+a batch boundary, and chunking anyway would silently drop the transition), and a pool too small for
+the film. The drop guard runs per batch AND on the final join.
+
+Also fixes an OOM on the `/finish` upload: it read the ENTIRE finished film into memory before
+PUTting it, which on a Container (no swap) fails at exactly the sizes this change makes reachable.
+The same pattern remains on `/film-titles`, `/subtitle` and `/frames` and is filed separately.
+
 ### fix(cast-media): copy and write the row before deleting the superseded portrait
 
 Both portrait replacement paths deleted the old R2 object BEFORE the
@@ -14,6 +3608,756 @@ nothing. Not a race -- `copyChatArtifactToRenders` throws 404, 413 and 400
 before it writes a byte, so a tenant uploading a too-big image was enough.
 Now: store, write the row, then drop the superseded object, skipping the
 same-key case a re-upload produces. Parity with vivijure-local#407.
+
+### fix(modules): a video-finish 404 past 30s is a peer, not a restart
+
+`subtitle` and `film-titles` treated one `GET /async/status/:id` 404 past the 30s
+grace as "container restarted; resubmit". video-finish is 3 replicas behind VIP
+`video-finish:8000` (keep that address; fleet addressing ruling). Measured 2026-08-14, new TCP is
+found=4 / 404=8 (1/3). A lone 404 cannot tell "lost" from "not mine".
+
+404 stays pending. Terminal only after **N=12** consecutive 404s
+(`(2/3)^12 = 4096/531441 ≈ 0.771%` false-fatal under independent 2/3 scatter)
+or after the existing core 90-min `PHASE_HARD_DEADLINE` (assemble/mux is not in
+`POLLABLE_PHASES`; a persist-less streak would hang a genuine all-replica 404).
+N=3 is `(2/3)^3 = 8/27 ≈ 29.6%` and is the same defect with a longer fuse.
+
+The count rides in the poll token. Tests drive a 3-replica VIP (1 holds the
+job, 2 return 404); a single-stub suite cannot observe this.
+
+Refs https://github.com/skyphusion-labs/fleet-chezmoi/issues/1662
+
+### chore(mcp): retire propagandhi Studio MCP door (cf#328)
+
+Conrad 2026-08-17: delete Worker `vivijure-studio-mcp-flatliners` and
+hostname `studio-mcp-propagandhi.skyphusion.org`. Config and the
+second-door docs section go with them. Production MCP is unchanged.
+
+### fix(ci): the hosted-pin advance FAILS when its credential is missing, instead of warning green (cf#372)
+
+`STUDIO_PIN_VARIABLE_TOKEN` was never provisioned, and the advance step warned and exited 0 on that
+condition by design. It ran that way on the v1.27.0 and v1.28.0 tags, reported **success** both
+times, and never attempted a read or a write. Meanwhile the deployed studio reached v1.28.0 while
+the hosted pin stayed at v1.26.0, so hosted and self-host ran different code under one version
+number, against the parity invariant, and the gap grew by one every ship.
+
+**An annotation is not a gate.** A `::warning` renders a yellow badge, a zero exit, a green check
+and no obligation on anyone. It rendered on both run summaries and was seen by nobody. The comment
+that sanctioned the trade named cp#393 as the backstop, but cp#393 fires at the NEXT control-plane
+deploy and its drift report is a report someone must read, so neither half was a control on the
+release that skipped.
+
+The skip is now scoped to the only case where it is legitimate. On a fork or a self-host build,
+where the secret correctly does not exist, it still warns and exits 0. On this repository an absent
+credential is `exit 1`: a release that silently does not advance the pin is a parity violation and
+must not be reported as a release. An unset `GITHUB_REPOSITORY` fails CLOSED rather than reading as
+probably-a-fork, since treating an absent thing as a benign one is the reasoning that produced the
+defect in the first place.
+
+**And a second step that runs even when no write happened.** The defect in one sentence is that a
+skip and a success shared exit 0. Failing closed fixes the case that bit us; `--assert` covers the
+rest of the class by reading the pin back and judging it against the tag whatever the advance
+decided to do. The invariant it enforces is pin NOT BEHIND tag rather than pin equals tag, because
+re-running an older tag CI run is the sanctioned rebuild path and the advance correctly declines a
+backwards move there; demanding equality would paint that red for doing the right thing.
+
+The suite grew from 19 assertions to 32. **The case that asserted the defect was inverted, not
+added to:** it read "absent credential declines rather than failing the release" and expected
+`rc == 0`, so the test encoded the same belief the script did and could not have caught this
+either. Its control is the fork case, which must stay green, since a script that failed on every
+absent credential would pass the new case identically.
+
+NOT fixed here, because it is a credential and not code: the PAT still has to be provisioned.
+Until it is, the next `v*` tag fails this step, loudly, which is the point.
+
+### Fixed: omitting `finish_config` no longer bills default polish; a named missing finish module fails closed (cf#386, cf#593)
+
+An MCP / `POST /api/render/film` caller who did not mention finish still ran the default
+participation set (rife + lipsync + upscale) at schema defaults. That is the expensive reading of
+"leave it out": the film looked bare in the request and was not. Omit `finish_config` (and
+`finish_select`) is now `{ mode: "named", modules: [] }`. Explicit empty is the same. Keys of a
+present `finish_config` (minus `finish-order`) become the named list. `{ mode: "default" }` is how
+a caller still asks for the participation set. The planner door is unchanged: no `select` key still
+means default participation.
+
+A named finish module this studio does not serve used to drop silently, so `{ mode: "named",
+modules: ["ghost"] }` became an empty chain that read as "nothing to do". The planner now reports
+`unresolved` (an error, not derived-empty) and the render door `400`s
+`finish module(s) requested but not serving: ...` before any keyframe spend. Core still fails the
+job at enterFinishPhase if a caller bypasses the door.
+
+cf#595 (every poll-path degrade is one `passthrough:backend-soft-degrade` literal) is not in this
+PR. Closing it needs a closed cause-code vocabulary from the doors plus vivijure-core#226 so
+`summarizeFinish` can count more than the tag prefix. Not a same-file sibling.
+
+Refs https://github.com/skyphusion-labs/vivijure-cf/issues/386
+https://github.com/skyphusion-labs/vivijure-cf/issues/593
+https://github.com/skyphusion-labs/vivijure-cf/issues/595
+
+### Fixed: `poll_cast_refs` `registered` never moved while the job ran (cf#386)
+
+The cast-image module generated one image per poll and the orchestrator only called `addRefs` on the
+terminal batch, so six healthy polls read `registered: 0` then jumped `0 -> N` at done. A stuck job
+was byte-identical to a healthy mid-run under that signal. The module now returns progressive
+`images` + `progress` on pending polls; the orchestrator folds each new key onto the member as it
+lands. `registered` and `images` grow while `phase === "generating"`. A legacy bare-pending module
+still batches at done (graceful).
+
+Two honesty rules came with it. Mid-run images are checked against the same `cast.image` per-image
+rule the terminal batch already went through (`addRefs` appends verbatim, so the fold was the only
+unguarded path onto the member), and a terminal registration failure now ends the job
+`phase: "failed"` with `registered k of n generated refs; cast row unavailable` instead of reporting
+`done` with a `registered` self-consistent with a batch that was dropped.
+
+### Docs: omitting a `*_config` does not skip a chain hook (cf#386)
+
+Intended: every serving module for a chain hook runs, clamped to schema defaults. Natural reading of
+"omit the config" was skip -- which mispriced phase-1 matrix cost and left no predicted tags for
+default-only steps. CONTRACT + MCP tool text now state the omit rule and point at module no-op knobs
+(e.g. `finish-rife` `interpolate: false` -> `noop:interpolate-off`).
+
+### refactor(job-log): the RunPod job log moves to vivijure-core; this repo re-exports it (#475)
+
+`modules/_shared/runpod-job-log.ts` becomes a one-line pointer at
+`@skyphusion-labs/vivijure-core/runpod-job-log`. No module worker changes: all 97 call sites keep the
+specifier they already write, and `env.TELEMETRY_DB` still typechecks, because core types the handle
+as the structurally identical platform `Database`.
+
+WHY. Cast LoRA training submits to RunPod from CORE, which sits upstream of this file and could not
+import it, so it recorded nothing: the `vivijure-wan-train` endpoint billed 14.5% of GPU spend on
+2026-08-01 and 21.9% on 2026-08-02 with ZERO rows in `runpod_job_log` on either day. The alternative
+was a second recorder for one table, and the estate already had two copies that had drifted
+(vivijure-local still truncates `detail` at 160, has no `unknown` outcome and no timing columns). Same
+move, same reasoning as cp#321 did for `runpod-route.ts`.
+
+`tests/runpod-job-log-reexport-cf475.test.ts` asserts the surface at runtime, asserts identity rather
+than shape, asserts the cf#320 bound and cf#298 vocabulary arrive through the pointer, and asserts the
+file declares nothing of its own -- the guard on the deletion, not on the survivor.
+
+Requires `@skyphusion-labs/vivijure-core@^1.16.0`.
+
+### fix(finish): project the degrade reason, not one `passthrough:` literal (cf#595)
+
+Poll-path polish misses still tag `passthrough:backend-soft-degrade`. The
+cause now rides in `FinishOutput.degraded` (core#226) onto `output.finish.reasons`,
+and the planner renders those reasons verbatim. A user can tell "no face" from
+"door timed out". CSAM refusals stay a hard fail in all four finish doors.
+
+### feat(planner): land like a studio, skip forced audio, map failures (#644 #645 #649)
+
+First paint is a brief and "Write the storyboard". Project picker, model
+picker, and cast slots sit in Advanced. After plan, shot cards are first-class;
+JSON/YAML stay behind an operator fold. Studio nav stays reachable below 860px
+so Cast is usable on a phone.
+
+Bundle success goes to Render, not Audio. Audio is an optional fold on the
+render step. The rail is Plan -> Cast & Bundle -> Render -> Your films.
+Keyframes-only is labeled as a stills preview so a filmmaker does not have to
+paste a .tar.gz key.
+
+Known provider failures (7003 / keyframe shape, 3030 / flagged / real person)
+map to one next-step sentence before the raw payload. History collapsed rows
+show preview-vs-final and the backend name when those fields exist, keep
+play/download, and offer retry as the one next action on a failed row.
+Degrade copy is unchanged.
+
+### feat(planner): cast is people, render is three choices (#646 #647 #648)
+
+Cast step asks who is in the movie. Empty state is "No characters yet" plus
+Create. Bundle copy no longer treats 8+ training images as the happy path.
+Training (consistency / LoRA) sits behind "Make them consistent across shots."
+An untrained bound character is named on the Cast step, before assemble.
+
+Render is stills vs motion, then Preview / Share / Best (wire values stay
+draft / standard / final). First film defaults to stills + Preview. Scatter,
+module schema, and expert JSON move into Advanced. The spend line uses the
+door's ui.cost when it is a filmmaker sentence, otherwise "billed per render."
+It never says Unified Billing.
+
+Modules and Settings leave the primary nav and stay in the account menu.
+
+### fix(planner): project the finish picks from the registry, and derive the guard corpus (#780)
+
+The opt-in finish controls were a hand-kept `[module, wrapperId]` pair list
+against two static checkboxes, so an installed, conformant `finish` module
+declaring `participation: "opt_in"` that was not `finish-lipsync` or
+`finish-blender` got no control at all and could never be named in the submit.
+They are now projected: one checkbox per opt_in `finish` module, in registry
+order, each labelled from that module's own `provides[0].label`. A new opt_in
+finish module needs no edit to the panel or to `planner.html`.
+
+The picks are built after the registry resolves, while draft restore runs at
+load, so restore now parks its map and the first build applies it; the static
+markup it replaced was present from parse time and had no such window. The
+saved draft carries a `finishPicks` map keyed by module name instead of one
+scalar field per module, with a declared shim reading the two old keys.
+
+`tests/panel-no-hardcoded-modules.test.ts` pinned six cloud `motion.backend`
+names and was green because none of them appeared, while seven other module
+names were compiled into the panel across 21 sites. Its corpus is now DERIVED
+from the installed module set (hook-name collisions subtracted, also derived),
+and the exemptions are a ratchet: an undeclared name fails, and a declared one
+that has been paid off fails too, so the list can neither grow silently nor
+rot. Remaining hardcoded names are down to 6 across 11 sites, every one of them
+declared with a reason and a way out.
+
+Also: two comments in `public/render-eta.js` cited `src/film-render-bridge.ts`
+for `phaseProgress`, which lives in core; that file is a re-export shim and does
+not carry it. And `bundle-out/` is untracked and ignored -- wrangler regenerates
+it on every tagged release run, so the copy committed on 2026-07-24 was 30+
+releases stale and shadowed core's real source in a grep.
+
+### fix(modules): excise MuseTalk -- remove finish-lipsync, its deploy gate and its demo seed
+
+MuseTalk is ruled out permanently as a lip-sync provider and its RunPod endpoint no longer
+exists, so the `finish-lipsync` module that clients it is gone, along with the `MODULE_LIPSYNC`
+binding, the `MUSETALK_RUNPOD_ENDPOINT_ID` secret, the `--satellite lipsync` provisioner and the
+hosted strip script whose only job was removing the block. `deploy.sh --satellites` no longer
+dies without a MuseTalk endpoint id, the planner no longer offers "Replace mouths with MuseTalk",
+and a new demo migration drops the row from the PUBLIC demo catalog.
+
+Lip-sync itself is unchanged: `infinitetalk` is the live audio-driven door and drives motion FROM
+the Cast audio, so the mouth is right at animation time instead of patched afterwards. On a silent
+motion door a spoken line is now the Cast voice MUXED, with the mouth left as the model animated
+it, and the door blurbs say so rather than promising a sync they cannot deliver.
+
+Two consequences recorded rather than papered over: no shipped module declares
+`finish_consumes_audio` any more (the core mechanism is untouched), and `speech-upscale` has lost
+its only planner trigger, asserted as a negative test so the hole is visible.
+
+### fix(modules)!: remove speech-upscale -- dead endpoint, no trigger, purpose retired
+
+Its RunPod endpoint no longer existed (cf#757), so it was bound to nothing while the finish tier
+booked the degrade as `completed`. Its only planner trigger was the `finish-lipsync` checkbox,
+removed with MuseTalk (cf#783). Its purpose was cleaning dialogue BEFORE post-hoc mouth
+replacement, and lip-sync now happens at motion time via `infinitetalk` taking Cast audio
+directly. And it is CUDA, one of the three GPU stages Cloudflare Containers cannot host.
+
+Gone with it: the `MODULE_SPEECH_UPSCALE` binding, `AUDIO_UPSCALE_RUNPOD_ENDPOINT_ID`,
+`SPEECH_UPSCALE_DOORS` and both `SPEECH_DOOR_TOKEN` bearers, the `--satellite audio-upscale`
+provisioner, the `vivijure-audio-upscale` endpoint from the installer, the tenant catalog and
+release rows, and the PUBLIC demo catalog seed (with a demo migration that drops the live row).
+The `satellites` profile is now one module, `finish-upscale`.
+
+Nothing replaced it, deliberately. The Cast voice is muxed as recorded. The `speech` HOOK in
+vivijure-core is untouched, so a future speech module inherits a checked contract; no shipped
+module implements it, and the docs and the vendor census now SAY that rather than generating zero
+tests and reading green.
+
+### fix(cast): constrain a copy-into-served-space source to served artifact space
+
+Ref: GHSA-5fj8-6pc2-x9p5.
+
+The rule for "this key names an object this deployment may serve" was written down in each place that
+needed it: three times in the serve routes, once in the report door, and not at all in the paths that
+read an object in order to COPY it into served space. A rule stated in more than one place is a rule
+that drifts, and the paths that re-publish bytes under a new key held no opinion at all.
+
+There is now ONE definition, `isServedArtifactKey` in `src/shared.ts`: safe relative key, not a held
+key, and inside `ARTIFACT_PREFIXES`. The three serve guards, the report door's `keyRefusal`, and the
+copy paths all use it, so the serve side and the write side cannot come to disagree.
+
+`getServedArtifact(bucket, key)` is the read a copy path uses. The constraint lives at the READ rather
+than at each caller, which is the difference that matters: a copy path added later inherits it by
+reading through the helper instead of restating the rule, and there is no per-caller check to forget.
+A key outside served space reads as ABSENT rather than as a distinct refusal, matching what the serve
+route already answers for such a key, so the helper cannot be used to probe what exists beyond the
+caller's reach. `copyChatArtifactToRenders` (portrait, refs, sources) and
+`attachCastVoiceSampleFromKey` read through it.
+
+`isQuarantineKey` moved to `src/shared.ts` alongside the allowlist, since it is a fact about the key
+space rather than about the report door, and is re-exported from `src/abuse-report.ts` so existing
+importers are unaffected. Worth recording because it is not obvious: the hold prefix sits OUTSIDE
+`ARTIFACT_PREFIXES` and the allowlist is tested against the WHOLE key, so a held key matches no
+allowed prefix however ordinary its trailing path looks. That is what makes the allowlist sufficient
+here rather than merely suggestive, and it was verified rather than assumed.
+
+`tests/cast-copy-source-ghsa-5fj8.test.ts` drives all four doors and asserts HTTP status plus bucket
+state using only APIs that predate this change, following the convention in
+`tests/abuse-report-ghsa-wmjq.test.ts`, so each case can be run against the tree without the change
+and be seen to fail. The control half asserts every door still copies a legitimate source, and the
+discriminator case feeds a door the held key's own un-prefixed tail, which must still be accepted: the
+refusal is a statement about the prefix, not about the fixture. The `isServedArtifactKey` unit table is
+marked as added coverage rather than proof, because it imports a symbol the unfixed tree does not have.
+
+Files: `src/shared.ts`, `src/abuse-report.ts`, `src/index.ts`, `src/cast-media.ts`,
+`src/cast-voice-sample.ts`, `tests/cast-copy-source-ghsa-5fj8.test.ts`.
+
+### fix(rate-limit): meter the paid cast voice-sample route (cf#790)
+
+`POST /api/cast/:id/voice-sample` invokes a paid `motion.backend` (Seedance by
+default, any installed talking door via `motion_backend`), so one request is one
+paid image-to-video job. It was in neither `SPEND_PATTERNS` nor the storage
+list, so a consumer token could loop `{"seconds":10}` for unbounded paid video
+with no rate limiter, no daily ceiling and no quota. Now metered, fail-closed
+like every other money route, with no `isSafetyRoute` carve-out: refusing a cast
+preview on a broken limiter is retryable, an unbounded bill is not.
+`/voice-sample/keep` and `/voice-sample/attach` stay unmetered here by design.
+
+### fix(render): refuse a render whose dialogue state is undetermined (cf#794)
+
+**Behaviour change: a submit that used to return 201 can now return 503.** If the
+panel cannot establish whether a storyboard has spoken lines, the render is
+refused instead of started. Previously it was started and could come back as a
+finished, silent film reported as a success.
+
+A swallowed dialogue-derivation failure left `dialogue` undefined, so
+`spokenLinesPresent` read false, the talking-door 400 never fired, and a voiced
+storyboard rendered SILENT and returned 201, reintroducing what cf#334 fixed.
+`readBundleScenes` returns `[]` for a missing bundle and throws only on a real
+failure, so the three derivation sites (panel render, render-from-keyframes,
+finalize/animate) now refuse with 503 and carry the underlying cause. A
+genuinely silent storyboard is unaffected and still renders: a missing bundle
+returns `[]` rather than throwing, so nothing that used to work silently breaks.
+
+The 503 names the reason, so a corrupt bundle reads as a corrupt bundle rather
+than as a transient blip worth retrying forever.
+
+Same block: `voiceMap` was hardcoded `{}` although the preflight exposes
+`voices`, so every panel render spoke in `DEFAULT_VOICE_ID` even when the cast
+member had a voice resolved.
+
+### infra(finish): bind video-finish to Cloudflare Containers, under a fresh Durable Object class (cf#797)
+
+`video-finish` is the stage that concatenates per-shot clips into a film, and it had no reachable
+host. Assemble is gated on `VIDEO_FINISH_URL`; every hostname it was coded against is dead Hetzner
+NXDOMAIN, so core called `degradeAssembleUnavailable`, set `phase=done`, and shipped per-shot clips.
+**It reported success and there was no film.** This is the platform half of putting it back: the
+`[[containers]]` block, the Durable Object that fronts it, and the `Env` mirror. The container logic
+(chunked assemble, R2 partials, work-dir lifecycle, the activity hook, externalised job state) is
+cf#784.
+
+**A NEW Durable Object class name, deliberately.** `v1-video-finish` created `VideoFinishContainer`
+and `v2-drop-cpu-containers` deleted it when the CPU stages moved to always-on fleet iron. The
+current Durable Objects docs state a tombstone delete is permanent with no trash, so re-declaring
+that name may be refused outright. Measured on the account: 8 Durable Object namespaces, zero
+belonging to vivijure and zero Finish/Container classes, so this is a clean create either way. A
+fresh name cannot collide with a tombstone and costs nothing, because the class name is internal and
+nothing outside the config references it. The config says not to tidy it back, since that is exactly
+the edit the next reader is tempted to make.
+
+**`standard-4` is chosen for MEMORY, not disk**, which corrects the earlier analysis. That analysis
+concluded disk was the binding limit (3-4x peak against a 20 GB ephemeral ceiling). Streaming concat
+was then measured on real ffmpeg at **peak RSS 43 MB over 1.1 GB of input across 4 partials, lower
+than a local-disk join**, output byte-identical, using range requests rather than sequential
+downloads. So partials never land on disk at the final join and memory is the real ceiling.
+Containers have no swap, an OOM restarts the instance, and 12 GiB is the top of the published range,
+so there is nothing bigger to escape to.
+
+**Per-job Durable Object addressing is load-bearing.** `/async/finish` submits and
+`GET /async/status/{jobId}` polls, and every container instance sits behind its OWN Durable Object,
+so a poll that lands on a different instance than the encode does not find the job at all. The id is
+derived from the job id, never `getRandom()`. That is not a substitute for externalised job state:
+state surviving a restart and the poll reaching the right box are different problems and both are
+required.
+
+**`VIDEO_FINISH_URL` keeps its HTTP shape on purpose.** A Worker route fronts the container through
+the binding and the var points at that route, so core's contract is untouched and the
+`HOSTED_FINISH_POLL_BOXES` swap stays a one-line change rather than a protocol change. It is NOT
+repointed here: these are URL vars, so typecheck cannot catch a dangling target and a deploy will
+happily succeed against nothing.
+
+**`sleepAfter` is a contract, not a free knob**, and it is set on the class with the arithmetic
+beside it. Short values break this stage: no request is in flight during an async encode, so the
+idle timer runs against a working container, and ephemeral disk is reset on wake, so a sleep
+mid-encode destroys the work dir and the next poll finds nothing. Long values are not free either,
+because memory bills on PROVISIONED size while awake and `standard-4` provisions 12 GiB, making a
+10 minute idle tail roughly USD 0.019 per wake, already the same order as the active cost of a 300
+second assemble. The class therefore states the requirement it implies: the job loop must renew more
+often than 10 minutes, and renew inside a batch if a batch can run longer than that.
+
+**A gate that could not run when a human was looking.** The first revision of this change declared
+the Durable Object binding while nothing exported the class, and it was green on 13 checks.
+`wrangler` rejects that, so it would have failed at the next `v*` tag in the release bundle step,
+taking the whole studio release down and landing on whoever tagged next for an unrelated reason. The
+only gate that can see it, `wrangler deploy --dry-run`, lives in a tag-gated workflow and read
+SKIPPED. **An absent check reads exactly like a passed one.** It now runs on every pull request as
+`bundle-gate`, credential-free and fork-safe, with `--containers-rollout=none` so it validates the
+config, the bindings and the bundle without needing the Docker CLI, which `wrangler` otherwise
+requires to build a local Dockerfile image even in dry-run mode. Both directions were verified
+before landing: deleting the export makes the step exit 1 with "depends on the following Durable
+Objects, which are not exported in your entrypoint file", and restoring it makes it pass.
+
+Also: `DurableObject` is added to the `cloudflare:workers` test shim. `@cloudflare/containers` builds
+`Container` on it, so exporting a container class from the entrypoint made every node-environment
+test that imports `src/index.ts` die at import time with "Class extends value undefined", in tests
+with nothing to do with containers. The shim stays minimal and constructible, like the
+`WorkflowEntrypoint` shim beside it; container behaviour is exercised in the Workers runtime and by
+the bundle gate.
+
+Two corrections to the above, both found by running things rather than reasoning about them. The
+shim needed **`WorkerEntrypoint` as well as `DurableObject`** -- `@cloudflare/containers` imports
+both and evaluates `class ContainerProxy extends WorkerEntrypoint` at module load, so shimming only
+`DurableObject` failed with the identical message and looked like the fix had not worked. Note
+`WorkerEntrypoint` is not `WorkflowEntrypoint`, which was already in the shim; three letters apart
+and different base classes. And a `server.deps.inline` entry for the package, which a plausible
+reading of the failure said was required, turned out **not** to be needed: tests pass without it, so
+it was dropped rather than shipped with a confident comment explaining a requirement that does not
+exist.
+
+**The cf#560 strip guard was weakened by this change and is fixed here, scoped rather than
+patched.** Adding a second hosted render path to `ci.yml` broke its negative control two ways. Its
+mutation used `String.replace`, which touches only the first occurrence, so with two render lines the
+control could no longer reach `consumed === 0`; it now uses `replaceAll`. More seriously, its `feeds`
+check scanned to END OF FILE, so one job's strip invocation could be satisfied by a DIFFERENT job's
+render line: with the bundle gate's own `envsubst` deliberately broken, the suite stayed **green**
+while that job rendered from the unstripped template. That was measured, not theorised. The scan is
+now bounded to the invoking step, and it was verified to go red for EACH job's data path
+independently and green on the real file. With only one render path the weakness was unreachable,
+which is why it survived until now.
+
+### fix(storage): meter the byte-writing routes core's list misses (cf#803)
+
+**Behaviour change on a studio with `R2_STORAGE_QUOTA_BYTES` set: four routes
+that previously ignored the ceiling can now return 507.** They were never meant
+to be exempt.
+
+The storage ceiling missed `/renders/:id/retry` (a full `startFilmJob`),
+`/cast/:id/voice-sample`, `/voice-sample/attach` (32MB) and `/render/frames`, so
+an over-quota studio was refused 507 on `/storyboard/render` and could then
+re-render a whole film through `/retry`. The gate now checks core's list UNION a
+panel supplement covering those four.
+
+The supplement is self-retiring: a test fails if core ever starts covering one of
+them, so it must shrink rather than drift out of step.
+
+### fix(retry): reach the real parent preview, and declare a lossy retry (cf#805)
+
+Finalize retry passed the FAILED row as its own `parent`, and
+`validatePreviewParent` requires a COMPLETED keyframes-only preview, so every
+finalize retry 400ed. The row already records `parent_id`, so retry now loads
+that preview and the finalize precondition stays intact rather than weakened;
+a missing or deleted parent refuses honestly instead of rebuilding a full film.
+A full retry cannot be a replay -- `renders` persists none of the submit-time
+inputs -- so it now DECLARES the degrade (`degraded`, naming the dropped fields)
+rather than answering a bare 201 on a different film.
+
+### ci: gate the container build on a PR, and prove the gate actually built (cf#809)
+
+`bundle-gate` passes `--containers-rollout=none` so it stays Docker-free, credential-free and fast on
+every PR. That flag SKIPS the container image build. So it answers "does the worker bundle", and it
+was read as answering "does the deploy work" -- which is how cf#798 merged green while arming a
+deploy failure only a `v*` tag could reach. A gate that passes by not performing the step it covers
+is the failure mode.
+
+`container-deploy-shape` runs `wrangler deploy --dry-run` with the rollout flag OMITTED, which does
+build the image. Measured on the runner rather than assumed: 1317 buildkit step lines, 394 apt-get
+lines, and all three of the Dockerfile's ffmpeg sanity-encode markers (libx264, drawtext, libass).
+`--dry-run` keeps it credential-free and fork-safe; nothing contacts the account and nothing is
+pushed.
+
+**The build is ASSERTED, not assumed.** A second step fails the job unless the log carries real
+buildkit evidence. The entire premise of this gate is that a sibling passes by skipping the build, so
+a future wrangler that stops building during `--dry-run` would silently turn this one into the same
+decoration. Nothing in an exit code distinguishes "built it" from "skipped it", so the job is not
+allowed to rely on one.
+
+Path-filtered, and NARROWER than `container-pr-build.yml` on purpose: this asks whether the deploy
+shape still assembles, which moves when the wrangler config or the Dockerfile wrangler is pointed at
+moves -- not when a pin changes in `requirements.txt`, which `container-pr-build.yml` already owns.
+The Dockerfile set is READ from the `[[containers]]` image lines rather than hand-listed, and an
+empty parse is a hard failure, so adding a second container cannot leave this gate silently watching
+only the first.
+
+Two jobs (detect, then gate) rather than one that exits 0 when not applicable: a not-applicable run
+must render as SKIPPED, never as a green tick.
+
+Note for anyone reaching for it: `wrangler containers build --push=false` cannot serve as this gate.
+It requires `CLOUDFLARE_API_TOKEN` even when it pushes nothing, and this gate must run on fork PRs
+that have no secrets.
+
+### ci: give the deploy job Docker, because the container image is now a build input (cf#809)
+
+cf#798 added a `[[containers]]` block whose `image` is a local Dockerfile path, and `wrangler
+deploy` builds that image with the Docker CLI before it uploads anything. The `deploy` job ran in
+`container: node:22-alpine`, which has neither the CLI nor a daemon, so the first `v*` tag after
+cf#798 would have failed at "Deploy core worker" -- whatever that tag was cut for, and with the
+module workers already live and the core not.
+
+Nothing could see it. `bundle-gate` passes `--containers-rollout=none`, which is exactly the flag
+that skips the image build, so every gate stayed green and the defect was reachable only by pushing
+a tag. Measured on the same tree, one flag apart: `--dry-run --containers-rollout=none` exits 0 and
+names the container app; `--dry-run` alone exits 1 with *"The Docker CLI is needed to build the
+configured image before deploying (even in dry-run mode)"*.
+
+The job now runs natively on `ubuntu-latest`, which ships Docker, with Node from `setup-node` rather
+than from the image, and it asserts the Docker CLI and daemon are reachable BEFORE it deploys
+anything rather than discovering it midway. `timeout-minutes` goes 15 -> 30 because the ffmpeg image
+build is now part of this job. The four runtime `apk` installs are replaced by presence assertions
+that fail loudly: `envsubst` and `curl` come from the runner image, and a missing one must stop the
+post-deploy gate self-check rather than let it be skipped.
+
+`studio-release.yml` gets `--containers-rollout=none` on its bundle-only dry run, the same flag and
+the same reason as `bundle-gate`. That step wants the JS and the flag does not change a byte of it;
+without it, every tag builds the whole ffmpeg image just to emit a bundle, and a Dockerfile defect
+would block the release of code that does not contain it.
+
+### fix(test): follow core 1.23.0 making a mux transport failure fail loud (cf#810 pin bump)
+
+Surfaced by bumping `@skyphusion-labs/vivijure-core` to `^1.23.0`, which is the point of putting the
+bump in the same change as the code that needs it.
+
+Core 1.23.0 carries *"fix(mux): a transport failure is a failure, not a silent film shipped as
+COMPLETED"* (refs cf#746). `enterMuxPhase` answered `tick.kind === "failed"` by degrading to `done`
+with the silent film, while `enterAssemblePhase` answered the identical condition with
+`phase = "failed"` -- ten lines apart, opposite outcomes, and the mux one was terminal: the job read
+COMPLETED and the audio was never coming. `submitAsync` gives up on the first attempt with no retry,
+so a single transient blip permanently converted a film-with-audio into a silent film reported as
+complete.
+
+The cf test asserting the old degrade is updated to assert the failure. Note its TITLE already said
+"STILL FAILS LOUD (#245/#249)" -- the title was right and the assertion had drifted from it, which is
+why this reads as the test catching up rather than being relaxed. It now matches its assemble sibling
+twenty lines above it.
+
+Both legitimate mux degrades are unchanged and still covered by their own tests: `VIDEO_FINISH_URL`
+unset (the tier is not installed, #519) and `hasAudio:false` (the container ran and reported the bed
+unusable). The rule the two legs now share is degrade when a retry cannot help, fail when it can.
+
+Also in this bump: core brands the recoverable finish-shot states (GHSA-hcr9-8jc2-9q4c), so
+`adoptFinishStepOutput` takes a `RecoverableFinishShot` obtainable only through
+`finishShotRecoverable`. Two fixtures narrow through that guard instead of casting past it -- a cast
+would be the test opting out of the guarantee the brand exists to provide, and would keep passing if
+the guard broke.
+
+### infra(finish): reach video-finish through the container binding, not a hostname (cf#810)
+
+cf#797 specified `VIDEO_FINISH_URL` pointing at a Worker ROUTE on `vivijure-studio`, on the reasoning
+that core's contract would then be untouched. **That premise is false, and it was measured rather
+than argued.** `@skyphusion-labs/vivijure-core` is a LIBRARY that runs inside `vivijure-studio`, and
+its `mediaDoorFetch` was a plain global `fetch(url + path)`, so that config makes the Worker fetch its
+own route. Cloudflare documents that this fails: *"Using global `fetch()` to call another Worker on
+the same zone without service bindings fails"*, and *"On the same zone, the only way for a Worker to
+communicate with another Worker running on a route, or on a `workers.dev` subdomain, is via service
+bindings."* A Custom Domain lifts the limitation for ANOTHER Worker; ours is the same one.
+
+So the door is the BINDING. `src/video-finish-binding.ts` builds a fetcher over the
+`FINISH_CONTAINER` Durable Object namespace, and `studioEnv()` attaches it as
+`MEDIA_DOOR_FETCHERS.VIDEO_FINISH_URL` at the same seam that already attaches `PRESIGNER`. No
+hostname, no DNS, no edge hop, no bearer required, and the container stays unreachable from the
+internet -- the property cf#797 itself called not tradeable. `src/render-frames.ts` moves onto the
+door too; it already called `http://video-finish/frames` through a `FetcherLike`, which is exactly the
+door's shape, so it passes straight through with no adapter.
+
+**REQUIRES core >= 1.23.0, and is INERT below it.** The seam is `MEDIA_DOOR_FETCHERS` on the env core
+receives, keyed by the door's URL var so there is one door vocabulary across the two repos. A core
+below 1.23.0 does not read that field: the door is constructed, ignored, and the public-origin path
+runs unchanged. **Do not downgrade this pin to resolve an unrelated conflict** -- nothing would fail,
+the finish door would simply switch off and films would go back to shipping as per-shot clips.
+
+`VIDEO_FINISH_URL` does not need to be set at all on the bound path, because core's
+`mediaDoorReachable` counts the binding from 1.23.0. If a stale value IS left set, the binding wins,
+so a leftover var cannot quietly push traffic back over the edge mid-rollout.
+
+**`HOSTED_FINISH_POLL_BOXES` is dead on this path by construction, not by configuration.** The
+fan-out existed to spray three fleet replicas and only ever fired on the literal hostname
+`video-finish.skyphusion.org`. A binding has no hostname and exactly one addressable target, so the
+fan-out is never consulted. There is nothing to repoint, and nobody should later "fix" it.
+
+**Per-job addressing, because a poll landing on the wrong instance is not an error -- it is a lie.**
+Job state is per-instance RAM (`JOBS` in `app.py`), so a poll on another instance 404s, and core reads
+a 404 as "job gone": a running job is reported as finished-and-vanished while a container is still
+burning CPU. Same defect class as the GPU door pool in cf#507. The container keeps minting its own
+`uuid4().hex`; the submit response is rewritten to a compound `<routingKey>.<containerJobId>` and the
+poll splits it back. Safe only because core treats the job id as fully opaque, which was checked and
+not assumed. An id with no routing key is answered 404 with nothing dispatched, because guessing an
+instance is worse than admitting the id is unroutable.
+
+This does NOT make a job survive a restart. Container job state is still process memory (cf#784 item
+2 is open), so an eviction still loses a running job; reaching the right box and the job surviving are
+different problems. Core keeps its not-found streak on the bound path for exactly that reason.
+
+Stateless routes (`/finish`, `/inspect`, `/frames`, `/film-titles`, `/subtitle`, `/health`) carry no
+cross-call state and go to a bounded pool of four, rather than one shared instance (which would
+serialise a burst of per-clip `/inspect` calls) or a fresh instance per call (billed per wake).
+
+Host tests speak POST /async/finish + GET /async/status (core 1.21.2).
+Motion default is first RunPod cloud door from the registry, not a compiled-in name.
+
+### fix(planner): audio artifacts serve inline so the player shows duration
+
+`/api/artifact` used Content-Disposition: attachment on every object.
+Chrome's audio control then stayed at 00:00 / 00:00. Image, video, and
+audio now serve inline. Other types stay attachment.
+
+### fix(render): do not send a project the bundle does not belong to
+
+GPU keyframe / own-gpu films failed when the caller slug (a loadtest
+project, a reused bundle) did not match `bundles/<project>-<hash>.tar.gz`.
+Backend tenancy is correct. Film submit, scatter, from-keyframes, MCP,
+and the GPU keyframe module now derive the project from the key on a
+mismatch so RunPod never sees the pair.
+
+### fix(planner): Add a character on Cast, not after a storyboard
+
+The faces panel stayed `hidden` until a plan existed, so Cast was an
+empty Preflight fold. Name field + Add creates a cast member here.
+
+### fix(planner): pick cast before you write the shots
+
+Cast is first and always open. The planner sends those people with the
+brief. After a storyboard, you return to Cast to bundle.
+
+### fix(cloud-keyframe): retry a flaky FLUX 3030, then fail honest
+
+Same "Your output has been flagged" that cast-image already detects.
+Cloud keyframe now retries the shot up to 3 times (same prompt, then a
+light cinematic rephrase). A persistent 3030 still hard-fails. CSAM
+refusals are not retried. Module 0.1.2.
+
+### fix(cloud-keyframe): plate then edit; stop portrait borrows
+
+Workers AI nano-banana-2 now renders a text-only scene plate, then
+edits faces into that plate. Empty-slot shots stay text-only. Both
+sites that copied a grey portrait onto empty refs are gone. Default
+`film_ref` is `first_keyframe` so shot 1 (the plate) is the film-wide
+scene lock. The plate sidecar is not the delivered character keyframe.
+Module 0.1.8.
+
+### fix(keyframe): RunPod Nano Banana 2, no FLUX
+
+cloud-keyframe stills go through RunPod `google-nano-banana-2-edit`.
+FLUX on Cloudflare 3030'd hosted shots; RunPod is the promoted
+path. Old flux / nano-banana-pro ids clamp to nano-banana-2.
+Scatter FAILED now surfaces the shard error (3030) instead of
+"owning shard dead". Module 0.1.4.
+
+### chore(deps): pin vivijure-core 1.21.0
+
+Published core: image-prep sends MEDIA_FINISH_TOKEN. Door
+origins stay URL vars.
+
+### chore(deps): pin vivijure-core 1.21.1
+
+Scatter uses the planner scenes when the bundle yaml is empty,
+so keyframe no longer dies with `missing: `.
+
+### fix(render): default stills to cloud-keyframe
+
+Omitted `keyframe_backend` now resolves to `cloud-keyframe` (faster
+than GPU SDXL). Explicit pick still wins. `local-gpu` is left alone
+so core can couple it. Module `ui.order` 5 so the registry default
+matches. Cloud-keyframe 0.1.3.
+
+### fix(keyframe): own-gpu stills default; cloud-keyframe off RunPod
+
+Omitted keyframe_backend is GPU `keyframe` again. cloud-keyframe no
+longer calls RunPod Nano Banana 2; it is Cloudflare
+`google/nano-banana-2` only, and it is not the hosted default.
+
+### chore(finish): record 1.33.4 title inject; spend ceiling off
+
+`vivijure-module-film-titles` and `vivijure-module-subtitle` have a
+nonempty `VIDEO_FINISH_URL` on the versions the edge is serving.
+Public `/ready` is off (`workers_dev = false`). One new film id still
+needed; C1 stays closed.
+
+Hosted studio `SPEND_DAILY_CEILING` was 25 (template leftover). Live
+inherit-patched to 0 (full bindings list). The template now ships `"0"`
+so the next tag does not put 25 back.
+
+POST /api/report quarantines named keys. Token mode spend ceiling
+defaults to 25. Artifact GET refuses quarantine/.
+
+First+last frame: each shot animates toward the next still (Flux 3 keyframes[], HH1 images[]).
+Native AV is the default on Seedance / Flux 3 / Veo / Vidu. MuseTalk is opt-in replace-mouth.
+
+### fix(api): tighten report endpoint object handling and add metering
+
+`POST /api/report` key scoping and metering hardened; the door is metered as a
+SAFETY route, so a broken or unbound limiter throttles it but can never deny it.
+
+Tracked under GHSA-wmjq-7647-h45x. Details stay in the advisory.
+
+### fix(planner): persist across Cast; show Lip-sync, Upscale, Blender
+
+Cast hops no longer dump the planner behind a restore banner.
+Render has first-class Lip-sync (on) and Color grade (off).
+Video upscale stays default-on with no knob. Lip-sync always
+sets speech-upscale.enable so MuseTalk gets cleaned dialogue.
+
+### fix(planner): default motion to RunPod Seedance
+
+The picker still offers every door. The default is RunPod `seedance`
+(the speed door). own-gpu is labeled Best look (studio GPU), never
+BYOK. CF i2v stays pickable and is never the implicit default.
+own-gpu module 0.2.1.
+
+### fix(keyframe): expose scene_lock knobs on the SDXL door
+
+`scene_lock` (default on) and `canny_scale` (default 0.70) ride
+`render_overrides.keyframe` so the still stays in the location. Off is
+a debug hatch. Unknown keys on older backend images are ignored. No
+`scene_denoise`. Module 0.3.2.
+
+### fix(motion): Wan and InfiniteTalk take the line file; honesty copy
+
+Pin vivijure-core 1.22.4. Driving-audio doors consume the shot LINE
+wav, not the Cast sample. Hosted talking default is Seedance when a
+sample is kept, else InfiniteTalk when the board has a line, Wan last.
+
+MusicGen player loads the bed as a blob so duration is real (#689).
+Motion cards are filmmaker copy, not Unified Billing (#679). Full door
+blurbs + docs/motion-door-limits.md are the honest limits reference
+(duration, talks?, how the voice stays the same, scatter).
+AV doors stamp has_audio. Voice lock + look lock prepend to every motion
+prompt so Flux/Seedance keep the same speaker. Cast auto-fills the lock
+(name + Aura timbre). Empty lock blocks native-audio motion submit.
+Talking clips never scatter. own-gpu, local-gpu, wan-lora, and HappyHorse
+refs stay on one film too (look / face lock). Only silent generic cloud
+(Kling, Hailuo, Wan without a face) may still split.
+Provider safety filters default OFF (they eat legitimate test films).
+Seedance always sends use_virtual_avatar (stills are synthetic, not photos).
+CF Seedance default is 2.5 (up to 30s). Grok default is Imagine Video 1.5.
+Stills catalog adds Seedream 5 Pro, Grok Imagine Image, Imagen 4, Nano Banana 2.
+New hosted doors: InfiniteTalk, Chatterbox, Kling O1 R2V, CF Wan 2.7, CF Hailuo 2.3, CF Veo 3.1.
+Hosted wrangler no longer binds Kling 2.1 or Wan 2.6. Code stays in modules/.
+
+### fix(doors): purge Workers VPC; doors are operator URL lists
+
+`DOOR_ORIGIN` / `VIDEO_FINISH_SUBMIT` baked production hostnames into
+`modules/_shared/finish-door.ts`. film-titles and subtitle fell back to
+that constant when `VIDEO_FINISH_URL` was unset. Finish modules built
+their pool from those URLs whenever a token was present.
+
+Doors are config now. `FINISH_UPSCALE_DOORS` / `SPEECH_UPSCALE_DOORS` /
+`FINISH_BLENDER_DOORS` are comma-separated HTTPS origins (first URL is
+the legacy door). Empty list is the RunPod path. New poll labels mint as
+`door` / `door-<host>`; in-flight `vpc` / `vpc-<host>` still resolve.
+`VIDEO_FINISH_URL` / `AUDIO_MASTER_URL` / `AUDIO_BEAT_SYNC_URL` have no
+baked fallback. Hosted `[[vpc_services]]` blocks are gone (LOKI_VPC in
+the tail worker stays).
+
+A test fails if `skyphusion.org` / `DOOR_ORIGIN` / `VIDEO_FINISH_SUBMIT`
+return to `finish-door.ts`.
+
+### fix(render): scatter only for own-gpu
+
+Cloud i2v (Seedance, Veo, Flux, Kling, Wan cloud) is one film job.
+Provider rate limits. Parallelism is our GPU pool, not theirs.
+
+### fix(render): show shot count, percent, and ETA on scatter
+
+Scatter polls now carry shots_done / scene_total / progress from
+completed shard rows. The planner prints "3 of 7 shots" and the
+existing ETA math can finally run. Phase words: Animating shots,
+Putting the film together.
+
+### feat(planner): parallelism is a visible render control
+
+The main film submit never sent `shardCount`; only the scatter checkbox
+path did, so the planner silently used the old default of 2. The number
+input is always on the render stage (min 1, label "parallelism (shards)")
+and both submit paths send the same `plannerShardCount` helper
+(omitted or invalid -> `min(shots, 20)`, clamp `[1, shots]`).
+
+### fix(motion): stop sending Cast sample as Wan audio
+
+Wan 2.6 wants the shot line wav on `input.audio`. The Cast sample is a
+different object (Seedance `reference_video`). Sending the sample made
+mouths follow the preview, not this shot's line. Until the line file
+ships, Wan invents speech from the prompt and does not lock the sample
+you kept.
 
 ## v1.33.9 -- 2026-08-20
 
@@ -267,6 +4611,7 @@ safety defaults off. Kling 2.1 and Wan 2.6 stay on disk, unbound.
 Next shot's still is the end frame on Flux 3 and HH1. Seedance / Flux /
 Veo / Vidu keep model audio. MuseTalk is opt-in replace-mouth. Pins
 core 1.21.3.
+
 
 ### fix(planner): pick cast before you write the shots
 
@@ -969,6 +5314,14 @@ test case rather than promised.
 
 ## v1.27.0 -- 2026-08-15
 
+**CORRECTED AFTER PUBLICATION.** At the v1.27.0 tag this section did not mention six changes the
+tag contains: the `PATCH /api/modules/:name/config` strict write (cf#387), the SDXL vs Wan adapter
+readiness fields (cf#383), the Wan LoRA projection on poll / film / event (cf#392), the video-finish
+`POST /overlay` 410 and the demo catalog `text-overlay` seed drop (both cf#24), and the demo chat
+jailbreak refusal (cf#31). Their entries had been hand-appended to the v1.21.0 section, which
+describes a release that does not contain them. They are moved here, after the entries the tag
+carries, and are declared in `scripts/changelog-corrections.txt` (cf#820).
+
 ### fix(modules): project `studio_release` on `GET /api/modules` (cf#287)
 
 The module registry response carried no studio release identifier, so a caller inspecting
@@ -1096,6 +5449,45 @@ The survival check asserts the MODULE_ line DELTA is exactly 1, not merely that
 leaves the strip running to EOF, and the guard passes because the binding really is gone -- driven at
 481 lines -> 240 with MODULE_ 42 -> 4, and no downstream check catches it either, since every
 downstream-guarded key sits above the truncation point.
+
+### Fixed
+
+- **video-finish `POST /overlay` returns 410 (cf#24).** text-overlay module retired; route stayed callable with no first-party caller. Honest retired response; implementation removed.
+- **Demo catalog drops retired `text-overlay` seed (cf#24).** Removed from `0001_demo_seed.sql` for fresh installs; `0004_drop_text_overlay.sql` DELETE for live demo D1. Superseded by subtitle + film-titles (vivijure#769).
+- **Demo chat hard-refuses clear jailbreak / free-LLM proxy shapes before cap spend (cf#31).** Soft off-topic stays prompt-advisory; caps remain the real anti-proxy bound. Docs note in `docs/demo-studio.md`.
+
+### Fixed: PATCH /api/modules/:name/config no longer returns 200 on a silently discarded body (cf#387)
+
+Unknown and render-scope keys (including the nested `{ config: { ... } }` shape operators often
+guess) now 400 with the dropped key names and the allowed install keys. Empty `{}` stays a no-op.
+Flat install-key bodies are unchanged. Pure clamp helpers still drop at invoke time; only the
+operator write path is strict. Core companion: `droppedInstallKeys` / `clampInstallPatchDetailed`
+(vivijure-core, unreleased).
+
+### fix(cast): distinguish SDXL vs Wan adapter readiness on public cast (cf#383)
+
+`lora_status: "ready"` is shared across two adapter families. A Wan-trained cast with `lora_key`
+null still read ready and could be bound for keyframes with no identity LoRA (silent wrong output).
+
+- Additive API fields on every cast response: `sdxl_lora_ready`, `wan_lora_ready` (key-presence).
+- Legacy `lora_status` retained and documented as shared training-job state only.
+- Cast page badges/messages and lora-preflight prefer the family fields (fallback to keys).
+- Host wrapper `src/cast-public.ts`; core ships the same fields on `toPublicCast` (pin when released).
+
+### feat(wan-lora): surface projection {injected, dropped} on poll / film / event (cf#392)
+
+`projectWanLorasIntoModuleConfig` already returned `{injected, dropped, applied}` but no API, poll
+view, or structured event carried those counts, so phase-1 verification of Wan cast-LoRA injection
+required R2 archaeology. The host now:
+
+- persists `wan_lora_projection: { injected, dropped }` on the film job doc when any slot was
+  injected or cap-dropped;
+- relays it on the planner poll view (`output.wan_lora_projection`), the film summary
+  (`GET/POST /api/render/film`), and the scatter 201 body;
+- emits `film.wan_lora_projection` structured lines (docs/observability.md).
+
+Absence stays absent on non-Wan / no-Wan-cast renders (no fabricated zeros). Host-only; no core pin
+bump.
 
 ## v1.26.0 -- 2026-08-14
 
@@ -1572,62 +5964,14 @@ plan `duration_seconds`.
 - **Docs audit 2026-08-05:** 12 hooks + `image.generate`; core package paths (not host `src/modules/*`); standard module count 21; demo/spend posture honesty; em/en-dash free.
 ### Fixed
 - **local-gpu cost honesty (local#278 dual-panel).** Drop "Free after hardware"; CogVideoX commercial licence may apply. Manifest cost/blurb/limits updated.
-- **video-finish `POST /overlay` returns 410 (cf#24).** text-overlay module retired; route stayed callable with no first-party caller. Honest retired response; implementation removed.
-- **Demo catalog drops retired `text-overlay` seed (cf#24).** Removed from `0001_demo_seed.sql` for fresh installs; `0004_drop_text_overlay.sql` DELETE for live demo D1. Superseded by subtitle + film-titles (vivijure#769).
-- **Demo chat hard-refuses clear jailbreak / free-LLM proxy shapes before cap spend (cf#31).** Soft off-topic stays prompt-advisory; caps remain the real anti-proxy bound. Docs note in `docs/demo-studio.md`.
-### fix(telemetry): detail truncation is visible and validation-sized (cf#320)
-
-`runpod_job_log.detail` used a 160-char silent cut that removed the actionable half of validation
-refusals. Bound raised to 480; cuts end in `...` so a reader knows the string is incomplete.
-`boundDetail` is the single place this happens.
-
-### fix(telemetry): reconcile stuck `submitted` runpod_job_log rows (cf#298)
-
-A terminal write lost on the poll path used to leave the row at `submitted` forever (measured 2/20
-in a clean run). Retry already narrowed the window; this closes the gap for rows still open:
-
-- Shared reconciler in `modules/_shared/runpod-job-log.ts`: list open rows, re-query RunPod, write
-  terminal outcome; past ~25 min with no answer write `unknown` (new outcome; honest vs inventing
-  completed). Best-effort, never gates render.
-- Wired on **keyframe** and **own-gpu** `/poll` only (the two modules that produced the measured
-  stuck rows). Other modules can adopt later.
-- Docs: `docs/runpod-job-log.md`. Tests: status map, dropped terminal write, retention `unknown`.
-
-Hosted module telemetry (RunPod). Dual-panel N/A for vivijure-local studio door.
-
-### Fixed: PATCH /api/modules/:name/config no longer returns 200 on a silently discarded body (cf#387)
-
-Unknown and render-scope keys (including the nested `{ config: { ... } }` shape operators often
-guess) now 400 with the dropped key names and the allowed install keys. Empty `{}` stays a no-op.
-Flat install-key bodies are unchanged. Pure clamp helpers still drop at invoke time; only the
-operator write path is strict. Core companion: `droppedInstallKeys` / `clampInstallPatchDetailed`
-(vivijure-core, unreleased).
-
-### fix(cast): distinguish SDXL vs Wan adapter readiness on public cast (cf#383)
-
-`lora_status: "ready"` is shared across two adapter families. A Wan-trained cast with `lora_key`
-null still read ready and could be bound for keyframes with no identity LoRA (silent wrong output).
-
-- Additive API fields on every cast response: `sdxl_lora_ready`, `wan_lora_ready` (key-presence).
-- Legacy `lora_status` retained and documented as shared training-job state only.
-- Cast page badges/messages and lora-preflight prefer the family fields (fallback to keys).
-- Host wrapper `src/cast-public.ts`; core ships the same fields on `toPublicCast` (pin when released).
-### feat(wan-lora): surface projection {injected, dropped} on poll / film / event (cf#392)
-
-`projectWanLorasIntoModuleConfig` already returned `{injected, dropped, applied}` but no API, poll
-view, or structured event carried those counts, so phase-1 verification of Wan cast-LoRA injection
-required R2 archaeology. The host now:
-
-- persists `wan_lora_projection: { injected, dropped }` on the film job doc when any slot was
-  injected or cap-dropped;
-- relays it on the planner poll view (`output.wan_lora_projection`), the film summary
-  (`GET/POST /api/render/film`), and the scatter 201 body;
-- emits `film.wan_lora_projection` structured lines (docs/observability.md).
-
-Absence stays absent on non-Wan / no-Wan-cast renders (no fabricated zeros). Host-only; no core pin
-bump.
 
 ## v1.20.1 -- 2026-08-05
+
+**CORRECTED AFTER PUBLICATION.** At the v1.20.1 tag this section was a bare heading with no body. The
+body below was written retroactively in 5451215 (2026-08-05, "docs(changelog): expand v1.20.1 entry
+with what actually shipped", #419) from the commits the tag actually contains. It is a truthful
+account of that release and it is NOT the text the tag carries, which is why it is declared here and
+listed in `scripts/changelog-corrections.txt` rather than left as silent drift.
 
 PATCH. Docs, CI, and dependency maintenance on main since v1.20.0. **No product or core pin change** (`@skyphusion-labs/vivijure-core` stays `^1.7.2`; bump hosts only after a deliberate core pin PR). Dual-panel with vivijure-local v1.6.1. Tag-gated Worker deploy.
 

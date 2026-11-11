@@ -2,7 +2,7 @@
 // tokens, and R2 key layout. Unit-tested without bindings.
 //
 // Synthesis runs on RunPod's hosted minimax-speech-02-hd endpoint via the SAME async submit+poll
-// transport as seedance/kling (POST /run -> job id; GET /status/<id> -> COMPLETED + audio url), so a
+// transport as alibaba-wan (POST /run -> job id; GET /status/<id> -> COMPLETED + audio url), so a
 // multi-minute synth never blocks a Worker request and the durable poll (runpodJobGone + grace) survives
 // a recycle (#155, #141). NOT Workers AI / waitUntil.
 
@@ -45,7 +45,7 @@ export interface NarrationConfig {
 }
 
 // Everything /poll needs to finalize a RunPod job, opaque (base64 JSON) and round-tripped from /invoke.
-// Stateless like seedance: no R2 run-state doc -- the audio is written to R2 only on COMPLETED, and the
+// Stateless like alibaba-wan: no R2 run-state doc -- the audio is written to R2 only on COMPLETED, and the
 // token carries the rest. submittedAt (epoch ms) measures the not-found grace window (#141).
 export interface PollState {
   jobId: string;
@@ -57,7 +57,7 @@ export interface PollState {
 }
 
 // How long after submit a RunPod "job not found" is a propagation race vs a real GC. Mirrors the control
-// plane's PHANTOM_GRACE_SECONDS (150s), same as seedance/kling.
+// plane's PHANTOM_GRACE_SECONDS (150s), same as alibaba-wan.
 export const RUNPOD_NOTFOUND_GRACE_MS = 150_000;
 
 function pickEnumNumber(raw: unknown, allowed: readonly number[], fallback: number): number {
@@ -150,7 +150,7 @@ export function extractAudioUrl(output: unknown): string | null {
 }
 
 /** Pure: did RunPod report this job as gone (HTTP 404 / numeric status 404 / "not found" title)? (#141)
- *  Same semantics as seedance: narration writes R2 only on COMPLETED, so a gone job has no artifact. */
+ *  Same semantics as alibaba-wan: narration writes R2 only on COMPLETED, so a gone job has no artifact. */
 export function runpodJobGone(httpStatus: number, body: { status?: unknown; title?: unknown } | null): boolean {
   if (httpStatus === 404) return true;
   if (!body) return false;

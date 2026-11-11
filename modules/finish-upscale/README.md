@@ -38,8 +38,9 @@ Config options (the planner-projected `config_schema`; the core clamps each agai
 
 | Option | Type | Default | What it does |
 | --- | --- | --- | --- |
+| `style` | enum `photoreal` / `anime` | `photoreal` | still look. Fills the model only when you omit `model`. |
 | `scale` | int (`2` or `4`) | `2` | explicit factor. Omit it and the module sends `target_height` from the film delivery (vivijure-upscale v1.1.3 / #109). An explicit scale still wins and goes out as `scale` only. |
-| `model` | enum `realesr-animevideov3` / `RealESRGAN_x4plus` | `realesr-animevideov3` | Real-ESRGAN model. `RealESRGAN_x4plus` (photoreal texture, #585) is an explicit opt-in and currently CUDA-OOMs on long/high-fps clips until the handler gains tiled inference (upscale v0.2.9) |
+| `model` | enum `realesr-animevideov3` / `RealESRGAN_x4plus` | `realesr-animevideov3` | Real-ESRGAN model. An explicit model always wins. `RealESRGAN_x4plus` still CUDA-OOMs on long clips until tiled inference lands. |
 
 To self-host (service `vivijure-module-finish-upscale`, bound into the core as `MODULE_UPSCALE`):
 
@@ -52,7 +53,7 @@ To self-host (service `vivijure-module-finish-upscale`, bound into the core as `
 
 ## Contract
 
-- **Hook**: `finish` (cardinality `chain`). `ui { section: "finish", icon: "expand", order: 20 }`.
+- **Hook**: `finish` (cardinality `chain`). `participation: opt_in`. `ui { section: "finish", icon: "expand", order: 20 }`.
 - **Input** (`FinishInput`): `shot_id`, `clip_key`, `src_fps`, `frames`, `width`, `height` (the
   optional `audio_key` is for an audio-consuming finish module; the upscaler ignores it).
 - **Output** (`FinishOutput`): `shot_id`, `clip_key` (the upscaled clip), `out_fps`, `frames`,

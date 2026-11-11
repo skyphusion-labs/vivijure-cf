@@ -52,7 +52,7 @@ describe("cf#515: the planner fetches /api/modules through the shared memo", () 
 
   it("WAS out of scope, CLOSED by cf#580: the page-chrome fetchers now share the memo", () => {
     // This test used to assert the opposite, and its reason was sound at the time: abuse-link.js,
-    // hook-availability.js and demo-steer.js each ALSO load on pages that do not ship
+    // and hook-availability.js each ALSO load on pages that do not ship
     // planner-registry.js, so none could depend on it without a new shared primitive. cf#580 built
     // that primitive (module-registry.js, loaded on all four pages), which removed the barrier
     // rather than the requirement. Inverted here rather than deleted, so the record shows the
@@ -65,7 +65,7 @@ describe("cf#515: the planner fetches /api/modules through the shared memo", () 
     const anyModulesFetch = (src: string) =>
       /[A-Za-z_$][A-Za-z0-9_$]*\s*\(\s*"\/api\/modules"\s*[,)]/.test(src) ||
       /"\/api\/modules"(?!\/)/.test(src);
-    for (const f of ["abuse-link.js", "hook-availability.js", "demo-steer.js"]) {
+    for (const f of ["abuse-link.js", "hook-availability.js"]) {
       expect(anyModulesFetch(codeLines(readPublic(f))), f + " fetches /api/modules directly").toBe(false);
       expect(codeLines(readPublic(f)), f + " does not read the shared memo").toContain("moduleRegistry.load()");
     }

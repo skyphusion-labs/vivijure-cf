@@ -13,16 +13,18 @@
 // input clip through unchanged, but RECORDED) is preferred over a hard ok:false unless the job cannot
 // be submitted at all.
 
+import { FAILURE_UNREACHABLE, failureFromStatus, withFailure } from "../../_shared/finish-failure";
 import {
-  MODULE_API,
-  type ModuleManifest,
   type InvokeRequest,
   type InvokeResponse,
   type PollRequest,
+  type CancelRequest,
+  type CancelResponse,
   type PollResponse,
   type FinishInput,
   type FinishOutput,
 } from "./contract";
+import { MANIFEST } from "./manifest";
 import {
   coerceConfig, buildRunPodBody, encodePoll, decodePoll, parseBackendOutput, finishedKey,
   passthroughOutput,
@@ -57,42 +59,6 @@ interface Env {
    *  warns rather than reading as a clean run (see modules/_shared/runpod-job-log.ts). */
   TELEMETRY_DB?: D1Database;
 }
-
-// Exported (cf#537) so a test can run conformance against the SHIPPED manifest rather than
-// against a transcribed copy in the test file. finish-lipsync already exported its own.
-export const MANIFEST: ModuleManifest = {
-  name: "finish-blender",
-  version: "0.1.0",
-  api: MODULE_API,
-  hooks: ["finish"],
-  max_invocation_seconds: 900,
-  provides: [
-    { id: "blender-grade", label: "Color grade (Blender compositor)" },
-  ],
-  config_schema: {
-    job_type: { type: "enum", values: ["grade", "composite"], default: "grade", label: "job" },
-    preset: {
-      type: "enum",
-      values: ["neutral", "filmic_warm", "high_contrast", "cool", "soft"],
-      default: "filmic_warm",
-      label: "grade preset",
-    },
-    strength: { type: "float", default: 1, min: 0, max: 2, label: "preset strength" },
-  },
-  // After rife (10), before upscale (20): grade at native resolution.
-  ui: { section: "finish", icon: "palette", order: 18 },
-  // cf#537, and this line IS the ticket. `finish` is a chain hook, so binding this module used to be
-  // the entire enrolment: it ran on every shot of every film and applied a real `filmic_warm` grade
-  // at strength 1.0 to footage nobody asked to grade, while the job reported done / 0 failed /
-  // 0 degraded. Conrad ruled a colour grade is for ANIMATION SHOTS, named per render. `opt_in` means
-  // the core omits this module from the finish chain unless a caller names it in that render's
-  // `select`. Naming it still runs it -- opt_in is "not unless asked", never "not ever".
-  participation: "opt_in",
-  finish_artifacts: {
-    output_key: { kind: "append_suffix", suffix: "_bl" },
-    applied: [{ tag: "blender:{job_type|grade}:{preset|filmic_warm}" }],
-  },
-};
 
 function json(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
@@ -269,7 +235,7 @@ function pollPassthrough(st: PollState, reason: string, detail?: string): PollRe
 async function submit(env: Env, req: InvokeRequest<FinishInput>): Promise<InvokeResponse<FinishOutput>> {
   const input = req.input;
   if (!input?.shot_id || !input?.clip_key) {
-    return { ok: false, error: "finish-blender: input needs shot_id and clip_key" };
+    return { ok: false, error: "finish-blender: input needs shot_id and clip_key", reason: "bad-input" };
   }
 
   // cf#489: our own always-on iron first, and ONLY on bound-ness. RunPod is not consulted, not
@@ -305,7 +271,7 @@ async function submit(env: Env, req: InvokeRequest<FinishInput>): Promise<Invoke
 
   const workersMax = Number(env.RUNPOD_WORKERS_MAX);
   // cf#394: NOT on the proxied route. This reconcile targets the RunPod MANAGEMENT API
-  // (rest.runpod.io/v1), which the plane proxy does not carry, and endpoint capacity on a
+  // (api.runpod.io/v2), which the plane proxy does not carry, and endpoint capacity on a
   // shared pool is an operator property a tenant must neither set nor need. Skipped, not
   // failed: the render is unaffected and the pool is sized by whoever owns it.
   if (!route.proxied && Number.isFinite(workersMax) && workersMax > 0) {
@@ -341,7 +307,7 @@ async function submitVia(
       headers: { "content-type": "application/json" },
       body: JSON.stringify(buildRunPodBody(input, cfg, req.context.project)),
     });
-    if (!r.ok) return passthrough(input, where + "-run-failed", { detail: "HTTP " + r.status });
+    if (!r.ok) return withFailure(passthrough(input, where + "-run-failed", { detail: "HTTP " + r.status }), failureFromStatus(r.status));
     const jobId = ((await r.json()) as { id?: string }).id;
     if (!jobId) return passthrough(input, "no-jobid");
     // cf#279: neither service can enumerate jobs, so an id not recorded at submit is unreachable
@@ -363,7 +329,7 @@ async function submitVia(
       jobId,  // cf#289/#296: neither service can enumerate jobs, so a caller not handed the id at submit can never reach it.
     };
   } catch (e) {
-    return passthrough(input, "exception", { detail: (e as Error).message });
+    return withFailure(passthrough(input, "exception", { detail: (e as Error).message }), FAILURE_UNREACHABLE);
   }
 }
 
@@ -559,6 +525,39 @@ async function poll(env: Env, body: PollRequest): Promise<PollResponse<FinishOut
   };
 }
 
+// Stop the running job this token names (cf#1109). A 200 and a 404 both mean it is not running on our
+// account, so both are ok:true. Anything else, including a plane refusal, is ok:false, so the core logs
+// an orphan rather than assuming it stopped. Failures are data, never thrown.
+async function cancel(env: Env, body: CancelRequest): Promise<CancelResponse> {
+  const st = decodePoll(body.poll);
+  if (!st) return { ok: false, error: "finish-blender: bad poll token" };
+  // The token decides the transport, as in poll: a door job id means nothing to RunPod, and the reverse.
+  let t: Transport;
+  let route: RunpodRoute | null = null;
+  if (tokenTookDoor(st.door)) {
+    const door = resolveDoor(await doorsFor(env), st.door);
+    if (!door) return { ok: false, error: "finish-blender: door " + st.door + " is not bound; cannot cancel job " + st.jobId };
+    const problem = doorProblem(door);
+    if (problem) return { ok: false, error: "finish-blender: " + problem };
+    t = doorTransport(door);
+  } else {
+    const creds = await runpodCreds(env);
+    const credProblem = credentialProblem(creds.route, creds.endpointId);
+    if (credProblem) return { ok: false, error: "finish-blender: " + credProblem };
+    route = creds.route;
+    t = runpodTransport(creds.route, creds.endpointId);
+  }
+  try {
+    const resp = await t.call("/cancel/" + st.jobId, { method: "POST" });
+    const refusal = route ? planeRefusalReason(route, resp) : null;
+    if (refusal) return { ok: false, error: planeRefusalError(MANIFEST.name, refusal) };
+    if (resp.ok || resp.status === 404) return { ok: true };
+    return { ok: false, error: "finish-blender /cancel -> " + resp.status };
+  } catch (e) {
+    return { ok: false, error: "finish-blender cancel failed: " + (e as Error).message };
+  }
+}
+
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     const url = new URL(request.url);
@@ -611,9 +610,17 @@ export default {
     if (request.method === "POST" && url.pathname === "/invoke") {
       let req: InvokeRequest<FinishInput>;
       try { req = await request.json() as InvokeRequest<FinishInput>; }
-      catch { return json({ ok: false, error: "invalid JSON body" } as InvokeResponse); }
-      if (req.hook !== "finish") return json({ ok: false, error: "unsupported hook " + String(req.hook) } as InvokeResponse);
+      catch { return json({ ok: false, error: "invalid JSON body", reason: "bad-input" } as InvokeResponse); }
+      if (req.hook !== "finish") return json({ ok: false, error: "unsupported hook " + String(req.hook), reason: "unsupported" } as InvokeResponse);
       return json(await submit(env, req));
+    }
+
+    if (request.method === "POST" && url.pathname === "/cancel") {
+      let body: CancelRequest;
+      try { body = await request.json() as CancelRequest; }
+      catch { return json({ ok: false, error: "invalid JSON body" } as CancelResponse); }
+      if (!body?.poll || typeof body.poll !== "string") return json({ ok: false, error: "poll token required" } as CancelResponse);
+      return json(await cancel(env, body));
     }
 
     if (request.method === "POST" && url.pathname === "/poll") {

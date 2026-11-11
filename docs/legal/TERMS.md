@@ -5,7 +5,7 @@
 > it does not create an attorney-client relationship. If you are unsure how it applies to you, or you
 > run your own instance, talk to a licensed attorney.
 
-**Effective date:** 2026-06-26
+**Effective date:** 2026-10-19
 
 ---
 
@@ -36,13 +36,10 @@ your own setup govern your instance; you become the operator, not a customer of 
   for Conrad and the crew, for internal use and testing. It is not a public service, there is no
   account anyone creates with us, and we do not host anyone else's content. Skyphusion Labs does not
   host or manage Vivijure instances for other people and will not get into that business.
-- **The public demo** (`demo.vivijure.com`) is Skyphusion Labs (Conrad) running the software as a
-  public, read-only showcase: anyone may browse a seeded catalog and pre-made films, but it renders
-  nothing, has no account or sign-in, and refuses every state-changing request. It is provided
-  AS-IS on the same terms as the software (Sections 7 and 8), the Acceptable Use Policy applies to it
-  (in particular Section 2.4: no attacking, scraping, evading rate limits on, or otherwise abusing an
-  instance), and the showcase films are illustrative in-house work. It is not a hosted service that
-  holds your content.
+- **The public demo** (`demo.vivijure.com`): the custom domain was removed on purpose on
+  2026-10-08. It is not a live site. The deployment was deleted on 2026-10-19 (both Worker scripts,
+  the D1 database, the R2 bucket, the AI Gateway) and no configuration change brings it back.
+  Sections 4 and 7 record the scope of the policy and the warranty while that host was served.
 
 If you deploy Vivijure yourself, you are an operator, not a customer of ours, and these Terms are not
 a service agreement between you and us. The AGPL applies to the code, including its requirement that
@@ -78,8 +75,10 @@ your access, and you will not attempt to bypass the gate or rate limits. Partici
 
 ## 4. Acceptable use
 
-Use of the software, the project, Conrad's instance, and the public demo (`demo.vivijure.com`) is subject to the **Acceptable Use Policy**
-(`ACCEPTABLE-USE.md`), which is incorporated by reference. Violating it, especially the CSAM red line,
+Use of the software, the project, and Conrad's instance is subject to the **Acceptable Use Policy**
+(`ACCEPTABLE-USE.md`), which is incorporated by reference. The public demo host
+(`demo.vivijure.com`) was removed on purpose on 2026-10-08 and is not a live site; while it was
+served, the same policy applied to it. Violating the policy, especially the CSAM red line,
 is a material breach and can end your access to Conrad's instance and your standing in the project
 immediately.
 
@@ -108,39 +107,55 @@ rights. That determination is between you, your facts, and your own legal advice
 
 ## 6. Third-party providers and pass-through terms
 
-Running Vivijure routes work through third-party infrastructure and AI model providers (the Privacy
-Policy lists them: Cloudflare, RunPod, and the AI model providers reached via the Cloudflare AI
-Gateway or, for the i2v and cast modules, the RunPod backend). Whose contract those providers sit
-under depends on which door you came in by, and the two answers are different.
+Running Vivijure routes work through third-party infrastructure (the Privacy Policy lists them:
+Cloudflare, RunPod, and AI model providers reached via Cloudflare (the AI Gateway or Workers AI) or
+via the RunPod backend for several of the i2v modules). The image-generate module is separate. When
+the operator has configured an OpenAI API key and an OpenAI image model is selected, that module
+sends the prompt text only to OpenAI's own image API, under the operator's own OpenAI account.
+Reference images are not forwarded. The Cloudflare AI Gateway is not in that path, so the Gateway's
+logging, retention, spend controls, and Unified Billing do not apply. OpenAI's API data terms apply.
+
+Whose contract those providers sit under depends on which door you came in by, and the two
+answers are different.
 
 ### 6.1 If you self-host (the operator door)
 
-These are YOUR own accounts with those providers, and your use of them is subject to THEIR terms and
-acceptable-use policies, which bind you directly and independently of this document. A provider's
-content rules may restrict what you can generate independently of this document. Skyphusion Labs is
-not a party to those contracts and is not responsible for those providers' acts, outages, or model
-behavior.
+When you self-host, these are YOUR own accounts, and your use of them is subject to the providers'
+terms and acceptable-use policies. Those terms bind you directly and independently of this document.
+Skyphusion Labs is not a party to those contracts and is not responsible for those providers' acts,
+outages, or model behavior. A provider's content rules may restrict what you can generate
+independently of this document, and they can be stricter than the Acceptable Use Policy.
 
-Two of those providers publish use restrictions that are worth reading before you rely on a given
-path, so they are pointed to here rather than left to discovery (texts read 2026-09-26; the
-provider's current text controls, and how it applies to your use is between you and your own legal
-advice):
+Which terms reach you depends on the path a module uses:
 
-- **Black Forest Labs (FLUX models on Cloudflare Workers AI).** Cloudflare's model pages for
-  `@cf/black-forest-labs/*` link their "Terms and License" to BFL's Terms of Service, and
-  Cloudflare's own terms say that by using a partner model you agree to the model licensor's terms.
-  Those terms include, among other things, a restriction on using Output "to train, distill or
-  fine-tune any other AI models" (1.3(n)); require the consent of any real, identifiable individual an Output depicts
-  (1.2(c)); forbid presenting Output as human-made or as a real photograph (1.3(m)); forbid
-  stripping AI content marking (1.3(p)); and incorporate BFL's Usage Policy (no CSAM or NCII, no
-  military, surveillance, law-enforcement or biometric-inference use). This document does not
-  interpret how those terms apply to Cloudflare partner consumption or to any particular downstream
-  use such as cast LoRA training; read them against your own setup. The locally hosted Apache-2.0
-  FLUX.2 Klein 4B path is under its own weight licence instead.
-- **Google (Gemini API: `google/nano-banana-pro` and other Google models via the AI Gateway).** The
-  Gemini API Additional Terms require you to be 18 or older, forbid offering the Services as part of
-  a website, application or service "directed towards or is likely to be accessed by individuals
-  under the age of 18", and forbid using the Services to develop models that compete with them.
+- **Models reached through your Cloudflare account (Workers AI and the AI Gateway).** Your contract
+  is with Cloudflare. Cloudflare's terms treat every model in its catalog as a third-party product.
+  They say that where you have no other agreement with the model's provider, using the model means
+  you agree to comply with that provider's standard terms and acceptable-use policy. You do not need
+  an account with the model provider for its terms to apply to you. Most model pages in
+  Cloudflare's catalog link the terms that apply. Where a page links none, the provider's standard
+  terms still apply, and finding them is on you.
+- **A model reached with your own provider key (the OpenAI image path above).** The contract you
+  made with that provider when you created the key applies.
+- **RunPod.** Your RunPod contract covers the GPU endpoints you run. Some modules call models that
+  RunPod hosts for you. RunPod's terms apply to those calls, and the model's own licence or terms
+  may apply too.
+
+Several providers' terms carry conditions that this document does not itself impose. Look for:
+
+- a minimum age of 18, and a rule against offering the service to people under 18;
+- the consent of any real, identifiable person an output shows;
+- a rule against removing watermarks or provenance marks, and against presenting an output as
+  made by a human or as a real photograph;
+- limits on using outputs to train or build other AI models;
+- a duty to label an output as AI-generated, or to credit the model, when you publish it;
+- a rule against military, surveillance, law-enforcement, or biometric use;
+- a duty to hold the people who use your instance to rules at least as strict as the provider's.
+
+This is a list of what to look for. It is not a summary of any one provider's terms, and not every
+provider's terms carry every item. This document does not interpret a provider's terms or say how
+they apply to a given use. Read the terms for each model you turn on. They change, and the
+provider's current text controls. How it applies to you is between you and your own legal advice.
 
 ### 6.2 If you use a studio Skyphusion Labs hosts for you (the tenant door)
 
@@ -157,13 +172,14 @@ Section 6.1 for anyone who self-hosts.
 
 ## 7. Software is provided AS-IS (warranty disclaimer)
 
-THE SOFTWARE (AND CONRAD'S INSTANCE FOR ANYONE HE ADMITS TO IT, AND THE PUBLIC DEMO AT `demo.vivijure.com`) IS PROVIDED "AS IS" AND "AS
+THE SOFTWARE (AND CONRAD'S INSTANCE FOR ANYONE HE ADMITS TO IT) IS PROVIDED "AS IS" AND "AS
 AVAILABLE," WITHOUT WARRANTIES OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING WITHOUT LIMITATION ANY
 IMPLIED WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE, TITLE, AND NON-INFRINGEMENT.
 We do not warrant that the software will be uninterrupted, error-free, secure, or that any output will
 be accurate, lawful to use, original, or fit for any purpose. You use it at your own risk. This is
 free, best-effort, labor-of-love software; it may change, break, or be discontinued at any time
-without notice.
+without notice. While it was served, the public demo at `demo.vivijure.com` was provided on those
+same terms. The custom domain was removed on purpose on 2026-10-08. It is not a live site.
 
 (This mirrors the "no warranty" stance of the AGPL itself.)
 

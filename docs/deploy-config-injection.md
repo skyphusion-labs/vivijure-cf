@@ -76,6 +76,8 @@ a conditional uncomment of the Workers-for-Platforms block.
 | `${AUTH_MODE}` | the #423 auth-gate mode: `token` (the default, including our prod) or `access` (optional hardening) |
 | `${ACCESS_TEAM_DOMAIN}` | Zero-Trust team hostname (`<team>.cloudflareaccess.com`) -- F2 JWT `iss` check (access mode) |
 | `${ACCESS_AUD}` | the vivijure Access application AUD -- F2 JWT `aud` check (access mode) |
+| `${PANEL_HOME}` | the studio home page (cf#1242): `simple` opens on Make a video; empty keeps the planner home |
+| `${KEYFRAME_PARALLEL}` | keyframe invokes one film starts at once (cf#1249); deploy.sh and the CI render default it to `4`, and empty also means 4 in vivijure-core |
 | `${D1_DATABASE_ID}` | the D1 database UUID |
 | `${SPEND_RATE_LIMITER_NS_ID}` | the rate-limit namespace id |
 | `${R2_S3_ENDPOINT}` | the account-scoped R2 S3 API host (`https://<account-id>.r2.cloudflarestorage.com`), an identifier the render DERIVES from `CLOUDFLARE_ACCOUNT_ID` -- not stored anywhere (#238 follow-up) |
@@ -179,7 +181,7 @@ described in 3a and fails closed at each:
     sh scripts/strip-local-gpu.sh wrangler.toml.example .wrangler.hosted.toml
     mv .wrangler.hosted2.toml .wrangler.hosted.toml
     # 4) envsubst ONLY the listed tokens; any other ${...} in the file is left alone.
-    VARS='$AUTH_MODE $ACCESS_TEAM_DOMAIN $ACCESS_AUD $D1_DATABASE_ID $SPEND_RATE_LIMITER_NS_ID $R2_S3_ENDPOINT $R2_S3_BUCKET $VIDEO_FINISH_URL $IMAGE_PREP_URL $AUDIO_BEAT_SYNC_URL $AUDIO_MIX_URL $AUDIO_MASTER_URL $FINISH_UPSCALE_DOORS $FINISH_BLENDER_DOORS'
+    VARS='$AUTH_MODE $ACCESS_TEAM_DOMAIN $ACCESS_AUD $PANEL_HOME $KEYFRAME_PARALLEL $D1_DATABASE_ID $SPEND_RATE_LIMITER_NS_ID $R2_S3_ENDPOINT $R2_S3_BUCKET $VIDEO_FINISH_URL $IMAGE_PREP_URL $AUDIO_BEAT_SYNC_URL $AUDIO_MIX_URL $AUDIO_MASTER_URL $FINISH_UPSCALE_DOORS $FINISH_BLENDER_DOORS'
     envsubst "$VARS" < .wrangler.hosted.toml > wrangler.toml; rm -f .wrangler.hosted.toml
     # 5) No placeholder may survive OUTSIDE comments (a missing secret leaves a literal ${...}); comment
     #    prose mentioning ${...} is fine. -F keeps '${' literal on every grep (GNU vs busybox differ).
@@ -250,9 +252,8 @@ the workflow half automatically and refuses if a member does not call the shared
 | `deploy/vivijure_deploy.py` (`render_core_toml`) | SELF-HOST installer (python) | allowed | no marker handling at all; see the note below |
 | `.dev-modbound/dev-modbound.sh` | LOCAL dev only | n/a | `wrangler dev --local`, never deploys |
 
-Two configs are NOT renders of this template and must not be reasoned about as though they were:
-`wrangler.demo.toml.example` builds the separate `vivijure-demo` Worker, and `tail/wrangler.toml.example`
-builds `vivijure-tail`.
+One config is NOT a render of this template and must not be reasoned about as though it were:
+`tail/wrangler.toml.example`, which builds `vivijure-tail`.
 
 **The self-host paths are a considered exclusion, not an omission.** The door's own manifest says
 self-host is where it belongs, so an unconditional hosted strip bolted onto `deploy.sh` would remove
@@ -332,27 +333,16 @@ point of writing it down is that six of them had never been counted at all:
 | `ci.yml` MCP render (`wrangler.mcp.toml.example`) | structural: that template carries **0** `MODULE_` lines, so the strip would refuse it at its own floor |
 | `scripts/advance-studio-pin.sh` | renders no config; advances a pin |
 | `scripts/install-module.ts` | renders no config; installs into a live studio over the dispatch namespace |
-| `wrangler.demo.toml.example` + `modules/local-gpu/wrangler.demo.toml.example` | **a named carve-out, see below** |
 
 Until this revision, only the first two were asserted anywhere. The third and fifth now are
 (`tests/local-gpu-strip-cf560.test.ts`), including that the deployer actually READS `EXCLUDE` rather
 than the caller merely setting it.
 
-**The demo studio is a deliberate carve-out, not a violation, and it is OUT OF SCOPE by ruling.**
-`vivijure-demo` is a studio we operate and its template does describe a `MODULE_LOCAL_GPU` binding.
-It is the #631 Phase B click-to-render design: in the committed template the binding is COMMENTED OUT
-and `DEMO_RENDER_ENABLED = "false"`. It is invisible to every cf#560 control by construction (different
-template, no workflow renders it, hand-deployed). Conrad ruled 2026-08-15 that the demo surface is not
-a priority and will be rebuilt, so **do not strip it and do not probe it**. It is recorded here so the
-next reader finds a decision rather than a hole. What is genuinely undetermined is whether the LIVE
-`vivijure-demo` Worker binds it today; `wrangler.demo.toml` is gitignored, so that needs a live
-binding read, not a repo read, and nobody should take one on this ruling.
-
 **Two limits of the automated derivation, stated because a named limit is cheaper than a rediscovery:**
 `tests/local-gpu-strip-cf560.test.ts` reads only `.github/workflows/*.yml`, non-recursively, so a
 hosted render moved into a shell script or a composite action leaves its population; and it selects on
-`wrangler.toml.example`, so a second template (the MCP and demo ones) is structurally unreachable to
-it. Both classes are live in this repo today. The rule above, not that matcher, is the contract.
+`wrangler.toml.example`, so a second template (the MCP one) is structurally unreachable to it. Both
+classes are live in this repo today. The rule above, not that matcher, is the contract.
 
 ### 3e. The deploy gate
 The `deploy` job only runs for a pushed version tag:
@@ -391,7 +381,7 @@ export R2_S3_ENDPOINT="https://${CLOUDFLARE_ACCOUNT_ID}.r2.cloudflarestorage.com
 # media origins (empty = that service is off)
 export VIDEO_FINISH_URL= IMAGE_PREP_URL= AUDIO_BEAT_SYNC_URL= AUDIO_MIX_URL= AUDIO_MASTER_URL=
 export FINISH_UPSCALE_DOORS= FINISH_BLENDER_DOORS=
-VARS='$AUTH_MODE $ACCESS_TEAM_DOMAIN $ACCESS_AUD $D1_DATABASE_ID $SPEND_RATE_LIMITER_NS_ID $R2_S3_ENDPOINT $R2_S3_BUCKET $VIDEO_FINISH_URL $IMAGE_PREP_URL $AUDIO_BEAT_SYNC_URL $AUDIO_MIX_URL $AUDIO_MASTER_URL $FINISH_UPSCALE_DOORS $FINISH_BLENDER_DOORS'
+VARS='$AUTH_MODE $ACCESS_TEAM_DOMAIN $ACCESS_AUD $PANEL_HOME $KEYFRAME_PARALLEL $D1_DATABASE_ID $SPEND_RATE_LIMITER_NS_ID $R2_S3_ENDPOINT $R2_S3_BUCKET $VIDEO_FINISH_URL $IMAGE_PREP_URL $AUDIO_BEAT_SYNC_URL $AUDIO_MIX_URL $AUDIO_MASTER_URL $FINISH_UPSCALE_DOORS $FINISH_BLENDER_DOORS'
 envsubst "$VARS" < wrangler.toml.example > wrangler.toml
 sed -i "s/REPLACE_WITH_VIVIJURE_SECRETS_STORE_ID/<your-store-id>/g" wrangler.toml
 ```

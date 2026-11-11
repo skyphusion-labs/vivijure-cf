@@ -7,9 +7,10 @@
 //
 // The director pass runs on Opus through the AI Gateway when an Opus token is configured, and
 // degrades to the free Workers AI local model otherwise (or when Opus errors). A failure is DATA,
-// never an exception across the wire: a bad request returns { ok:false }, and a soft miss (no model
-// available, or an unparseable reply) degrades to passing the storyboard through unchanged with a
-// note, so the core's chain never breaks on this stage.
+// never an exception across the wire: a bad request returns { ok:false }, and a soft miss on the
+// director pass (no model available, or an unparseable reply) degrades to passing the storyboard
+// through unchanged with a note, so the core's chain never breaks on this stage. The plan and
+// refine modes have no plan to pass through, so a miss there is { ok:false } with the true reason.
 
 import {
   MODULE_API,
@@ -26,15 +27,18 @@ import {
   parsePlanStoryboard,
   scenePrompts,
   type ChatMessage,
-  type Intensity,
-} from "./enhance";
+  type Intensity, capEnhanced, MAX_SHOT_WORDS } from "./enhance";
 import { plannerAiMockEnabled, mockPlannerRaw } from "./mock";
 import {
   pickProvider,
   opusModel,
+  opusTransport,
   callOpus,
   callLocal,
   LOCAL_MODEL,
+  LONG_OUTPUT_MAX_TOKENS,
+  ModelStoppedError,
+  type OpusCallOptions,
   type ProviderEnv,
 } from "./provider";
 
@@ -54,6 +58,8 @@ interface WorkerEnv {
   TENANT_ID?: string;
   TENANT_SLUG?: string;
   ENHANCE_MODEL?: string;
+  // "1" opts in to Opus over the AI binding with no CF_AIG_TOKEN (provider.ts opusTransport).
+  ENHANCE_OPUS_BINDING?: string;
   PLANNER_AI_MOCK?: string;
 }
 
@@ -72,7 +78,7 @@ async function secretValue(s: SecretsStoreSecret | string | undefined): Promise<
 
 const MANIFEST: ModuleManifest = {
   name: "plan-enhance",
-  version: "0.2.1",
+  version: "0.2.2",
   api: MODULE_API,
   hooks: ["plan.enhance"],
   provides: [{ id: "auto-direction", label: "Opus auto-direction" }],
@@ -111,25 +117,33 @@ function json(body: unknown, status = 200): Response {
 }
 
 // Run the director pass, returning the model's raw reply plus a label of the model that produced it
-// (for an honest note). Opus first when configured; on any Opus error, degrade to the free local
-// model. Either provider erroring throws to the caller, which degrades to passthrough.
+// (for an honest note). Opus first when configured; on an Opus error, degrade to the free local
+// model, keeping the Opus reason in the label or the thrown message. A ModelStoppedError does not
+// degrade. Anything thrown is the caller's to report.
 async function direct(
   env: Env,
   messages: ChatMessage[],
   modelId?: string,
+  opts: OpusCallOptions = {},
 ): Promise<{ reply: string | string[] | undefined; model: string }> {
   // A "@cf/..." catalog id names a Workers AI model directly; anything else rides the local default
   // when we degrade off Opus.
   const localModel = modelId?.trim().startsWith("@cf/") ? modelId.trim() : LOCAL_MODEL;
   if (pickProvider(env, modelId) === "opus") {
     try {
-      return { reply: await callOpus(env, messages, modelId), model: opusModel(env, modelId) };
-    } catch {
+      return { reply: await callOpus(env, messages, modelId, opts), model: opusModel(env, modelId) };
+    } catch (e) {
+      if (e instanceof ModelStoppedError) throw e;
       // Opus unavailable -> fall through to the free local model rather than failing the stage.
-      return {
-        reply: await callLocal(env, messages, localModel),
-        model: `${localModel} (opus fell back)`,
-      };
+      const opusReason = (e as Error).message;
+      try {
+        return {
+          reply: await callLocal(env, messages, localModel),
+          model: `${localModel} (opus fell back: ${opusReason})`,
+        };
+      } catch (localError) {
+        throw new Error(`${opusReason}; local fallback failed: ${(localError as Error).message}`);
+      }
     }
   }
   return { reply: await callLocal(env, messages, localModel), model: localModel };
@@ -149,7 +163,7 @@ async function runEnhance(
 ): Promise<InvokeResponse<PlanEnhanceOutput>> {
   const storyboard = req.input?.storyboard;
   if (!storyboard) {
-    return { ok: false, error: "plan.enhance: input.storyboard required" };
+    return { ok: false, error: "plan.enhance: input.storyboard required", reason: "bad-input" };
   }
 
   // vivijure-module/2 planning modes. "enhance" (the default, and this module's original behaviour)
@@ -163,10 +177,16 @@ async function runEnhance(
   const userMessage = typeof req.config?.message === "string" ? req.config.message.trim() : "";
 
   if (mode === "plan" || mode === "refine") {
-    // Malformed I/O fails loud; only a model MISS degrades.
     if (!userMessage) {
-      return { ok: false, error: `plan.enhance: config.message required for mode ${mode}` };
+      return { ok: false, error: `plan.enhance: config.message required for mode ${mode}`, reason: "bad-input" };
     }
+    // cf#1134: a miss here is a real failure. Passing the input through would hand the studio an
+    // empty storyboard to reject (plan) or an unchanged one that reads as a success (refine), and
+    // the reason would be lost either way.
+    const failed = (reason: string): InvokeResponse<PlanEnhanceOutput> => ({
+      ok: false,
+      error: `plan.enhance ${mode} failed: ${reason}`,
+    });
     let reply: string | string[] | undefined;
     let modelLabel: string;
     if (plannerAiMockEnabled(env)) {
@@ -175,15 +195,7 @@ async function runEnhance(
       reply = mockPlannerRaw(userMessage);
       modelLabel = "dev-mock";
       const mocked = parsePlanStoryboard(reply);
-      if (!mocked) {
-        return {
-          ok: true,
-          output: {
-            storyboard,
-            notes: [`${mode} skipped: ${modelLabel} reply was not valid storyboard JSON`],
-          },
-        };
-      }
+      if (!mocked) return failed(`${modelLabel} reply was not valid storyboard JSON`);
       return { ok: true, output: { storyboard: mocked, notes: [`${mode} via ${modelLabel}`] } };
     }
     try {
@@ -191,33 +203,23 @@ async function runEnhance(
         env,
         planMessages(systemMessage, userMessage),
         modelId,
+        // The gateway caches a truncated 200 like any other, and a retry is an identical request,
+        // so reading the cache here would replay the failure.
+        { maxTokens: LONG_OUTPUT_MAX_TOKENS, skipCache: true },
       ));
     } catch (e) {
-      return {
-        ok: true,
-        output: { storyboard, notes: [`${mode} skipped: model error (${(e as Error).message})`] },
-      };
+      return failed((e as Error).message);
     }
-    if (reply == null) {
-      return { ok: true, output: { storyboard, notes: [`${mode} skipped: no model reply`] } };
-    }
+    if (reply == null) return failed(`${modelLabel} returned no reply`);
     const raw = Array.isArray(reply) ? JSON.stringify(reply) : reply;
     const planned = parsePlanStoryboard(raw);
-    if (!planned) {
-      return {
-        ok: true,
-        output: {
-          storyboard,
-          notes: [`${mode} skipped: ${modelLabel} reply was not valid storyboard JSON`],
-        },
-      };
-    }
+    if (!planned) return failed(`${modelLabel} reply was not valid storyboard JSON`);
     return { ok: true, output: { storyboard: planned, notes: [`${mode} via ${modelLabel}`] } };
   }
 
   if (mode === "chat") {
     if (!userMessage) {
-      return { ok: false, error: "plan.enhance: config.message required for chat mode" };
+      return { ok: false, error: "plan.enhance: config.message required for chat mode", reason: "bad-input" };
     }
     if (plannerAiMockEnabled(env)) {
       return { ok: true, output: { storyboard: { scenes: [] }, notes: [mockPlannerRaw(userMessage)] } };
@@ -237,14 +239,16 @@ async function runEnhance(
 
   const prompts = scenePrompts(storyboard);
   if (!prompts) {
-    return { ok: false, error: "plan.enhance: input.storyboard has no scenes" };
+    return { ok: false, error: "plan.enhance: input.storyboard has no scenes", reason: "bad-input" };
   }
   const intensity = (req.config?.intensity as Intensity) || "medium";
 
   let reply: string | string[] | undefined;
   let model: string;
   try {
-    ({ reply, model } = await direct(env, buildMessages(prompts, intensity), modelId));
+    ({ reply, model } = await direct(env, buildMessages(prompts, intensity), modelId, {
+      maxTokens: LONG_OUTPUT_MAX_TOKENS,
+    }));
   } catch (e) {
     // Soft degrade: no model available -> pass the storyboard through unchanged.
     return {
@@ -261,11 +265,14 @@ async function runEnhance(
     };
   }
 
+  const { prompts: capped, kept } = capEnhanced(enhanced, prompts);
+  const notes = [`enhanced ${enhanced.length - kept} shot(s) at ${intensity} intensity via ${model}`];
+  if (kept > 0) notes.push(`kept the original prompt on ${kept} shot(s): the rewrite was over ${MAX_SHOT_WORDS} words`);
   return {
     ok: true,
     output: {
-      storyboard: mergeEnhanced(storyboard, enhanced),
-      notes: [`enhanced ${enhanced.length} shot(s) at ${intensity} intensity via ${model}`],
+      storyboard: mergeEnhanced(storyboard, capped),
+      notes,
     },
   };
 }
@@ -291,6 +298,8 @@ export default {
         ok: true,
         module: MANIFEST.name,
         credentials: { gateway_id: Boolean(gatewayId), cf_aig_token: Boolean(aigToken) },
+        // Which Opus transport a render would use: "token", "binding", or "off" (local model).
+        opus: opusTransport({ AI: env.AI, GATEWAY_ID: gatewayId, CF_AIG_TOKEN: aigToken, ENHANCE_OPUS_BINDING: env.ENHANCE_OPUS_BINDING }) ?? "off",
       });
     }
 
@@ -299,11 +308,11 @@ export default {
       try {
         req = (await request.json()) as InvokeRequest<PlanEnhanceInput>;
       } catch {
-        const bad: InvokeResponse = { ok: false, error: "invalid JSON body" };
+        const bad: InvokeResponse = { ok: false, error: "invalid JSON body", reason: "bad-input" };
         return json(bad);
       }
       if (req.hook !== "plan.enhance") {
-        const bad: InvokeResponse = { ok: false, error: `unsupported hook ${String(req.hook)}` };
+        const bad: InvokeResponse = { ok: false, error: `unsupported hook ${String(req.hook)}`, reason: "unsupported" };
         return json(bad);
       }
       // Resolve the Secrets Store bindings to plain strings, then hand the pure model layer an
@@ -316,6 +325,7 @@ export default {
         TENANT_ID: env.TENANT_ID,
         TENANT_SLUG: env.TENANT_SLUG,
         ENHANCE_MODEL: env.ENHANCE_MODEL,
+        ENHANCE_OPUS_BINDING: env.ENHANCE_OPUS_BINDING,
         PLANNER_AI_MOCK: env.PLANNER_AI_MOCK,
       };
       return json(await runEnhance(provEnv, req));

@@ -1,9 +1,8 @@
 // plan.enhance planning modes (cf#62): the module now serves the studio's three planner entry
 // points (plan / refine / chat) in addition to its original director pass ("enhance").
 //
-// Degrade discipline (#249/#77): a MODEL miss on plan/refine degrades honestly -- ok:true, the input
-// storyboard passed through UNCHANGED, and a note saying what was skipped and why. Never a fake
-// success, never a silent one. Malformed I/O (a missing config.message) fails loud instead.
+// A MODEL miss on plan/refine is a real failure with the true reason (cf#1134): there is no plan to
+// pass through. Malformed I/O (a missing config.message) fails loud too.
 
 import { describe, expect, it } from "vitest";
 import worker from "../modules/plan-enhance/src/index";
@@ -89,36 +88,37 @@ describe("plan.enhance mode routing", () => {
   });
 });
 
-describe("plan.enhance honest degrade", () => {
-  it("degrades to passthrough when the model errors on plan", async () => {
+describe("plan.enhance plan-mode misses are real failures (cf#1134)", () => {
+  it("fails with the reason when the model errors on plan", async () => {
     const r = await invoke({ mode: "plan", message: "go" }, aiEnv(null, { throws: true }));
-    expect(r.ok).toBe(true);
-    if (r.ok) {
-      // input storyboard back UNCHANGED, and the note names the reason
-      expect(r.output.storyboard).toEqual(STORYBOARD);
-      expect(r.output.notes?.[0]).toContain("plan skipped: model error");
-    }
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.error).toBe("plan.enhance plan failed: workers ai down");
   });
 
-  it("degrades to passthrough when the reply is not valid storyboard JSON", async () => {
+  it("fails with the reason when the reply is not valid storyboard JSON", async () => {
     const r = await invoke({ mode: "plan", message: "go" }, aiEnv("I'm afraid I can't do that"));
-    expect(r.ok).toBe(true);
-    if (r.ok) {
-      expect(r.output.storyboard).toEqual(STORYBOARD);
-      expect(r.output.notes?.[0]).toContain("was not valid storyboard JSON");
+    expect(r.ok).toBe(false);
+    if (!r.ok) {
+      expect(r.error).toContain("was not valid storyboard JSON");
+      expect(r.error).not.toContain("afraid"); // cf#223: no model text in an error
     }
   });
 
-  it("degrades when the model returns no reply at all", async () => {
+  it("fails when the model returns no reply at all", async () => {
     const r = await invoke({ mode: "plan", message: "go" }, aiEnv(undefined));
-    expect(r.ok).toBe(true);
-    if (r.ok) expect(r.output.notes?.[0]).toContain("no model reply");
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.error).toContain("returned no reply");
   });
+});
 
-  it("never invents a tag: a degraded plan is never reported as a successful plan", async () => {
-    const r = await invoke({ mode: "plan", message: "go" }, aiEnv(null, { throws: true }));
+describe("plan.enhance director pass keeps its honest degrade", () => {
+  it("passes the storyboard through UNCHANGED with a note when the model errors", async () => {
+    const r = await invoke({}, aiEnv(null, { throws: true }));
     expect(r.ok).toBe(true);
-    if (r.ok) expect(r.output.notes?.some((n) => n.includes("plan via"))).toBe(false);
+    if (r.ok) {
+      expect(r.output.storyboard).toEqual(STORYBOARD);
+      expect(r.output.notes?.[0]).toContain("enhancement skipped: model error");
+    }
   });
 });
 
@@ -176,10 +176,10 @@ describe("plan.enhance dev mock (#411) survived the move into the module", () =>
     if (r.ok) expect((r.output.storyboard as { title?: string }).title).toContain("reject branch");
   });
 
-  it("honours the #mock-badjson sentinel (degrades, does not crash)", async () => {
+  it("honours the #mock-badjson sentinel (fails with the reason, does not crash)", async () => {
     const r = await invoke({ mode: "plan", message: "a film #mock-badjson" }, MOCK);
-    expect(r.ok).toBe(true);
-    if (r.ok) expect(r.output.notes?.[0]).toContain("was not valid storyboard JSON");
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.error).toContain("was not valid storyboard JSON");
   });
 
   it("is OFF by default -- an unset gate does not reach the mock", async () => {

@@ -17,9 +17,8 @@
 //
 // Pairs with the cloud-keyframe module: cloud keyframe -> THIS i2v -> shot clip.
 
+import { withRetryingR2 } from "../../_shared/r2-retry";
 import {
-  MODULE_API,
-  type ModuleManifest,
   type InvokeRequest,
   type InvokeResponse,
   type PollRequest,
@@ -27,6 +26,7 @@ import {
   type MotionBackendInput,
   type MotionBackendOutput,
 } from "./contract";
+import { MANIFEST } from "./manifest";
 import {
   buildWanLoraBody,
   extractVideoUrl,
@@ -42,6 +42,7 @@ import {
 
 import { recordRunpodJob, probeRunpodJobLog, parseRunpodErrorType, runpodWalkedPastOutcome } from "../../_shared/runpod-job-log";
 import { planeRefusalReason, planeRefusalError, runpodRoute, runpodEndpointUrl, runpodHeaders, runpodCredentialName, type RunpodRoute } from "../../_shared/runpod-route";
+import { runpodSubmitFailure } from "../../_shared/runpod-submit-error";
 
 interface Env {
   RUNPOD_API_KEY: SecretsStoreSecret;
@@ -59,45 +60,6 @@ interface Env {
 
 const ENDPOINT_ID = "wan-2-2-t2v-720-lora";
 const OUT_FPS = 24;
-
-const MANIFEST: ModuleManifest = {
-  name: "alibaba-wan-lora",
-  version: "0.1.1",
-  api: MODULE_API,
-  hooks: ["motion.backend"],
-  provides: [{ id: "i2v-cloud-lora", label: "Silent, your trained face (Wan)" }],
-  config_schema: {
-    // The LoRA lists are the whole point: control over cloud i2v. The contract's ConfigField has no
-    // array type, so each list rides as a JSON STRING of [{ path, scale }] the module parses (path =
-    // URL/path to the LoRA file; HuggingFace URLs supported). Default "[]" = plain Wan 2.2 i2v.
-    high_noise_loras: { type: "string", default: "[]", label: "high-noise LoRAs -- JSON [{path,scale}]" },
-    low_noise_loras: { type: "string", default: "[]", label: "low-noise LoRAs -- JSON [{path,scale}]" },
-    seed: { type: "int", default: -1, min: -1, label: "seed (-1 = random)" },
-    enable_safety_checker: { type: "bool", default: false, label: "provider safety filter (off: we already refuse CSAM)" },
-  },
-  ui: {
-    section: "motion",
-    order: 75,
-    locality: "cloud",
-    cost: "Pay per render",
-    blurb: "Detailed motion with your trained face. Silent.",
-    limits: [
-      "5 or 8 second clips",
-      "Silent, with your trained face",
-      "One film, no scatter (face lock)",
-      "Speaking is the Cast voice, muxed; a synced mouth is the InfiniteTalk door",
-    ],
-  },
-  usage: {
-    native_audio: false,
-    voice: "cast_tts",
-    scatter_native_audio: false,
-    min_seconds: 5,
-    max_seconds: 8,
-    duration_steps: [5, 8],
-    seed: true,
-  },
-};
 
 function json(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
@@ -134,10 +96,10 @@ async function cancelRunpodJobBestEffort(route: RunpodRoute, jobId: string): Pro
 async function submit(env: Env, req: InvokeRequest<MotionBackendInput>): Promise<InvokeResponse<MotionBackendOutput>> {
   const input = req.input;
   if (!input || !input.keyframe_url || !input.prompt || !input.shot_id) {
-    return { ok: false, error: "motion.backend: input needs shot_id, keyframe_url, and prompt" };
+    return { ok: false, error: "motion.backend: input needs shot_id, keyframe_url, and prompt", reason: "bad-input" };
   }
   const route = await runpodRoute(env);
-  if (!route.credential) return { ok: false, error: "alibaba-wan-lora: " + runpodCredentialName(route) + " not configured" };
+  if (!route.credential) return { ok: false, error: "alibaba-wan-lora: " + runpodCredentialName(route) + " not configured", reason: "not-configured" };
   // Non-silent duration snap (#279): the endpoint only accepts ALLOWED_DURATIONS, so record when a
   // requested per-shot duration is snapped -- the user's timing change must be observable, never silent.
   const requestedDuration = Math.round(Number(input.seconds) || 5);
@@ -154,7 +116,7 @@ async function submit(env: Env, req: InvokeRequest<MotionBackendInput>): Promise
       headers: { ...auth(route), "content-type": "application/json" },
       body: JSON.stringify(buildWanLoraBody(input, req.config)),
     });
-    if (!r.ok) return { ok: false, error: "alibaba-wan-lora /run -> " + r.status };
+    if (!r.ok) return await runpodSubmitFailure("alibaba-wan-lora", r);
     const jobId = ((await r.json()) as { id?: string }).id;
     if (!jobId) return { ok: false, error: "alibaba-wan-lora /run returned no job id" };
     const submittedAt = Date.now();
@@ -269,6 +231,7 @@ async function poll(env: Env, body: PollRequest): Promise<PollResponse<MotionBac
 
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
+    withRetryingR2(env);
     const url = new URL(request.url);
     if (request.method === "GET" && url.pathname === "/module.json") return json(MANIFEST);
 
@@ -300,10 +263,10 @@ export default {
       try {
         req = (await request.json()) as InvokeRequest<MotionBackendInput>;
       } catch {
-        return json({ ok: false, error: "invalid JSON body" } as InvokeResponse);
+        return json({ ok: false, error: "invalid JSON body", reason: "bad-input" } as InvokeResponse);
       }
       if (req.hook !== "motion.backend") {
-        return json({ ok: false, error: "unsupported hook " + String(req.hook) } as InvokeResponse);
+        return json({ ok: false, error: "unsupported hook " + String(req.hook), reason: "unsupported" } as InvokeResponse);
       }
       return json(await submit(env, req));
     }
@@ -324,5 +287,3 @@ export default {
     return json({ ok: false, error: "not found" }, 404);
   },
 };
-
-export { MANIFEST };

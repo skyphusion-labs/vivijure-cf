@@ -1,10 +1,24 @@
 // InfiniteTalk on RunPod: portrait + our audio. Speaker is Cast TTS, not invented.
 
 import type { MotionBackendInput } from "./contract";
+import { mp4VideoTiming } from "../../_shared/mp4-timing";
+
+/** cf#931: the shortest and longest shot this door declares, in seconds.
+ *
+ *  MAX_SECONDS IS OUR CAP, NOT THE VENDOR'S. RunPod's InfiniteTalk endpoint takes no duration parameter
+ *  (inputs: prompt, image, audio, size, enable_safety_checker) and publishes no length ceiling: checked
+ *  2026-11-09 against https://docs.runpod.io/public-endpoints/models/infinitetalk (last modified
+ *  2026-10-26) and the public-endpoint catalog entry, which carries only "480p: $0.25". Clip length
+ *  follows the audio we send. 15 is a conservative declaration kept until the longest audio the endpoint
+ *  renders IN FULL is measured. That probe is a paid render per length tried (cf#931 prices it), and it
+ *  must compare the delivered clip duration against the supplied audio, because a silent truncation
+ *  would look like success. Raise this only with that measurement cited here. */
+export const MIN_SECONDS = 2;
+export const MAX_SECONDS = 15;
 
 export function clampDuration(seconds: number): number {
   const n = Math.round(Number(seconds) || 5);
-  return Math.max(2, Math.min(15, n));
+  return Math.max(MIN_SECONDS, Math.min(MAX_SECONDS, n));
 }
 
 function audioUrl(input: MotionBackendInput, cfg: Record<string, unknown>): string {
@@ -16,14 +30,18 @@ function audioUrl(input: MotionBackendInput, cfg: Record<string, unknown>): stri
 export function buildKlingBody(input: MotionBackendInput, cfg: Record<string, unknown>): {
   input: Record<string, unknown>;
 } {
-  const size = cfg.size === "720p" ? "720p" : "480p";
   return {
     input: {
       prompt: input.prompt,
       image: input.keyframe_url,
       audio: audioUrl(input, cfg),
-      size,
-      enable_safety_checker: cfg.enable_safety_checker === true,
+      // cf#935: CONSTANT, not a knob. The provider ignores this field: 480p and 720p both deliver
+      // 832x464. Measured three ways, including a direct submit that bypassed this worker entirely
+      // (RunPod job d159bf34-3f84-41fa-a472-1d3875178638-u1, size 720p requested -> 832x464 returned).
+      // RunPod DOCUMENTS the parameter as required with both values valid, and prices 720p at double,
+      // so do not re-add the enum from their docs: the docs are wrong and the knob costs the user money.
+      size: "480p",
+      enable_safety_checker: true,
     },
   };
 }
@@ -178,9 +196,20 @@ export function mp4DurationSeconds(bytes: Uint8Array): number | null {
 }
 
 /** Poll frames = delivered mp4 duration * fps when inspectable, else round(wavSeconds * fps). */
-export function framesFromDelivered(bytes: ArrayBuffer, wavSeconds: number, fps: number): number {
-  const d = mp4DurationSeconds(new Uint8Array(bytes));
-  if (d && d > 0) return Math.max(1, Math.round(d * fps));
-  const fallback = Number.isFinite(wavSeconds) && wavSeconds > 0 ? wavSeconds : 0;
-  return Math.max(1, Math.round(fallback * fps));
+/** cf#923: the DELIVERED clip's rate and frame count, measured from the container.
+ *
+ *  Replaces `fps: OUT_FPS` plus a frames value computed from the request. A value computed from the
+ *  request is not a measurement no matter what the field is named: this door reported 24fps against a
+ *  delivered 25, and its sibling reported 24 against 30.
+ *
+ *  UNMEASURED IS REPORTED AS ZERO, never as a constant. Core's contract requires numeric fps/frames
+ *  (conformance checks `isNum`, not `> 0`) and core only records a delivery when
+ *  `output.fps > 0 && output.frames > 0` (render-orchestrator). So 0 is the contract's existing
+ *  not-available channel: it passes conformance, the clip is still delivered, and nothing downstream
+ *  records a rate nobody measured. */
+export function deliveredTiming(bytes: ArrayBuffer): { fps: number; frames: number } {
+  const t = mp4VideoTiming(new Uint8Array(bytes));
+  if (!t || !(t.frames > 0)) return { fps: 0, frames: 0 };
+  const fps = t.fps != null && t.fps > 0 ? Math.round(t.fps * 1000) / 1000 : 0;
+  return { fps, frames: t.frames };
 }

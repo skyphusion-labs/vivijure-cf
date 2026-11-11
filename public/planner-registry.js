@@ -15,7 +15,7 @@
 
   // Resolved at CALL time, and THROWS when the shared registry is absent rather than falling back to
   // an own fetch. A silent fallback would rebuild the second memo and read as working, which is
-  // exactly the failure mode this change is about. Same discipline as pollPolicy() in demo-steer.js.
+  // exactly the failure mode this change is about. Same discipline as the shared pollPolicy().
   // The lookup order covers a browser page, a new Function() harness that passes a window scope, and
   // a plain-Node eval.
   function registry() {
@@ -69,16 +69,18 @@
     return filter ? mods.filter(filter) : mods;
   }
 
+  // vivijure-cf#878: a score module is chosen by the kind it DECLARES (score_kind), never by which config
+  // keys it happens to have. A module that declares no kind is not offered.
   function musicScoreModules() {
-    return hookModules("score", (m) => m.config_schema && m.config_schema.prompt);
+    return hookModules("score", (m) => m.score_kind === "music");
   }
 
   function narrationScoreModules() {
-    return hookModules("score", (m) => m.config_schema && m.config_schema.text);
+    return hookModules("score", (m) => m.score_kind === "narration");
   }
 
   function beatSyncScoreModules() {
-    return hookModules("score", (m) => m.config_schema && m.config_schema.clip_seconds);
+    return hookModules("score", (m) => m.score_kind === "beat");
   }
 
   function motionBackendModules() {

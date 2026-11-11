@@ -133,7 +133,7 @@ describe("audio-master: manifest + output conformance", () => {
 
 describe("audio-master: passthroughOutput (degrade observability #77)", () => {
   it("carries the INPUT bed through unchanged -- never a new or dropped key", () => {
-    const o = passthroughOutput(SAMPLE_INPUT, "container-failed");
+    const o = passthroughOutput(SAMPLE_INPUT, "container-refused");
     expect(o.audio_key).toBe(SAMPLE_INPUT.audio_key);
   });
   it("a real degrade tags applied with passthrough:<reason> AND sets degraded", () => {
@@ -142,12 +142,12 @@ describe("audio-master: passthroughOutput (degrade observability #77)", () => {
     expect(o.degraded).toBe("no-vpc-binding");
   });
   it("detail enriches the degraded note but not the terse applied tag", () => {
-    const o = passthroughOutput(SAMPLE_INPUT, "container-failed", { detail: "HTTP 500" });
-    expect(o.applied).toEqual(["passthrough:container-failed"]);
-    expect(o.degraded).toBe("container-failed: HTTP 500");
+    const o = passthroughOutput(SAMPLE_INPUT, "container-http-error", { detail: "HTTP 500" });
+    expect(o.applied).toEqual(["passthrough:container-http-error"]);
+    expect(o.degraded).toBe("container-http-error: HTTP 500");
   });
   it("covers every degrade reason the worker emits", () => {
-    for (const reason of ["no-audio-master-url", "container-unreachable", "container-failed", "container-bad-response", "no-output-key"]) {
+    for (const reason of ["no-audio-master-url", "container-unreachable", "container-http-error", "container-refused", "container-bad-response", "no-output-key"]) {
       const o = passthroughOutput(SAMPLE_INPUT, reason);
       expect(o.applied[0]).toBe(`passthrough:${reason}`);
       expect(o.degraded).toBeTruthy();
@@ -205,6 +205,33 @@ describe("audio-master: wall-clock attribution (cf#396)", () => {
     const earned = json.output.applied.filter((t) => !t.startsWith(VPC_ELAPSED_APPLIED_PREFIX));
     expect(earned.length).toBeGreaterThan(0);
     expect(earned).toEqual(masterOutputFromResult(SAMPLE_INPUT, { ok: true, key: "renders/neon/audio/bed_mastered.wav", bytes: 12, lufs: -14 }).applied);
+  });
+
+  it("cf#1327: each container outcome has its own tag and verdict, and the bed survives", async () => {
+    type Out = { audio_key: string; applied: string[]; degraded?: string; failure?: { kind: string; code: string; detail?: string } };
+    const run = async (over: { body?: unknown; status?: number }) => {
+      const { env } = vpcEnv(over);
+      const json = (await (await worker.fetch(invoke(SAMPLE_INPUT), env)).json()) as { ok: boolean; output: Out };
+      expect(json.ok).toBe(true);
+      expect(json.output.audio_key).toBe(SAMPLE_INPUT.audio_key); // the input bed carries through
+      return json.output;
+    };
+    const http4 = await run({ status: 400, body: { ok: false, error: "bad spec" } });
+    expect(http4.applied).toContain("passthrough:container-http-error");
+    expect(http4.degraded).toBe("container-http-error: HTTP 400");
+    expect(http4.failure).toEqual({ kind: "permanent", code: "refused", detail: "HTTP 400" });
+    const http5 = await run({ status: 503, body: { ok: false } });
+    expect(http5.failure).toEqual({ kind: "transient", code: "server_error", detail: "HTTP 503" });
+    const refused = await run({ body: { ok: false, error: "loudnorm refused" } });
+    expect(refused.applied).toContain("passthrough:container-refused");
+    expect(refused.degraded).toBe("container-refused");
+    expect(refused.failure).toEqual({ kind: "permanent", code: "refused" });
+    for (const body of [false, 5, "ok"]) { // JSON, not an object (the helper reads null as its default body)
+      const shape = await run({ body });
+      expect(shape.applied, JSON.stringify(body)).toContain("passthrough:container-bad-response");
+      expect(shape.failure, JSON.stringify(body)).toEqual({ kind: "transient", code: "bad_response" });
+    }
+    for (const o of [http4, http5, refused]) expect(o.applied).not.toContain("passthrough:container-failed");
   });
 
   it("claims NO elapsed tag on a degrade -- the call never completed, so there is nothing to attribute", async () => {

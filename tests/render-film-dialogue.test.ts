@@ -244,6 +244,12 @@ describe("POST /api/render/film resolves cast voices for explicit dialogue_lines
     expect(res.status).toBe(400);
     const body = await res.json() as { error?: string };
     expect(body.error).toMatch(/spoken lines/i);
+    // cf#919: the remedy must be projected from the modules bound in THIS env, not a literal. The
+    // only talking door bound above is `seedance`; infinitetalk and vidu-q3 are not bound at all,
+    // and infinitetalk cannot be installed on a hosted tenant. A hardcoded list fails these two.
+    expect(body.error).toMatch(/seedance/i);
+    expect(body.error).not.toMatch(/infinitetalk/i);
+    expect(body.error).not.toMatch(/vidu/i);
     expect(h.captured).toBeNull();
   });
 });
@@ -357,7 +363,9 @@ describe("POST /api/render/film forwards pretrained_loras + qualityTier (#762)",
     expect((h.captured as CapturedArgs | null)?.quality_tier).toBeUndefined();
   });
 
-  it("an invalid qualityTier coerces to undefined (no bad tier leaks onto the job/row)", async () => {
+  // cf#896: an invalid tier used to coerce to undefined and run at final. It is now refused before
+  // any work, so no bad tier can reach the job or the row, and no render starts at a tier not asked for.
+  it("an invalid qualityTier is refused, and nothing starts", async () => {
     h.captured = null;
     const res = await worker.fetch(
       postFilm({
@@ -368,7 +376,8 @@ describe("POST /api/render/film forwards pretrained_loras + qualityTier (#762)",
       env,
       ctx,
     );
-    expect(res.status).toBe(201);
-    expect((h.captured as CapturedArgs | null)?.quality_tier).toBeUndefined();
+    expect(res.status).toBe(400);
+    expect(((await res.json()) as { error?: string }).error).toContain("qualityTier must be one of");
+    expect(h.captured).toBeNull();
   });
 });

@@ -31,13 +31,6 @@
           </button>
           <div class="account-prefs" role="group" aria-label="Preferences">
             <div class="account-prefs-head">Preferences</div>
-            <label class="account-pref">
-              <input type="checkbox" id="pref-email-notifications" />
-              <span class="account-pref-text">
-                <span class="account-name">Email me when a render finishes</span>
-                <span class="account-sub" id="pref-email-status">No emails when renders finish</span>
-              </span>
-            </label>
           </div>
         </div>
       </div>
@@ -68,13 +61,9 @@
 
     <script src="auth-token.js"></script>
     <script src="module-registry.js"></script>
-    <script src="readonly-gate.js"></script>
     <script src="abuse-link-checks.js"></script>
     <script src="abuse-link.js"></script>
-    <!-- cf#515: the shared poll jitter/backoff policy. MUST load before any
-         script that arms a poll; on this page that is demo-steer.js. -->
     <script src="poll-schedule.js"></script>
-    <script src="demo-steer.js"></script>
     <script src="studio-chrome.js"></script>
     <script src="topbar.js"></script>
     <!-- cf#234: the module-host page is the studio surface whose ENTIRE job is to say what this

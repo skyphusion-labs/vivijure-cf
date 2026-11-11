@@ -58,6 +58,7 @@
 // Scope note: this describes the FILM path. A clips-only render is unaffected by construction, and
 // the scatter path degrades through its own gates in the same family.
 
+import { videoFinishDoorOf, type VideoFinishDoorHost } from "./video-finish-binding";
 import type { Env } from "./env";
 
 /**
@@ -84,8 +85,7 @@ import type { Env } from "./env";
  * binding+channel 0, channel-only 0, neither 1, and that one is the `rollins-e2e` testbed, whose
  * bindings were refreshed and whose studio bytes move separately. The estate becomes honest through
  * that refresh and that bytes move, NOT through this constant. This swap ships as correctness for
- * future tenants and for after the bytes move; and since nothing sets `VIDEO_FINISH_TIER_STATE`
- * yet, the state is not reachable in production at all until the plane decides who writes it.
+ * future tenants and for after the bytes move.
  *
  * A FOURTH COMBINATION, which that census did not enumerate and which cp#112 creates (Strummer,
  * evidence on control-plane#112). Binding and channel do NOT travel together: a bindings refresh
@@ -159,8 +159,9 @@ export const VIDEO_FINISH_UNAVAILABLE_REASON =
  * reader is a silent no-op, which is why the plane route REFUSES rather than writes when the target
  * studio does not serve `capability:video-finish`. And a studio that HAS the tier bound cannot
  * display these words at all, by construction: `videoFinishState` checks the binding first, so an
- * observation beats a label. Do not read the presence of this constant as evidence any particular
- * studio is displaying it.
+ * observation beats a label. A typed `VIDEO_FINISH_URL` is NOT that observation (cf#871): it is a
+ * string, so the explicit declaration beats it. Do not read the presence of this constant as
+ * evidence any particular studio is displaying it.
  *
  * The swap is ONE constant on purpose. Everything deciding WHEN a studio is in this state lives in
  * the plane, so this file only has to be right about what to say.
@@ -172,15 +173,69 @@ export const VIDEO_FINISH_UNPROVISIONABLE_REASON =
 /**
  * Optional operator/plane signal naming which absent-state this studio is in. Absent -> the
  * conservative default `provisionable`, which is also what lane A (the cp#112 re-upload path) makes
- * true for every studio. NOTHING sets this var today: the plane-side half (who sets it, and when) is
- * a control-plane decision, not a panel one.
+ * true for every studio. The plane writes it; see the writer note above.
  */
-type VideoFinishEnv = Pick<Env, "VIDEO_FINISH_URL" | "VIDEO_FINISH_TIER_STATE">;
+type VideoFinishEnv = Pick<Env, "VIDEO_FINISH_URL" | "VIDEO_FINISH_TIER_STATE"> &
+  Partial<VideoFinishDoorHost>;
 
-/** Which state this studio is in. A public URL (or the default Traefik origin) is available. */
+/** The VIDEO_FINISH_URL value when it can name an origin, else undefined (cf#964).
+ *
+ *  A non-empty string is not an origin. A rendered config can keep a literal `${VIDEO_FINISH_URL}`
+ *  (the unsubstituted placeholder), and a typed value can be a bare word or a scheme with no host.
+ *  Each of those used to report the tier "available" and send the film down a path that fails after
+ *  the clips are paid for. The value counts only when it parses as an absolute http or https URL with a
+ *  host and no placeholder left in it. This is a shape check, not a reachability probe: a well formed
+ *  URL to a dead host still counts, and the bound door (checked first) is the stronger observation.
+ *
+ *  studioEnv applies the same rule to the env it hands core, so the panel and the film path agree on
+ *  whether the tier is there. */
+export function usableVideoFinishUrl(value: unknown): string | undefined {
+  if (typeof value !== "string") return undefined;
+  const trimmed = value.trim();
+  if (!trimmed || trimmed.includes("${")) return undefined;
+  let url: URL;
+  try {
+    url = new URL(trimmed);
+  } catch {
+    return undefined;
+  }
+  if (url.protocol !== "https:" && url.protocol !== "http:") return undefined;
+  if (!url.hostname) return undefined;
+  return trimmed;
+}
+
+/** Which state this studio is in, read in this order: a bound container is available; then an
+ *  explicit `VIDEO_FINISH_TIER_STATE=unprovisionable` wins; then a usable public URL is available.
+ *
+ *  cf#810: THE BINDING IS CHECKED FIRST, and this is not a preference, it is the file's own rule
+ *  applied to a case that did not exist when it was written. The header above says a studio that has
+ *  the tier bound "cannot display these words at all, by construction ... an observation beats a
+ *  label". Until cf#810 the only observation available was a URL. Now there is a real Durable Object
+ *  binding, and it is the STRONGER observation: a URL is a string someone typed, the door is a
+ *  container this deploy can actually reach.
+ *
+ *  This is load-bearing for the repoint, not a tidy-up. The end state of cf#810 UNSETS
+ *  VIDEO_FINISH_URL, because the door replaces it. Without this line that unset would flip a working
+ *  film tier to "unavailable" and the panel would grey out capability that works -- the exact
+ *  failure this file exists to prevent, arriving through the change meant to fix the tier.
+ *
+ *  cf#871: THE DECLARATION IS READ BEFORE THE URL. A URL is a string someone typed, so it is a
+ *  label too, and of the two labels the explicit one wins. Before this, a non-empty URL returned
+ *  "available" first, so `unprovisionable` was read only when the URL was empty: a studio whose
+ *  tier was declared dead kept offering controls the tier could not serve. The door stays first,
+ *  because the door is the observation. studioEnv applies the same order to the env it hands core
+ *  (`declaredUnprovisionable`), so the panel and the film path agree. */
 export function videoFinishState(env: VideoFinishEnv): VideoFinishState {
-  if (typeof env.VIDEO_FINISH_URL === "string" && env.VIDEO_FINISH_URL.trim()) return "available";
-  return env.VIDEO_FINISH_TIER_STATE === "unprovisionable" ? "unprovisionable" : "provisionable";
+  if (videoFinishDoorOf(env)) return "available";
+  if (declaredUnprovisionable(env)) return "unprovisionable";
+  if (usableVideoFinishUrl(env.VIDEO_FINISH_URL)) return "available";
+  return "provisionable";
+}
+
+/** True when the env declares the tier unprovisionable. Exact value only: anything else, including
+ *  a typo, is not a declaration and falls back to the default (cf#240 lane D). */
+export function declaredUnprovisionable(env: Pick<VideoFinishEnv, "VIDEO_FINISH_TIER_STATE">): boolean {
+  return env.VIDEO_FINISH_TIER_STATE === "unprovisionable";
 }
 
 /** The sentence for a state. `available` has no sentence: the host reports nothing at all. */

@@ -13,21 +13,26 @@ output matches what the pod used to produce, but runs on a cheap CPU container
 instead of GPU-billed seconds. See docs/video-finish-container.md.
 """
 import asyncio
-import base64
 import json as _json
 import logging
 import math
 import os
+import functools
+import hashlib
 import shutil
 import subprocess
 import tempfile
 import time
 import uuid
 
+from urllib.parse import urlsplit
+
 from aiohttp import ClientSession, ClientTimeout, web
 
-from bearer import bearer_middleware
-from ffmpeg_run import FFPROBE_TIMEOUT, FfmpegTimeout, _run
+from bearer import bearer_middleware, configured_token, require_bearer_config
+from ffmpeg_run import FFMPEG_TIMEOUT, FFPROBE_TIMEOUT, FfmpegTimeout, _run
+from concat_guard import ConcatDropError, assert_no_dropped_parts
+import frame_text
 from url_guard import guarded_get, guarded_put, safe_log_value, validate_fetch_url
 import inspect_core
 import photometric_gate
@@ -36,15 +41,92 @@ PORT = int(os.environ.get("PORT", "8000"))
 DOWNLOAD_TIMEOUT_S = 120
 UPLOAD_TIMEOUT_S = 120
 MAX_CLIP_BYTES = 256 * 1024 * 1024   # 256 MB per clip
-MAX_AUDIO_BYTES = 256 * 1024 * 1024   # 256 MB: match the per-clip bound. A lossless film-length bed
-# shares a clip's size envelope, and the bed is ALWAYS trimmed to the video duration downstream
+# cf#1129: a route that takes a WHOLE film takes a film-sized input.
+#
+# cf#1133: this is also the largest film the container can deliver. Every film leaves in ONE presigned PUT, and R2
+# documents 4.995 GiB for a single PUT (5 GiB less 5 MiB). The disk budget alone allows 6.85 GB (core's
+# assembleFilmByteCeiling before cf#1133), so a film in that gap did all its work and then failed at upload. The cap
+# is the lower of the two, and _put_file refuses above it. Multipart would only buy the gap up to the disk limit, and
+# needs a part URL pool from the Worker. tests/film-byte-cap-1129.test.ts holds this equal to core's admission.
+#
+# PEAK DISK AT THIS CAP, for a film F. /subtitle: source + burn, 2F. /film-titles: source + normalized, then the
+# source goes and it is normalized + output, so 2F plus the cards. Mux: source + bed + output, 2F + 768 MiB. Frames:
+# F plus stills. F is at most 5.36 GB, so 2F is 10.7 GB, about 13 GB with the 2 GB image reserve, against 20 GB.
+# That assumes a re-encode at crf 18 is about the size of its source. An assembled film is already at those settings.
+MAX_FILM_BYTES = 5_363_466_240
+# A film transfer is bounded by its size, not by the 120 s that suits a clip. sock_read stops a dead connection.
+FILM_TRANSFER_TIMEOUT_S = 1800
+FILM_TRANSFER_STALL_S = 120
+# An encode is bounded by the film's length. FFMPEG_TIMEOUT stays the floor. The factor is a budget, not a
+# measurement on standard-4: x264 medium at 1080p is expected to run about real time on 4 vCPU.
+ENCODE_SECONDS_PER_FILM_SECOND = 3
+# vivijure-cf#1122: 768 MiB, from 256 MB. 60 minutes of 16 bit 48 kHz stereo WAV is 691 MB, and core 1.36.0 admits
+# a 60 minute film. Core reserves the same number on disk (CONTAINER_AUDIO_BED_BYTES).
+# The bed is ALWAYS trimmed to the video duration downstream
 # (_assemble / _remux_audio_only, `-t vdur`), so a long source yields a film-length track, not a bloated one.
 # A too-tight 64 MB cap silently dropped a legitimate multi-minute lossless bed -> silent film (the #77/#249 bug).
-MAX_CLIPS = 80
+MAX_AUDIO_BYTES = 768 * 1024 * 1024
+# vivijure-cf#1122: 600, from 80. Chunked assemble (cf#784) bounds disk to a fixed working set, so the count no
+# longer protects the disk. Core 1.36.0 admits at most ASSEMBLE_MAX_CLIPS (600); tests/clip-cap-equality-1122.test.ts
+# holds core at or under this number, so core never admits a film this route refuses.
+MAX_CLIPS = 600
+# POST /async/join-films: how many finished films one join takes. A guard on the request, not a measured limit.
+MAX_JOIN_FILMS = 64
+
+# cf#784: bound the working set so peak disk is a fixed cost rather than a function of film
+# length. A batch is closed once it reaches this many SOURCE bytes, so the batch may overshoot
+# by at most one clip (MAX_CLIP_BYTES). Peak while batching is roughly
+# 3 x (MAX_BATCH_BYTES + MAX_CLIP_BYTES): the batch's sources, their normalized copies, and the
+# batch partial. Tunable per instance type without a rebuild; the default targets the 20 GB
+# ephemeral disk of the largest Cloudflare Container with room to spare.
+#
+# THE 3x IS A BUDGET, NOT A MEASUREMENT, and cf#813 measured what it assumes. The multiplier is
+# only right if a normalized copy is about the size of its source; the measured ratio spans
+# 0.98x to 5.09x and is dominated by whatever bitrate the source happened to carry, not by a
+# constant. One component of it WAS structural: every clip was upscaled to a fixed 1920x1080
+# whatever the door produced, worth about 1.95x on a 720p source. vivijure-core#322 removes that
+# by matching the assemble target to the measured source, so the inflation goes away at its
+# cause rather than being re-tuned here. The rest of the spread is the source's own bitrate and
+# no single multiplier captures it. This budget is deliberately generous for that reason; do not
+# read it as a prediction of what a film weighs.
+MAX_BATCH_BYTES = int(os.environ.get("MAX_BATCH_BYTES", str(1024 * 1024 * 1024)))
+
+# The final join reads the partials straight from their presigned R2 URLs, so they never land on
+# disk. ffmpeg refuses a non-file protocol unless it is whitelisted (the default is
+# file,crypto,data), and https needs BOTH https and tls listed.
+#
+# CORRECTION (cf#813): this comment used to say peak disk at that stage is ONE film. It is TWO
+# full-length copies. `_silent.mp4` is written at :315 (chunked) and :864 (single-pass),
+# `_mux_bed_onto` (:780) writes `final.mp4` FROM it, and nothing deletes the silent cut:
+# `grep -n "os.remove" app.py` returns exactly :266 and :270, both reaping batch partials. Those
+# two hits are the positive control that the zero for `_silent.mp4` is a real zero and not a
+# broken pattern. `_remux_audio_only` (:650) has the same shape, writing `final.mp4` beside
+# `video_path`.
+#
+# NOT A CORRECTNESS BUG TODAY: a real film measures in the hundreds of MB against a 20 GB disk,
+# so two copies of it is nowhere near the ceiling. It is wrong in the same direction as the rest
+# of the sizing prose, which is why it is corrected rather than left.
+#
+# THE REMOVAL IS DEFERRED, DELIBERATELY. Deleting `_silent.mp4` after `_mux_bed_onto` returns
+# would make this comment true at its cause, which is normally the right fix and is the rule this
+# inverts. It is held because this container is being repaired and re-deployed right now, and an
+# unrelated allocation change does not belong in front of the first confirmed-serving build. The
+# comment is corrected now because a wrong comment here has already cost a live debugging effort
+# real time. Land the removal once the container is verified serving.
+CONCAT_PROTOCOL_WHITELIST = "file,http,https,tcp,tls"
 MAX_KEYFRAME_BYTES = 32 * 1024 * 1024   # keyframe PNG for content-inspect (#523 Layer 2)
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 log = logging.getLogger("video-finish")
+
+
+def _film_timeout() -> ClientTimeout:
+    return ClientTimeout(total=FILM_TRANSFER_TIMEOUT_S, sock_read=FILM_TRANSFER_STALL_S)
+
+
+def _film_encode_timeout(path):
+    """The wall-clock bound for re-encoding this whole film. Never below FFMPEG_TIMEOUT."""
+    return max(FFMPEG_TIMEOUT, int(_probe_duration(path) * ENCODE_SECONDS_PER_FILM_SECOND))
 
 
 def _elapsed_ms(t0: float) -> int:
@@ -72,6 +154,14 @@ def _elapsed_ms(t0: float) -> int:
 # cannot leak memory; the core polls far more often than this.
 JOB_TTL_S = 3600
 JOBS = {}  # job_id -> {"status": "pending"|"completed"|"failed", "result"?, "error"?, "at": monotonic}
+
+# cf#784: WHICH PROCESS answered. Minted once per process start, so it changes on every container
+# restart (OOM, host restart, a wake after sleep) and on nothing else. It rides on every async submit
+# and status body. A status read that answers not_found from a DIFFERENT instance than the one that
+# accepted the job is a job LOST to a restart, which is a different fact from a job that never
+# existed; before this, both read as one 404. The Durable Object in front (src/finish-container.ts)
+# makes the comparison. It is not a secret and carries nothing about the job.
+INSTANCE_ID = uuid.uuid4().hex
 
 
 class _JobError(Exception):
@@ -116,11 +206,23 @@ async def async_submit(req):
         return web.json_response({"ok": False, "error": "invalid JSON"}, status=400)
     now = time.monotonic()
     _reap_jobs(now)
-    job_id = uuid.uuid4().hex
+    keyer = KEYED_ASYNC_JOBS.get(route)
+    if keyer is None:
+        job_id = uuid.uuid4().hex
+    else:
+        # A keyed job has one id for one set of inputs, so a re-submit finds the running job instead of
+        # starting a second. A job that failed, or that a restart lost, simply runs again.
+        try:
+            job_id = keyer(body)
+        except _JobError as e:
+            return web.json_response({"ok": False, "error": e.message}, status=e.status)
+        known = JOBS.get(job_id)
+        if known is not None and known["status"] != "failed":
+            return web.json_response({"ok": True, "jobId": job_id, "status": known["status"], "instance": INSTANCE_ID}, status=202)
     JOBS[job_id] = {"status": "pending", "at": now}
     asyncio.create_task(_run_job(job_id, work(body)))
     log.info("/async/%s accepted job=%s", safe_log_value(route), job_id)  # codeql[py/log-injection]
-    return web.json_response({"ok": True, "jobId": job_id, "status": "pending"}, status=202)
+    return web.json_response({"ok": True, "jobId": job_id, "status": "pending", "instance": INSTANCE_ID}, status=202)
 
 
 async def async_status(req):
@@ -130,18 +232,50 @@ async def async_status(req):
     job_id = req.match_info.get("jobId", "")
     j = JOBS.get(job_id)
     if j is None:
-        return web.json_response({"ok": True, "status": "not_found"}, status=404)
+        return web.json_response({"ok": True, "status": "not_found", "instance": INSTANCE_ID}, status=404)
     if j["status"] == "pending":
-        return web.json_response({"ok": True, "status": "pending"})
+        return web.json_response({"ok": True, "status": "pending", "instance": INSTANCE_ID})
     if j["status"] == "completed":
-        return web.json_response({"ok": True, "status": "completed", "result": j["result"]})
-    return web.json_response({"ok": True, "status": "failed", "error": j.get("error", "job failed")})
+        return web.json_response({"ok": True, "status": "completed", "result": j["result"], "instance": INSTANCE_ID})
+    return web.json_response({"ok": True, "status": "failed", "error": j.get("error", "job failed"), "instance": INSTANCE_ID})
 
 
 
 async def health(_req):
     # Cheap readiness probe; does not shell out to ffmpeg.
     return web.json_response({"ok": True})
+
+
+async def auth_check(_req):
+    """GET /auth-check (cf#887): answer "this container is serving and accepted your bearer", doing NO
+    work.
+
+    The studio's on-demand readiness read calls this AFTER /health. /health is open by design, so it
+    proves the process is up and nothing about the token; this route sits behind bearer_middleware
+    like every media route, so a 200 here means the middleware ran and accepted the caller's bearer
+    (a wrong or stale token is the middleware's 401 and never reaches this handler).
+
+    NO WORK, on purpose and under test (test_auth_check.py): no JOBS entry, no ffmpeg or ffprobe, no
+    subprocess, no network, no disk. A probe that did work would cost a real encode slot and could
+    fail for reasons that say nothing about serving. The binding routes it like any stateless path,
+    to a sync-pool instance, so it never mints a job instance either.
+
+    `bearer` is honest about WHICH gate let the request in. "verified" means a token is configured
+    and the middleware matched it. "disabled" means the door runs with the explicit
+    LOCAL_FINISH_ALLOW_UNAUTHENTICATED=true opt-out, so nothing was checked; reporting that as
+    accepted would be a green that cannot go red on an open door. Nothing secret is returned: no
+    token, no token length, no environment.
+
+    `liveness_only: true` is part of the contract. A 200 does not mean a finish would succeed.
+    """
+    return web.json_response(
+        {
+            "ok": True,
+            "serving": True,
+            "bearer": "verified" if configured_token() else "disabled",
+            "liveness_only": True,
+        }
+    )
 
 
 async def _download(session, url, path, cap):
@@ -159,6 +293,201 @@ async def _download(session, url, path, cap):
             return True, total
     except ValueError as e:
         return False, f"blocked: {e}"
+
+
+async def _finish_chunked(body, partial_urls, t0):
+    """Chunked assemble (cf#784): bound peak disk to a fixed working set.
+
+    The single-pass path holds every downloaded clip, every normalized copy, the concat and the
+    muxed film in ONE work dir until the job ends, so peak disk is 3-4x total input.
+
+    ON `MAX_CLIPS x MAX_CLIP_BYTES` (cf#813): that product is 20.0 GB and this docstring used to
+    present it as the route's "contracted maximum", i.e. an input size to design against. It is
+    not. `MAX_CLIP_BYTES` is a REJECT CEILING -- the argument to `_download(s, url, dst,
+    MAX_CLIP_BYTES)` at :285 and :416, the size at which a download is REFUSED -- so the product
+    is the largest input the route will not reject, not one it expects. A 256 MB clip is 3.2 to
+    15.6 minutes of video at this container's settings; clips are 4 to 8 seconds. Measured, a
+    32-clip film normalizes to roughly 70-350 MB and a full 80-clip film to about 750 MB, so the
+    product sits 23x to 120x above a real film and nothing approaches the 20 GB disk.
+
+    That matters beyond tidiness: a disk gate written against 20 GB could never fire. Size this
+    route by BITRATE x DURATION x COUNT instead (see README for the measured bands), and keep
+    256 MB as what it is, a per-clip reject ceiling.
+
+    Here the film is partitioned into byte-bounded batches. Each batch is downloaded, normalized,
+    hard-concatenated to a partial, PUT to R2, and its work dir deleted before the next batch
+    starts. The final pass concatenates the partials straight from their presigned URLs, so they
+    never return to disk. Peak disk becomes max(batch working set, one film).
+
+    Two properties this must not break, both of which chunking makes easier to get wrong:
+      * The drop guard runs at BOTH levels. A second concat level doubles the places a clip can
+        vanish, and a lost PARTIAL is a film short by a whole batch.
+      * The tail-trim is global. Only the film's true last clip keeps its tail (see
+        _normalize_batch), or every batch boundary gains a duplicated frame.
+    """
+    clips = body.get("clips")
+    output_url = body.get("outputUrl")
+    output_key = body.get("outputKey", "")
+    audio_url = body.get("audioUrl")
+    keep_clip_audio = bool(body.get("keepClipAudio", False))
+    width = int(body.get("width", 1920))
+    height = int(body.get("height", 1080))
+    fps = int(body.get("fps", 24))
+    crf = int(body.get("crf", 18))
+    preset = str(body.get("preset", "medium"))
+    crossfade = float(body.get("crossfade", 0.0))
+    trim_join_frames = float(body.get("trimJoinFrames", 1))
+
+    effective_crossfade = 0.0 if keep_clip_audio else crossfade
+    trim_tail = (trim_join_frames / max(1, fps)) if effective_crossfade <= 0 else 0.0
+    total = len(clips)
+
+    root = tempfile.mkdtemp(prefix="vfinish-chunk-")
+    partial_gets, partial_durs, clip_durs = [], [], []
+    pending = None  # (local_path, get_url, put_url) for the first partial, not yet uploaded
+    batch, batch_bytes, batch_dir, batch_no = [], 0, None, 0
+
+    try:
+        async with ClientSession(timeout=ClientTimeout(total=DOWNLOAD_TIMEOUT_S)) as s:
+
+            async def flush():
+                nonlocal batch, batch_bytes, batch_dir, batch_no, pending
+                if not batch:
+                    return
+                if batch_no >= 1 and effective_crossfade > 0:
+                    # A crossfade join spans two adjacent clips, so it cannot cross a batch
+                    # boundary. Chunking anyway would silently drop the transition at every
+                    # boundary and ship a film that is subtly not what was asked for.
+                    raise _JobError(
+                        400,
+                        "crossfade is not supported with chunked assemble: the film needs "
+                        f"{batch_no + 1} batches and a crossfade cannot span a batch boundary. "
+                        "Send crossfade=0 for a hard-cut film, or fewer/smaller clips.",
+                    )
+                if batch_no >= len(partial_urls):
+                    raise _JobError(
+                        400,
+                        f"partialUrls pool exhausted: the film needs more than {len(partial_urls)} "
+                        "batches. The Worker must mint a larger pool.",
+                    )
+                loop = asyncio.get_running_loop()
+                norms, durs = await loop.run_in_executor(
+                    None, functools.partial(
+                        _normalize_batch, batch_dir, batch, total,
+                        width=width, height=height, fps=fps, crf=crf, preset=preset,
+                        trim_tail=trim_tail, keep_clip_audio=keep_clip_audio),
+                )
+                clip_durs.extend(durs)
+                partial = os.path.join(root, f"partial_{batch_no:03d}.mp4")
+                await loop.run_in_executor(
+                    None, functools.partial(_concat_hard, norms, partial, audio=keep_clip_audio))
+                pdur = _probe_duration(partial) or 0.0
+                # INNER guard: this batch must not have lost a clip.
+                assert_no_dropped_parts(pdur, durs, level=f"batch {batch_no + 1}", fps=fps)
+
+                put_u, get_u = partial_urls[batch_no]
+                if batch_no == 0:
+                    # Hold the first partial locally: a film that fits in ONE batch needs no R2
+                    # round trip at all, and this is the only way to know that without lookahead.
+                    pending = (partial, get_u, put_u)
+                else:
+                    if pending is not None:
+                        pp, pg, ppu = pending
+                        await _put_file(s, ppu, pp, label="partial")
+                        os.remove(pp)
+                        partial_gets.append(pg)
+                        pending = None
+                    await _put_file(s, put_u, partial, label="partial")
+                    os.remove(partial)
+                    partial_gets.append(get_u)
+                partial_durs.append(pdur)
+
+                shutil.rmtree(batch_dir, ignore_errors=True)
+                batch, batch_bytes, batch_dir = [], 0, None
+                batch_no += 1
+
+            for i, c in enumerate(clips):
+                url = c.get("url") if isinstance(c, dict) else None
+                if not url:
+                    raise _JobError(400, f"clips[{i}].url missing")
+                if batch_dir is None:
+                    batch_dir = tempfile.mkdtemp(prefix=f"batch{batch_no:03d}-", dir=root)
+                dst = os.path.join(batch_dir, f"clip_{i:03d}.mp4")
+                ok, info = await _download(s, url, dst, MAX_CLIP_BYTES)
+                if not ok:
+                    status = 413 if info == "too large" else (400 if info.startswith("blocked:") else 502)
+                    raise _JobError(status, f"clips[{i}] {info}")
+                target = _parse_seconds(c, "targetSeconds")
+                batch.append((dst, target, i, _parse_seconds(c, "holdToSeconds")))
+                batch_bytes += os.path.getsize(dst)
+                # Close on reaching the bound. The batch may overshoot by at most one clip, which
+                # is why the peak-disk budget is written against MAX_BATCH_BYTES + MAX_CLIP_BYTES.
+                if batch_bytes >= MAX_BATCH_BYTES:
+                    await flush()
+            await flush()
+
+            if not partial_durs:
+                raise _JobError(400, "clips must be a non-empty array")
+
+            audio_path = None
+            if audio_url:
+                audio_path = os.path.join(root, "audio.bin")
+                ok, info = await _download(s, audio_url, audio_path, MAX_AUDIO_BYTES)
+                if not ok:
+                    status = 413 if info == "too large" else (400 if str(info).startswith("blocked:") else 502)
+                    log.warning("audio bed fetch failed (%s); failing loud (no silent finish)", info)
+                    raise _JobError(status, f"audio bed {info}")
+
+            loop = asyncio.get_running_loop()
+            silent = os.path.join(root, "_silent.mp4")
+            try:
+                if pending is not None:
+                    # Single batch: the partial IS the silent cut. No upload, no re-download.
+                    shutil.move(pending[0], silent)
+                else:
+                    # The batch joins are timed by now; the joins BETWEEN partials still need the one
+                    # audio encode, or each batch boundary adds the same surplus (cf#1167).
+                    await loop.run_in_executor(
+                        None, functools.partial(
+                            _concat_hard_urls, partial_gets, silent,
+                            os.path.join(root, "partials.txt"),
+                            output_args=_join_output_args(keep_clip_audio)),
+                    )
+                    # OUTER guard: a dropped PARTIAL is a film short by a whole batch, and the
+                    # ratio guard this replaced could not see one past 7 batches.
+                    assert_no_dropped_parts(
+                        _probe_duration(silent) or 0.0, partial_durs,
+                        level=f"final join of {len(partial_durs)} partials", fps=fps,
+                    )
+                out_path, secs, has_audio = await loop.run_in_executor(
+                    None, _mux_bed_onto, root, silent, audio_path, keep_clip_audio,
+                )
+            except FfmpegTimeout as e:
+                log.exception("ffmpeg timeout")
+                raise _JobError(500, str(e))
+            except subprocess.CalledProcessError as e:
+                log.exception("ffmpeg failed")
+                raise _JobError(500, f"ffmpeg failed: {e}")
+
+        async with ClientSession(timeout=_film_timeout()) as s:
+            size = await _put_file(s, output_url, out_path)
+
+        return {
+            "ok": True,
+            "key": output_key,
+            "bytes": size,
+            "durationSeconds": round(secs, 3),
+            "shots": total,
+            "clipsReceived": total,
+            "hasAudio": has_audio,
+            "width": width,
+            "height": height,
+            "clipDurations": clip_durs,
+            "batches": len(partial_durs),
+            "elapsedMs": _elapsed_ms(t0),
+        }
+    finally:
+        shutil.rmtree(root, ignore_errors=True)
 
 
 async def _finish_work(body):
@@ -198,25 +527,32 @@ async def _finish_work(body):
         raise _JobError(400, "bad numeric input")
     preset = str(body.get("preset", "medium"))
 
+    # cf#784: when the Worker supplies a partial-URL pool, take the chunked path, which bounds
+    # peak disk to a fixed working set instead of 3-4x total input. Absent a pool the behaviour
+    # is exactly as before, so an older Worker is unaffected. remuxAudioOnly is a single-clip
+    # remux with nothing to batch.
+    partial_urls = _parse_partial_urls(body)
+    if partial_urls and not remux_audio_only:
+        return await _finish_chunked(body, partial_urls, t0)
+
     work = tempfile.mkdtemp(prefix="vfinish-")
     try:
         srcs = []
-        async with ClientSession(timeout=ClientTimeout(total=DOWNLOAD_TIMEOUT_S)) as s:
+        # A remux's one input is the whole film.
+        input_timeout = _film_timeout() if remux_audio_only else ClientTimeout(total=DOWNLOAD_TIMEOUT_S)
+        input_cap = MAX_FILM_BYTES if remux_audio_only else MAX_CLIP_BYTES
+        async with ClientSession(timeout=input_timeout) as s:
             for i, c in enumerate(clips):
                 url = c.get("url") if isinstance(c, dict) else None
                 if not url:
                     raise _JobError(400, f"clips[{i}].url missing")
                 p = os.path.join(work, f"clip_{i:03d}.mp4")
-                ok, info = await _download(s, url, p, MAX_CLIP_BYTES)
+                ok, info = await _download(s, url, p, input_cap)
                 if not ok:
                     status = 413 if info == "too large" else (400 if info.startswith("blocked:") else 502)
                     raise _JobError(status, f"clips[{i}] {info}")
-                target = c.get("targetSeconds")
-                try:
-                    target = float(target) if target is not None else None
-                except (TypeError, ValueError):
-                    target = None
-                srcs.append((p, target))
+                target = _parse_seconds(c, "targetSeconds")
+                srcs.append((p, target, _parse_seconds(c, "holdToSeconds")))
             audio_path = None
             if audio_url:
                 audio_path = os.path.join(work, "audio.bin")
@@ -249,19 +585,16 @@ async def _finish_work(body):
             log.exception("assemble failed")
             raise _JobError(500, str(e))
 
-        with open(out_path, "rb") as f:
-            out_bytes = f.read()
-
-        async with ClientSession(timeout=ClientTimeout(total=UPLOAD_TIMEOUT_S)) as s:
-            async with guarded_put(s, output_url, allow_redirects=False, data=out_bytes,
-                             headers={"content-type": "video/mp4"}) as r:  # codeql[py/full-ssrf]
-                if r.status not in (200, 201, 204):
-                    raise _JobError(502, f"output put {r.status}")
+        # cf#784: stream the upload. This previously read the ENTIRE finished film into memory
+        # before PUTting it, which on a Cloudflare Container (no swap) OOMs the instance at
+        # exactly the film sizes chunked assemble exists to make possible.
+        async with ClientSession(timeout=_film_timeout()) as s:
+            out_size = await _put_file(s, output_url, out_path)
 
         return {
             "ok": True,
             "key": output_key,
-            "bytes": len(out_bytes),
+            "bytes": out_size,
             "durationSeconds": round(secs, 3),
             "shots": len(srcs),
             "clipsReceived": len(clips),
@@ -347,6 +680,76 @@ def _probe_duration(path):
     return max(0.1, float(proc.stdout.strip()))
 
 
+def _probe_stream_duration(path, stream):
+    """Duration in seconds of the first `stream` ("v:0" or "a:0") of path, or None when there is no such
+    stream or it cannot be read. A container's own duration is the LONGEST stream, so a clip whose audio
+    outlasts its video reads as the audio length there (vivijure-cf#1338); this reads one stream."""
+    try:
+        proc = _run(
+            ["ffprobe", "-v", "error", "-select_streams", stream, "-show_entries", "stream=duration",
+             "-of", "default=noprint_wrappers=1:nokey=1", path],
+            timeout=FFPROBE_TIMEOUT, text=True,
+        )
+        d = float(proc.stdout.strip().splitlines()[0])
+        return d if d > 0 else None
+    except Exception:
+        return None
+
+
+def _parse_seconds(clip, key):
+    """A clip's optional positive seconds field (targetSeconds, holdToSeconds), or None."""
+    v = clip.get(key) if isinstance(clip, dict) else None
+    try:
+        v = float(v) if v is not None else None
+    except (TypeError, ValueError):
+        return None
+    return v if v is not None and v > 0 else None
+
+
+def _hold_extension(video_s, audio_s, hold_to, keep_audio):
+    """vivijure-cf#1338. How long a clip's video must run, by cloning its last frame, or None to leave it.
+
+    hold_to: the planned seconds the Worker asks a clip to be held to (a door that bills by length, whose
+    line was not padded). keep_audio: the clip's own audio is kept (a talking film), so the video must also
+    last as long as that audio: a 4n+1 frame door delivers about 70 ms less video than audio, and the audio
+    is never cut to fit the video. Pure: no probe, so it is tested on its own.
+    """
+    if video_s is None or video_s <= 0:
+        return None
+    want = max(hold_to or 0.0, (audio_s or 0.0) if keep_audio else 0.0)
+    return want if want - video_s > 0.0005 else None
+
+
+def _clip_plan(src, target, hold_to, tail, keep_audio):
+    """(cap, extend_to) for one clip. The tail-trim of a join is taken from the clip's length AFTER any
+    hold, so a held clip is not cut back to its delivered length."""
+    extend_to = None
+    if hold_to or keep_audio:
+        v = _probe_stream_duration(src, "v:0")
+        a = _probe_stream_duration(src, "a:0") if keep_audio else None
+        extend_to = _hold_extension(v, a, hold_to, keep_audio)
+    cap = target
+    if tail > 0:
+        base = cap if cap else (max(extend_to, _probe_duration(src)) if extend_to else _probe_duration(src))
+        cap = max(0.1, base - tail)
+    return cap, extend_to
+
+
+def _probe_frame(path):
+    """(width, height) of the first video stream, or (None, None) when it cannot be read. The film
+    itself is the truth for a burn: a caption is drawn on the frame it has."""
+    proc = _run(
+        ["ffprobe", "-v", "error", "-select_streams", "v:0",
+         "-show_entries", "stream=width,height", "-of", "csv=p=0", path],
+        timeout=FFPROBE_TIMEOUT, text=True,
+    )
+    try:
+        w, h = proc.stdout.strip().split(",")[:2]
+        return int(w), int(h)
+    except ValueError:
+        return None, None
+
+
 def _probe_audio(path):
     """Probe the first audio stream of path.
     Returns (has_audio, sample_rate, channel_layout).
@@ -374,7 +777,8 @@ def _probe_audio(path):
     return True, sample_rate, layout
 
 
-def _normalize(src, dst, *, width, height, fps, crf, preset, cap, keep_audio=False, ensure_audio=False):
+def _normalize(src, dst, *, width, height, fps, crf, preset, cap, keep_audio=False, ensure_audio=False, timeout=None,
+               extend_to=None):
     """Scale/pad/fps-normalize src to dst.
     keep_audio=False (default): strip audio (-an). Used by _assemble's silent path
     and the silent-film path of _assemble_film_titles.
@@ -391,6 +795,15 @@ def _normalize(src, dst, *, width, height, fps, crf, preset, cap, keep_audio=Fal
         f"scale={width}:{height}:force_original_aspect_ratio=decrease,"
         f"pad={width}:{height}:(ow-iw)/2:(oh-ih)/2,fps={fps}"
     )
+    # vivijure-cf#1338: hold the clip's last frame until it lasts extend_to seconds. stop_duration is a
+    # ceiling on the added time, so it is set generously and the -t below (or the audio) bounds the result.
+    af = None
+    if extend_to:
+        vf += f",tpad=stop_mode=clone:stop_duration={extend_to + 1:.3f}"
+        if ensure_audio or keep_audio:
+            af = f"apad=whole_dur={extend_to:.3f}"
+        if not (cap and cap > 0.15):
+            cap = extend_to
     cmd = ["ffmpeg", "-y", "-i", src]
     synth_silence = False
     if ensure_audio:
@@ -399,6 +812,8 @@ def _normalize(src, dst, *, width, height, fps, crf, preset, cap, keep_audio=Fal
             synth_silence = True
             cmd += ["-f", "lavfi", "-i", "anullsrc=channel_layout=stereo:sample_rate=48000"]
     cmd += ["-vf", vf]
+    if af and not synth_silence:
+        cmd += ["-af", af]
     if ensure_audio:
         cmd += ["-map", "0:v:0", "-map", ("1:a:0" if synth_silence else "0:a:0"),
                 "-c:a", "aac", "-b:a", "192k", "-ar", "48000", "-ac", "2"]
@@ -412,14 +827,31 @@ def _normalize(src, dst, *, width, height, fps, crf, preset, cap, keep_audio=Fal
     elif synth_silence:
         cmd += ["-shortest"]  # bound the infinite anullsrc track to the video length
     cmd.append(dst)
-    _run(cmd)
+    _run(cmd, timeout=timeout)
 
 
-def _concat_hard(norms, out):
+def _concat_hard(norms, out, *, audio=False):
+    """Hard-cut join of parts that share one codec layout. The video is always stream-copied.
+
+    audio=True: the parts carry audio that must survive (a talking film, a titled film with sound). The
+    audio is then decoded and encoded ONCE across the join (JOIN_AUDIO_ARGS), as /async/join-films does.
+    A plain `-c copy` leaves an audio packet at every join whose timestamp step is cut short while it
+    still decodes to 1024 samples, so the joined track holds more samples than its timestamps imply
+    (cf#1167). Measured on this function with 25 talking clips of 2 to 4.2 s: 586 ms late at the last
+    clip counted in samples, about 24 ms per join, and the bed mix (amix) reads samples in order, so it
+    bakes that drift into the film. test_local_assemble_audio.py measures it by sample count.
+    """
     list_file = os.path.join(os.path.dirname(out), "concat.txt")
     with open(list_file, "w") as f:
         f.write("\n".join(f"file '{p}'" for p in norms) + "\n")
-    _run(["ffmpeg", "-y", "-f", "concat", "-safe", "0", "-i", list_file, "-c", "copy", out])
+    _run(["ffmpeg", "-y", "-f", "concat", "-safe", "0", "-i", list_file, *_join_output_args(audio), out])
+
+
+def _join_output_args(audio):
+    """Output args for a hard-cut join: video copied; audio encoded once when kept, else copied (cf#1167)."""
+    if audio:
+        return ["-map", "0:v:0", "-c:v", "copy", "-map", "0:a:0", *JOIN_AUDIO_ARGS]
+    return ["-c", "copy"]
 
 
 def _concat_crossfade(norms, out, crossfade, *, crf, preset):
@@ -473,49 +905,118 @@ def _remux_audio_only(work, video_path, audio_path):
     return out, _probe_duration(out), True
 
 
-def _assemble(work, srcs, audio_path, width, height, fps, crf, preset, crossfade, trim_join_frames,
-              keep_clip_audio=False):
-    # keep_clip_audio: the clips carry per-clip lip-synced dialogue (talking film).
-    # The crossfade concat path drops audio (-an) and acrossfade is not wired, so
-    # dialogue forces a hard cut; every clip is normalized with ensure_audio so the
-    # hard-cut concat (-c copy) preserves the dialogue uniformly.
-    effective_crossfade = 0.0 if keep_clip_audio else crossfade
-    # Tail-trim one (or N) frames off every clip but the last, ONLY on hard
-    # cuts -- mirrors assemble._trim_seconds_for_join (continuity de-dupe).
-    trim_tail = (trim_join_frames / max(1, fps)) if effective_crossfade <= 0 else 0.0
-    last = len(srcs) - 1
-    norms = []
-    for i, (src, target) in enumerate(srcs):
-        cap = target
-        tail = trim_tail if (trim_tail > 0 and i < last) else 0.0
-        if tail > 0:
-            base = cap if cap else _probe_duration(src)
-            cap = max(0.1, base - tail)
-        dst = os.path.join(work, f"norm_{i:03d}.mp4")
+def _concat_hard_urls(urls, out, list_path, output_args=("-c", "copy"), timeout=None):
+    """Hard-concat parts read straight from their presigned URLs -- they never land on disk.
+
+    This is what keeps peak disk at roughly ONE film at the final join instead of the partials
+    plus the film. Verified against a range-capable origin at 1.1 GB of input: byte-identical to
+    the same join done from local files, 206 responses throughout (ffmpeg range-seeks rather than
+    downloading), and peak RSS flat at ~43 MB, slightly BELOW the local-disk join. So this trades
+    disk for neither memory nor fidelity.
+
+    ffmpeg refuses a non-file protocol unless whitelisted, and https needs https AND tls listed.
+
+    output_args defaults to a stream copy of everything. /async/join-films copies the video and encodes
+    the audio. timeout defaults to FFMPEG_TIMEOUT.
+    """
+    with open(list_path, "w") as f:
+        f.write("\n".join(f"file '{u}'" for u in urls) + "\n")
+    _run([
+        "ffmpeg", "-y",
+        "-protocol_whitelist", CONCAT_PROTOCOL_WHITELIST,
+        "-f", "concat", "-safe", "0", "-i", list_path,
+        *output_args, out,
+    ], timeout=timeout)
+
+
+def _parse_partial_urls(raw):
+    """The cf#784 URL pool: [{put, get}, ...] minted by the Worker.
+
+    The container holds no R2 credentials by design (see README), so it can only write a partial
+    to a URL it was handed. The Worker mints at most ASSEMBLE_MAX_POOL_PAIRS (core, 80) pairs and the container consumes
+    only as many as its byte-batching needs; the rest go unused and expire. Returns [] when absent,
+    which selects the single-pass path.
+    """
+    pool = raw.get("partialUrls") or raw.get("partial_urls")
+    if not isinstance(pool, list) or not pool:
+        return []
+    out = []
+    for i, e in enumerate(pool):
+        if not isinstance(e, dict):
+            raise _JobError(400, f"partialUrls[{i}] must be an object with put and get")
+        put_u = e.get("put") or e.get("putUrl")
+        get_u = e.get("get") or e.get("getUrl")
+        if not isinstance(put_u, str) or not isinstance(get_u, str) or not put_u or not get_u:
+            raise _JobError(400, f"partialUrls[{i}] needs both put and get")
+        for label, u in (("put", put_u), ("get", get_u)):
+            ok, why = validate_fetch_url(u)
+            if not ok:
+                raise _JobError(400, f"partialUrls[{i}].{label} blocked: {why}")
+        out.append((put_u, get_u))
+    return out
+
+
+async def _put_file(session, url, path, content_type="video/mp4", label="output"):
+    """Stream a file to a presigned PUT.
+
+    `label` only names the artifact in the error. It defaults to "output" because every route
+    except chunked assemble uploads a finished output, and calling a contact sheet a "partial"
+    is a wire-visible lie that #802 introduced by reusing this helper.
+
+    Deliberately NOT `data=f.read()`. That materialises the WHOLE artifact in memory before the
+    upload starts, and THREE of this container's routes produce a full film (/finish,
+    /film-titles, /subtitle). A Cloudflare Container has no swap, so exceeding memory restarts the
+    instance rather than paging; disk is ephemeral and resets to the image on wake, so the work dir
+    dies with it and the next poll finds no job. The film does not fail loudly, it fails as though
+    it never ran.
+
+    Content-Length is set explicitly because a presigned PUT will not accept the chunked
+    transfer-encoding aiohttp would otherwise use for a file object with no length -- streaming
+    without it would trade an OOM for a 4xx.
+
+    Returns the byte count, so callers that reported a length keep reporting a real size.
+    """
+    size = os.path.getsize(path)
+    if size > MAX_FILM_BYTES:
+        # cf#1133: R2 would refuse this one PUT. Say so here, with the numbers, rather than as "put 400".
+        raise _JobError(413, f"{label} is {size} bytes, over the {MAX_FILM_BYTES} byte limit of one upload")
+    with open(path, "rb") as f:
+        async with guarded_put(session, url, allow_redirects=False, data=f,
+                               headers={"content-type": content_type,
+                                        "content-length": str(size)}) as r:  # codeql[py/full-ssrf]
+            if r.status not in (200, 201, 204):
+                raise _JobError(502, f"{label} put {r.status}")
+    return size
+
+
+def _normalize_batch(batch_dir, batch, total_clips, *, width, height, fps, crf, preset,
+                     trim_tail, keep_clip_audio):
+    """Normalize one batch. `batch` is [(src_path, target_seconds, global_index)].
+
+    The tail-trim is decided on the GLOBAL index, not the position in the batch: only the film's
+    true last clip keeps its tail. Trimming per batch would leave an untrimmed frame at every batch
+    boundary, which is a continuity artefact chunking must not introduce.
+    """
+    norms, durs = [], []
+    for item in batch:
+        src, target, gidx = item[0], item[1], item[2]
+        hold_to = item[3] if len(item) > 3 else None
+        tail = trim_tail if (trim_tail > 0 and gidx < total_clips - 1) else 0.0
+        cap, extend_to = _clip_plan(src, target, hold_to, tail, keep_clip_audio)
+        dst = os.path.join(batch_dir, f"norm_{gidx:03d}.mp4")
         _normalize(src, dst, width=width, height=height, fps=fps, crf=crf, preset=preset,
-                   cap=cap, ensure_audio=keep_clip_audio)
+                   cap=cap, ensure_audio=keep_clip_audio, extend_to=extend_to)
         norms.append(dst)
+        durs.append(round(_probe_duration(dst) or 0.0, 3))
+    return norms, durs
 
-    # ACTUAL per-clip assembled seconds (#697/#698): the normalized (tail-trimmed, capped) duration each
-    # clip contributes to the film, in submit order. Probed ONCE here and reused by the drop-guard below;
-    # returned so the Worker can gate a truncated clip against its plan and time captions to the real cut.
-    norm_durations = [round(_probe_duration(n) or 0.0, 3) for n in norms]
 
-    silent = os.path.join(work, "_silent.mp4")
-    if effective_crossfade > 0 and len(norms) > 1:
-        _concat_crossfade(norms, silent, effective_crossfade, crf=crf, preset=preset)
-    else:
-        _concat_hard(norms, silent)  # -c copy; preserves per-clip audio when ensure_audio kept it
+def _mux_bed_onto(work, silent, audio_path, keep_clip_audio):
+    """Mux the optional music/dialogue bed onto an assembled silent cut and finalize.
 
-    # Fail loud: the concat must NEVER silently drop a clip (a scatter render once shipped 1 of 3
-    # shots). If the assembled film is materially shorter than the sum of its (tail-trimmed) inputs,
-    # a clip was dropped at concat -- raise so the caller fails rather than ship a partial film.
-    _sil = _probe_duration(silent) or 0.0
-    _sum_in = sum(norm_durations)
-    if _sum_in > 0 and _sil < _sum_in * 0.85:
-        raise RuntimeError(
-            f"concat dropped clips: assembled {_sil:.2f}s < sum of {len(norms)} inputs {_sum_in:.2f}s")
-
+    Extracted from _assemble unchanged (cf#784) so the chunked path finalizes through exactly the
+    same code rather than a copy that can drift. Returns (out_path, duration, has_audio).
+    """
     out = os.path.join(work, "final.mp4")
     has_bed = bool(audio_path) and os.path.isfile(audio_path)
     if has_bed and keep_clip_audio:
@@ -563,7 +1064,62 @@ def _assemble(work, srcs, audio_path, width, height, fps, crf, preset, crossfade
     # Honest: probe the actual output rather than assuming bed == audio (a talking
     # film has audio with no bed; a failed bed mux would not).
     has_audio = _probe_audio(out)[0]
-    return out, _probe_duration(out), has_audio, norm_durations
+    return out, _probe_duration(out), has_audio
+
+
+def _assemble(work, srcs, audio_path, width, height, fps, crf, preset, crossfade, trim_join_frames,
+              keep_clip_audio=False):
+    # keep_clip_audio: the clips carry per-clip lip-synced dialogue (talking film).
+    # The crossfade concat path drops audio (-an) and acrossfade is not wired, so
+    # dialogue forces a hard cut; every clip is normalized with ensure_audio so the
+    # hard-cut concat (-c copy) preserves the dialogue uniformly.
+    effective_crossfade = 0.0 if keep_clip_audio else crossfade
+    # Tail-trim one (or N) frames off every clip but the last, ONLY on hard
+    # cuts -- mirrors assemble._trim_seconds_for_join (continuity de-dupe).
+    trim_tail = (trim_join_frames / max(1, fps)) if effective_crossfade <= 0 else 0.0
+    last = len(srcs) - 1
+    norms = []
+    for i, item in enumerate(srcs):
+        src, target = item[0], item[1]
+        hold_to = item[2] if len(item) > 2 else None
+        tail = trim_tail if (trim_tail > 0 and i < last) else 0.0
+        cap, extend_to = _clip_plan(src, target, hold_to, tail, keep_clip_audio)
+        dst = os.path.join(work, f"norm_{i:03d}.mp4")
+        _normalize(src, dst, width=width, height=height, fps=fps, crf=crf, preset=preset,
+                   cap=cap, ensure_audio=keep_clip_audio, extend_to=extend_to)
+        norms.append(dst)
+
+    # ACTUAL per-clip assembled seconds (#697/#698): the normalized (tail-trimmed, capped) duration each
+    # clip contributes to the film, in submit order. Probed ONCE here and reused by the drop-guard below;
+    # returned so the Worker can gate a truncated clip against its plan and time captions to the real cut.
+    norm_durations = [round(_probe_duration(n) or 0.0, 3) for n in norms]
+
+    silent = os.path.join(work, "_silent.mp4")
+    if effective_crossfade > 0 and len(norms) > 1:
+        _concat_crossfade(norms, silent, effective_crossfade, crf=crf, preset=preset)
+    else:
+        # Video copied; per-clip dialogue (ensure_audio) encoded once across the joins (cf#1167).
+        _concat_hard(norms, silent, audio=keep_clip_audio)
+
+    # Fail loud: the concat must NEVER silently drop a clip (a scatter render once shipped 1 of 3
+    # shots). Compares the assembled duration against what the inputs IMPLY -- sum for a hard cut,
+    # sum minus the crossfade overlaps otherwise -- inside a frame-scale tolerance.
+    #
+    # This replaces a flat `< sum * 0.85` ratio (cf#784). That ratio could not see a dropped part
+    # once there were 7 or more of them ((n-1)/n rises above 0.85), so it got blinder as films got
+    # longer, and chunked assemble would have inherited that blindness at the outer join where the
+    # parts are whole batches. concat_guard computes the expectation instead of tolerating a
+    # percentage, which is what lets the tolerance be tight enough to see a single dropped part.
+    # ConcatDropError subclasses RuntimeError, so the caller's existing handling is unchanged.
+    _sil = _probe_duration(silent) or 0.0
+    assert_no_dropped_parts(
+        _sil, norm_durations,
+        level=f"clip concat ({len(norms)} clips)",
+        crossfade=effective_crossfade, fps=fps,
+    )
+
+    out, _out_dur, has_audio = _mux_bed_onto(work, silent, audio_path, keep_clip_audio)
+    return out, _out_dur, has_audio, norm_durations
 
 
 
@@ -601,49 +1157,69 @@ async def overlay(req):
 # _credits_card_filter) are factored out for unit-testability.
 
 def _escape_drawtext(text):
-    """Escape text for use in an ffmpeg drawtext text= value.
-    Mirrors modules/text-overlay overlay.ts escapeDrawtext: backslash first,
-    then colon, then single-quote (order is critical to avoid double-escaping).
+    """Escape text for an UNQUOTED drawtext text= value in a -vf filtergraph.
+
+    Two parsers read it, so two levels. The option parser first: backslash, quote, colon. Then the
+    graph parser: backslash, quote, and what would end a filter or a link. Measured against
+    textfile= on real ffmpeg (vivijure-cf#1218). A title inside single quotes lost its apostrophe, and
+    one with an apostrophe and a colon failed the render. Callers also set expansion=none, or a %{...}
+    in a title would be run.
     """
-    return (text
-            .replace("\\", "\\\\")
-            .replace(":", "\\:")
-            .replace("'", "\\'"))
+    option = text.replace("\\", "\\\\").replace("'", "\\'").replace(":", "\\:")
+    graph = option.replace("\\", "\\\\").replace("'", "\\'")
+    for char in ",;[]":
+        graph = graph.replace(char, "\\" + char)
+    return graph
 
 
 def _title_card_filter(text, *, subtitle=None, font="DejaVu Sans",
-                       font_size=80, sub_font_size=48, color="white"):
+                       font_size=80, sub_font_size=48, color="white",
+                       width=1920, height=1080):
     """Build a drawtext -vf filter string for a title card.
     Title is vertically centered (or offset upward when subtitle is present);
-    subtitle appears below at a smaller size. Pure function; no I/O.
+    subtitle appears below at a smaller size. Sized for the frame, and a title
+    too long for the card wraps or shrinks (frame_text). Pure function; no I/O.
     """
-    t = _escape_drawtext(text)
+    scale = frame_text.card_scale(width, height)
+    lines, size = frame_text.fit_title(text, round(font_size * scale), width)
+    line_h = round(size * frame_text.LINE_HEIGHT_FACTOR)
+    # Each drawtext filter evaluates its own text_h independently, so use
+    # fixed pixel offsets from h/2: title above the midline, subtitle below.
+    gap = round(16 * scale)
+
+    def title_y(i):
+        if len(lines) == 1:
+            return f"(h/2-text_h-{gap})" if subtitle else "(h-text_h)/2"
+        if subtitle:
+            return f"(h/2-{gap}-{(len(lines) - i) * line_h})"
+        return f"((h-{len(lines) * line_h})/2+{i * line_h})"
+
+    parts = [
+        f"drawtext=font='{font}':text={_escape_drawtext(line)}:expansion=none:fontsize={size}"
+        f":fontcolor={color}:x=(w-text_w)/2:y={title_y(i)}"
+        for i, line in enumerate(lines)
+    ]
     if subtitle:
-        # Each drawtext filter evaluates its own text_h independently, so use
-        # fixed pixel offsets from h/2: title above the midline, subtitle below.
-        gap = 16
-        vf = (
-            f"drawtext=font='{font}':text='{t}':fontsize={font_size}"
-            f":fontcolor={color}:x=(w-text_w)/2:y=(h/2-text_h-{gap})"
-            f",drawtext=font='{font}':text='{_escape_drawtext(subtitle)}'"
-            f":fontsize={sub_font_size}:fontcolor={color}"
+        sub_size = frame_text.fit_lines([subtitle], round(sub_font_size * scale), width)
+        parts.append(
+            f"drawtext=font='{font}':text={_escape_drawtext(subtitle)}:expansion=none"
+            f":fontsize={sub_size}:fontcolor={color}"
             f":x=(w-text_w)/2:y=(h/2+{gap})"
         )
-    else:
-        vf = (
-            f"drawtext=font='{font}':text='{t}':fontsize={font_size}"
-            f":fontcolor={color}:x=(w-text_w)/2:y=(h-text_h)/2"
-        )
-    return vf
+    return ",".join(parts)
 
 
 def _credits_card_filter(lines, duration, *, font="DejaVu Sans",
-                         font_size=48, color="white", line_spacing=20):
+                         font_size=48, color="white", line_spacing=20,
+                         width=1920, height=1080):
     """Build a scrolling-credits -vf filter for a list of text lines.
     Lines scroll upward from the bottom of the frame to above the top over
-    `duration` seconds. One drawtext segment per line. Pure function; no I/O.
+    `duration` seconds. One drawtext segment per line, one size for all of them,
+    sized for the frame (frame_text). Pure function; no I/O.
     """
-    line_height = font_size + line_spacing
+    scale = frame_text.card_scale(width, height)
+    size = frame_text.fit_lines(lines, round(font_size * scale), width)
+    line_height = size + round(line_spacing * size / font_size)
     total_h = len(lines) * line_height
     filters = []
     for i, line in enumerate(lines):
@@ -653,7 +1229,7 @@ def _credits_card_filter(lines, duration, *, font="DejaVu Sans",
         # t=dur -> y_0 = -total_h       (block ends above the frame)
         y_expr = f"h-(t/{duration:.3f})*(h+{total_h})+{i * line_height}"
         filters.append(
-            f"drawtext=font='{font}':text='{t}':fontsize={font_size}"
+            f"drawtext=font='{font}':text={t}:expansion=none:fontsize={size}"
             f":fontcolor={color}:x=(w-text_w)/2:y=({y_expr})"
         )
     return ",".join(filters)
@@ -729,13 +1305,16 @@ def _assemble_film_titles(work, film_path, title_spec, credits_spec,
             card = os.path.join(work, "title_card.mp4")
             _make_card(card, width=width, height=height, fps=fps, crf=crf,
                        preset=preset, duration=secs,
-                       vf_filter=_title_card_filter(text, subtitle=subtitle),
+                       vf_filter=_title_card_filter(text, subtitle=subtitle, width=width, height=height),
                        **card_audio)
             segments.append(card)
 
     film_norm = os.path.join(work, "film_norm.mp4")
     _normalize(film_path, film_norm, width=width, height=height, fps=fps,
-               crf=crf, preset=preset, cap=None, keep_audio=has_audio)
+               crf=crf, preset=preset, cap=None, keep_audio=has_audio,
+               timeout=_film_encode_timeout(film_path))
+    # cf#1129: without this the output joins a third full copy, which a large film cannot fit on the disk.
+    os.remove(film_path)
     segments.append(film_norm)
 
     if credits_spec:
@@ -749,12 +1328,12 @@ def _assemble_film_titles(work, film_path, title_spec, credits_spec,
             card = os.path.join(work, "credits_card.mp4")
             _make_card(card, width=width, height=height, fps=fps, crf=crf,
                        preset=preset, duration=secs,
-                       vf_filter=_credits_card_filter(lines, secs),
+                       vf_filter=_credits_card_filter(lines, secs, width=width, height=height),
                        **card_audio)
             segments.append(card)
 
     out = os.path.join(work, "with_titles.mp4")
-    _concat_hard(segments, out)
+    _concat_hard(segments, out, audio=has_audio)
     return out, _probe_duration(out)
 
 
@@ -790,9 +1369,9 @@ async def _film_titles_work(body):
 
     work = tempfile.mkdtemp(prefix="vftitles-")
     try:
-        async with ClientSession(timeout=ClientTimeout(total=DOWNLOAD_TIMEOUT_S)) as s:
+        async with ClientSession(timeout=_film_timeout()) as s:
             film_path = os.path.join(work, "film.mp4")
-            ok, info = await _download(s, video_url, film_path, MAX_CLIP_BYTES)
+            ok, info = await _download(s, video_url, film_path, MAX_FILM_BYTES)
             if not ok:
                 sc = 413 if info == "too large" else (400 if info.startswith("blocked:") else 502)
                 raise _JobError(sc, f"film {info}")
@@ -814,25 +1393,19 @@ async def _film_titles_work(body):
             log.exception("/film-titles assemble failed")
             raise _JobError(500, str(e))
 
-        with open(out_path, "rb") as f:
-            out_bytes = f.read()
-
         # BEFORE the artifact, deliberately: the core adopts on the ARTIFACT's presence, so writing
         # this after would leave a window where a poll adopts and finds no measurement (#130).
         await _put_meta_sidecar(body.get("metaUrl"), duration_seconds=secs,
                                 prepend_seconds=(title_spec or {}).get("seconds"))
 
-        async with ClientSession(timeout=ClientTimeout(total=UPLOAD_TIMEOUT_S)) as s:
-            async with guarded_put(s, output_url, allow_redirects=False, data=out_bytes,
-                             headers={"content-type": "video/mp4"}) as r:  # codeql[py/full-ssrf]
-                if r.status not in (200, 201, 204):
-                    raise _JobError(502, f"output put {r.status}")
+        async with ClientSession(timeout=_film_timeout()) as s:
+            out_size = await _put_file(s, output_url, out_path)
 
-        log.info("/film-titles ok key=%s bytes=%d dur=%.3f", safe_log_value(output_key), len(out_bytes), secs)  # codeql[py/log-injection]
+        log.info("/film-titles ok key=%s bytes=%d dur=%.3f", safe_log_value(output_key), out_size, secs)  # codeql[py/log-injection]
         return {
             "ok": True,
             "key": output_key,
-            "bytes": len(out_bytes),
+            "bytes": out_size,
             "durationSeconds": round(secs, 3),
             "elapsedMs": _elapsed_ms(t0),  # cf#268 capacity telemetry
         }
@@ -911,7 +1484,7 @@ def _ass_colour(color):
     return "&H00FFFFFF"
 
 
-def _subtitle_filter(srt_path, style):
+def _subtitle_filter(srt_path, style, width=None, height=None):
     """Build the ffmpeg -vf subtitles filter string for an SRT burn. Pure; no I/O.
     style: {font, fontSize, color, position, box, marginV}. `box` == "box" draws an opaque box
     behind the text (BorderStyle 3); otherwise the text is outlined (BorderStyle 1, Outline 2)."""
@@ -931,10 +1504,15 @@ def _subtitle_filter(srt_path, style):
         border_style, outline, shadow = 3, 0, 0
     else:
         border_style, outline, shadow = 1, 2, 0
+    # cf#1111: a vertical frame scales the type down. Landscape formats the same integers as before.
+    if width and height:
+        scale = frame_text.caption_scale(width, height)
+        size = round(size * scale, 1)
+        outline = round(outline * scale, 1)
     force_style = (
-        f"FontName={font},FontSize={size},PrimaryColour={primary},"
+        f"FontName={font},FontSize={size:g},PrimaryColour={primary},"
         f"Alignment={alignment},MarginV={margin_v},"
-        f"BorderStyle={border_style},Outline={outline},Shadow={shadow}"
+        f"BorderStyle={border_style},Outline={outline:g},Shadow={shadow}"
     )
     return f"subtitles={_escape_subtitles_path(srt_path)}:force_style='{force_style}'"
 
@@ -951,7 +1529,61 @@ def _burn_subtitles(src, dst, vf_filter, crf=18, preset="medium"):
         "-movflags", "+faststart",
         dst,
     ]
-    _run(cmd)
+    _run(cmd, timeout=_film_encode_timeout(src))
+
+
+def _selftest():
+    """Local subtitle burn. No R2. Isolated CF Container proof (cf#1040)."""
+    work = tempfile.mkdtemp(prefix="vf-selftest-")
+    try:
+        src = os.path.join(work, "src.mp4")
+        srt = os.path.join(work, "cue.srt")
+        out = os.path.join(work, "out.mp4")
+        try:
+            _run([
+                "ffmpeg", "-y",
+                "-f", "lavfi", "-i", "color=c=blue:s=320x240:d=1:r=8",
+                "-frames:v", "8",
+                "-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p",
+                src,
+            ], timeout=60)
+        except FfmpegTimeout as e:
+            raise _JobError(500, str(e)) from e
+        except subprocess.CalledProcessError as e:
+            raise _JobError(500, "selftest source encode failed") from e
+        with open(srt, "w", encoding="utf-8") as fh:
+            fh.write("1\n00:00:00,000 --> 00:00:00,800\nvivijure\n")
+        vf = _subtitle_filter(srt, {"font": "DejaVu Sans", "fontSize": 18})
+        try:
+            _run([
+                "ffmpeg", "-y", "-i", src,
+                "-vf", vf,
+                "-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p",
+                out,
+            ], timeout=60)
+        except FfmpegTimeout as e:
+            raise _JobError(500, str(e)) from e
+        except subprocess.CalledProcessError as e:
+            raise _JobError(500, "selftest subtitle burn failed") from e
+        size = os.path.getsize(out) if os.path.isfile(out) else 0
+        if size < 100:
+            raise _JobError(500, "selftest output missing")
+        return {
+            "ok": True,
+            "applied": ["selftest:subtitle:burn"],
+            "frames": 8,
+            "bytes": size,
+        }
+    finally:
+        shutil.rmtree(work, ignore_errors=True)
+
+
+async def selftest(_req):
+    """POST /selftest -- local subtitle burn. No R2. Isolated CF proof (cf#1040)."""
+    try:
+        return web.json_response(await asyncio.to_thread(_selftest))
+    except _JobError as e:
+        return web.json_response({"ok": False, "error": e.message}, status=e.status)
 
 
 async def _subtitle_work(body):
@@ -1018,14 +1650,15 @@ async def _subtitle_work(body):
         burned = False
         out_secs = 0.0
         if want_burn:
-            async with ClientSession(timeout=ClientTimeout(total=DOWNLOAD_TIMEOUT_S)) as s:
+            async with ClientSession(timeout=_film_timeout()) as s:
                 film_path = os.path.join(work, "film.mp4")
-                ok, info = await _download(s, video_url, film_path, MAX_CLIP_BYTES)
+                ok, info = await _download(s, video_url, film_path, MAX_FILM_BYTES)
                 if not ok:
                     sc = 413 if info == "too large" else (400 if info.startswith("blocked:") else 502)
                     raise _JobError(sc, f"film {info}")
 
-            vf = _subtitle_filter(srt_path, style)
+            frame_w, frame_h = _probe_frame(film_path)
+            vf = _subtitle_filter(srt_path, style, frame_w, frame_h)
             out_path = os.path.join(work, "subbed.mp4")
             loop = asyncio.get_running_loop()
             try:
@@ -1040,19 +1673,14 @@ async def _subtitle_work(body):
                 log.exception("/subtitle burn failed")
                 raise _JobError(500, str(e))
 
-            with open(out_path, "rb") as f:
-                out_bytes = f.read()
             # Probe BEFORE the upload so the measurement exists in time to be written first. The
             # subtitle module never prepends (it burns in place), so only a duration is carried.
             out_secs = _probe_duration(out_path)
             # BEFORE the artifact, deliberately: the core adopts on the ARTIFACT's presence, so a
             # sidecar written after would leave a window where a poll adopts and finds nothing (#130).
             await _put_meta_sidecar(body.get("metaUrl"), duration_seconds=out_secs)
-            async with ClientSession(timeout=ClientTimeout(total=UPLOAD_TIMEOUT_S)) as s:
-                async with guarded_put(s, output_url, allow_redirects=False, data=out_bytes,
-                                 headers={"content-type": "video/mp4"}) as r:  # codeql[py/full-ssrf]
-                    if r.status not in (200, 201, 204):
-                        raise _JobError(502, f"output put {r.status}")
+            async with ClientSession(timeout=_film_timeout()) as s:
+                await _put_file(s, output_url, out_path)
             burned = True
 
         log.info("/subtitle ok key=%s burned=%s sidecar=%s dur=%.3f",  # codeql[py/log-injection]
@@ -1280,8 +1908,8 @@ async def frames(req):
     work = tempfile.mkdtemp(prefix="frames-")
     try:
         clip_path = os.path.join(work, "clip.mp4")
-        async with ClientSession(timeout=ClientTimeout(total=DOWNLOAD_TIMEOUT_S)) as s:
-            dok, info = await _download(s, video_url, clip_path, MAX_CLIP_BYTES)
+        async with ClientSession(timeout=_film_timeout()) as s:
+            dok, info = await _download(s, video_url, clip_path, MAX_FILM_BYTES)
             if not dok:
                 sc = 413 if info == "too large" else (400 if str(info).startswith("blocked:") else 502)
                 return web.json_response({"ok": False, "error": "clip %s" % info}, status=sc)
@@ -1310,17 +1938,16 @@ async def frames(req):
             log.exception("/frames extraction failed")
             return web.json_response({"ok": False, "error": "frame extraction failed: %s" % e}, status=500)
 
-        with open(out_path, "rb") as f:
-            out_bytes = f.read()
-
-        async with ClientSession(timeout=ClientTimeout(total=UPLOAD_TIMEOUT_S)) as s:
-            async with guarded_put(s, output_url, allow_redirects=False, data=out_bytes,
-                             headers={"content-type": content_type}) as r:  # codeql[py/full-ssrf]
-                if r.status not in (200, 201, 204):
-                    return web.json_response({"ok": False, "error": "output put %d" % r.status}, status=502)
+        # /frames answers with a JSON body rather than raising, so the helper's _JobError is
+        # translated here; the wire behaviour is unchanged.
+        try:
+            async with ClientSession(timeout=ClientTimeout(total=UPLOAD_TIMEOUT_S)) as s:
+                out_size = await _put_file(s, output_url, out_path, content_type=content_type)
+        except _JobError as e:
+            return web.json_response({"ok": False, "error": e.message}, status=e.status)
 
         log.info("/frames ok key=%s count=%d grid=%dx%d bytes=%d",
-                 safe_log_value(output_key), len(times), cols, rows, len(out_bytes))  # codeql[py/log-injection]
+                 safe_log_value(output_key), len(times), cols, rows, out_size)  # codeql[py/log-injection]
         resp = {
             "ok": True,
             "key": output_key,
@@ -1329,12 +1956,218 @@ async def frames(req):
             "rows": rows,
             "frame_times": [round(t, 3) for t in times],
             "duration": round(duration, 3) if duration else None,
-            "bytes": len(out_bytes),
+            "bytes": out_size,
             "content_type": content_type,
         }
         if degraded:
             resp["degraded"] = degraded
         return web.json_response(resp)
+    finally:
+        shutil.rmtree(work, ignore_errors=True)
+
+
+# ---------------------------------------------------------------------------
+# POST /async/join-films: join finished films, in order, into one film.
+#
+# The video is stream-copied, so a join costs no picture quality and little CPU. The audio is decoded and
+# encoded once across the whole join. A plain `-c copy` leaves audio packets at the joins whose timestamp step is cut short while
+# they still decode to a full 1024 samples, so the join holds more samples than its timestamps imply. Measured on 25 parts: 796 ms late at the last part when counted in
+# samples, which is what a player playing samples in order hears, and 0 ms when read from timestamps. One audio
+# encode holds it under a frame, with no growth. test_local_join_films.py measures this by sample count. Keep it that way.
+#
+# min_hard_comp IS REQUIRED. aresample only corrects timing past that many seconds, and its default is 0.1 s. At the
+# default, on ffmpeg 9.0.2, 25 short films with audio 21 to 34 ms long spread to 50 ms, the same as with no filter at
+# all. At 0.01 the filter pads or trims samples at a join and does not resample, so pitch is untouched.
+#
+# SPREAD ON THE DEPLOYED BUILD, ffmpeg 5.1 by its Lavf59.27.100 tag, one join of 25 films each (cf#1167): 8.0 ms at 20 s
+# a film and 15.3 ms at 2 to 3 s a film. One frame at 24 fps is 41.7 ms. The 10 ms bound in test_local_join_films.py
+# holds at film length here and not on short films. That test runs on whatever ffmpeg is on PATH, and on ffmpeg 9.0.2
+# the same four-set comparison measured 8.3 ms or less, so a pass there does not speak for this image.
+#
+# Parts are read by URL, so peak disk is the output, twice for an instant during faststart.
+#
+# RESTARTS. Job state is in memory, so a restart loses a running join, and status then answers not_found. The
+# caller re-submits with the same URLs, or fresh ones for the same objects. The job id comes from the object paths
+# and not the signatures, so a re-submit reaches the same job, and the output bytes are the same every run. The
+# caller must send the same x-vivijure-finish-affinity header on every call, or it reaches another instance.
+JOIN_AUDIO_ARGS = ("-af", "aresample=async=1:min_hard_comp=0.01:first_pts=0", "-c:a", "aac", "-b:a", "192k")
+# What must match across parts. A stream copy of parts that differ here plays wrongly or not at all, and nothing
+# in ffmpeg reports it.
+JOIN_VIDEO_FIELDS = ("codec_name", "profile", "width", "height", "pix_fmt", "r_frame_rate", "time_base")
+JOIN_AUDIO_FIELDS = ("sample_rate", "channels")
+
+
+def _parse_join_body(body):
+    """(film urls, output url), or _JobError. Runs at submit, so a bad request never becomes a job."""
+    if not isinstance(body, dict):
+        raise _JobError(400, "body must be an object")
+    films = body.get("films")
+    if not isinstance(films, list) or not films:
+        raise _JobError(400, "films must be a non-empty array")
+    if len(films) > MAX_JOIN_FILMS:
+        raise _JobError(400, f"too many films (>{MAX_JOIN_FILMS})")
+    urls = []
+    for i, film in enumerate(films):
+        url = film.get("url") if isinstance(film, dict) else None
+        if not isinstance(url, str) or not url:
+            raise _JobError(400, f"films[{i}].url missing")
+        ok, why = validate_fetch_url(url)
+        if not ok:
+            raise _JobError(400, f"films[{i}].url blocked: {why}")
+        # These go into a concat list as file '<url>'. A quote or a newline would add a directive to it.
+        if any(ch in url for ch in "'\r\n\\"):
+            raise _JobError(400, f"films[{i}].url has a character a concat list cannot carry")
+        urls.append(url)
+    output_url = body.get("outputUrl")
+    if not isinstance(output_url, str) or not output_url:
+        raise _JobError(400, "outputUrl required")
+    ok, why = validate_fetch_url(output_url)
+    if not ok:
+        raise _JobError(400, f"outputUrl blocked: {why}")
+    return urls, output_url
+
+
+def _join_job_id(body):
+    urls, output_url = _parse_join_body(body)
+    identity = [[urlsplit(u).netloc, urlsplit(u).path] for u in [output_url, *urls]]
+    return "join-" + hashlib.sha256(_json.dumps(identity).encode("utf-8")).hexdigest()[:32]
+
+
+def _probe_join_part(url):
+    """Stream fields and size of one part, read by URL. Raises _JobError with no URL in it: it is signed."""
+    try:
+        proc = _run(
+            ["ffprobe", "-v", "error", "-protocol_whitelist", CONCAT_PROTOCOL_WHITELIST,
+             "-show_entries",
+             "format=duration,size:stream=codec_type," + ",".join(JOIN_VIDEO_FIELDS + JOIN_AUDIO_FIELDS),
+             "-of", "json", url],
+            timeout=FFPROBE_TIMEOUT, text=True,
+        )
+        info = _json.loads(proc.stdout)
+        fmt = info["format"]
+        streams = info["streams"]
+        video = next(st for st in streams if st.get("codec_type") == "video")
+        audio = next((st for st in streams if st.get("codec_type") == "audio"), None)
+        return {
+            "duration": float(fmt["duration"]),
+            "size": int(fmt["size"]),
+            "video": {k: video.get(k) for k in JOIN_VIDEO_FIELDS},
+            "audio": None if audio is None else {k: audio.get(k) for k in JOIN_AUDIO_FIELDS},
+        }
+    except FfmpegTimeout:
+        raise _JobError(502, "probe timed out") from None
+    except subprocess.CalledProcessError:
+        raise _JobError(502, "probe failed") from None
+    except (KeyError, StopIteration, TypeError, ValueError):
+        raise _JobError(502, "probe found no readable video") from None
+
+
+def _check_join_parts(parts):
+    """Refuse parts a stream copy cannot join, and a join one upload cannot carry."""
+    first = parts[0]
+    for i, part in enumerate(parts):
+        if part["video"] != first["video"]:
+            diff = [k for k in JOIN_VIDEO_FIELDS if part["video"].get(k) != first["video"].get(k)]
+            raise _JobError(422, f"films[{i}] differs from films[0] in video: {', '.join(diff)}")
+        if (part["audio"] is None) != (first["audio"] is None):
+            raise _JobError(422, f"films[{i}] and films[0] differ: one has no audio track")
+        if part["audio"] != first["audio"]:
+            diff = [k for k in JOIN_AUDIO_FIELDS if part["audio"].get(k) != first["audio"].get(k)]
+            raise _JobError(422, f"films[{i}] differs from films[0] in audio: {', '.join(diff)}")
+    total = sum(part["size"] for part in parts)
+    if total > MAX_FILM_BYTES:
+        raise _JobError(413, f"films total {total} bytes, over the {MAX_FILM_BYTES} byte limit of one upload")
+
+
+def _stream_seconds(path, selector):
+    proc = _run(
+        ["ffprobe", "-v", "error", "-select_streams", selector,
+         "-show_entries", "stream=duration", "-of", "default=noprint_wrappers=1:nokey=1", path],
+        timeout=FFPROBE_TIMEOUT, text=True,
+    )
+    try:
+        return float(proc.stdout.strip())
+    except ValueError:
+        return None
+
+
+def _frame_rate(text):
+    num, _, den = str(text).partition("/")
+    try:
+        return float(num) / float(den or 1)
+    except (ValueError, ZeroDivisionError):
+        return 0.0
+
+
+async def _join_films_work(body):
+    """Probe the parts, join them, check nothing dropped, PUT one film. Raises _JobError on any failure."""
+    t0 = time.monotonic()
+    urls, output_url = _parse_join_body(body)
+    output_key = body.get("outputKey", "")
+    loop = asyncio.get_running_loop()
+
+    parts = []
+    for i, url in enumerate(urls):
+        try:
+            parts.append(await loop.run_in_executor(None, _probe_join_part, url))
+        except _JobError as e:
+            raise _JobError(e.status, f"films[{i}] {e.message}") from None
+    _check_join_parts(parts)
+
+    has_audio = parts[0]["audio"] is not None
+    part_seconds = [part["duration"] for part in parts]
+    total_seconds = sum(part_seconds)
+    fps = _frame_rate(parts[0]["video"]["r_frame_rate"]) or 24
+    output_args = ["-map", "0:v:0", "-c:v", "copy"]
+    if has_audio:
+        output_args += ["-map", "0:a:0", *JOIN_AUDIO_ARGS]
+    # The bytes are the same on every run from one binary, which test_local_join_films.py proves. No flag is needed.
+    output_args += ["-movflags", "+faststart"]
+    timeout = max(FFMPEG_TIMEOUT, int(total_seconds * ENCODE_SECONDS_PER_FILM_SECOND))
+
+    work = tempfile.mkdtemp(prefix="join-")
+    try:
+        out_path = os.path.join(work, "joined.mp4")
+        try:
+            await loop.run_in_executor(
+                None, functools.partial(
+                    _concat_hard_urls, urls, out_path, os.path.join(work, "parts.txt"),
+                    output_args=output_args, timeout=timeout),
+            )
+            seconds = _probe_duration(out_path)
+            assert_no_dropped_parts(seconds, part_seconds, level=f"join of {len(urls)} films", fps=fps)
+            video_seconds = _stream_seconds(out_path, "v:0")
+            audio_seconds = _stream_seconds(out_path, "a:0") if has_audio else None
+        except FfmpegTimeout as e:
+            raise _JobError(500, str(e)) from None
+        except ConcatDropError as e:
+            raise _JobError(500, str(e)) from None
+        except subprocess.CalledProcessError as e:
+            # e.stderr can quote a signed URL, so it goes nowhere.
+            raise _JobError(500, f"ffmpeg exited {e.returncode} during the join") from None
+
+        async with ClientSession(timeout=_film_timeout()) as s:
+            size = await _put_file(s, output_url, out_path)
+
+        offsets, at = [], 0.0
+        for d in part_seconds:
+            offsets.append(round(at, 3))
+            at += d
+        return {
+            "ok": True,
+            "key": output_key,
+            "bytes": size,
+            "durationSeconds": round(seconds, 3),
+            "videoSeconds": None if video_seconds is None else round(video_seconds, 3),
+            "audioSeconds": None if audio_seconds is None else round(audio_seconds, 3),
+            "hasAudio": has_audio,
+            "films": len(urls),
+            "filmSeconds": [round(d, 3) for d in part_seconds],
+            "filmOffsetsSeconds": offsets,
+            "width": parts[0]["video"]["width"],
+            "height": parts[0]["video"]["height"],
+            "elapsedMs": _elapsed_ms(t0),
+        }
     finally:
         shutil.rmtree(work, ignore_errors=True)
 
@@ -1346,13 +2179,20 @@ ASYNC_WORKS = {
     "film-titles": _film_titles_work,
     "subtitle": _subtitle_work,
     "finish": _finish_work,
+    "join-films": _join_films_work,
 }
+# Routes whose job id comes from their inputs. Every other route mints a random id.
+KEYED_ASYNC_JOBS = {"join-films": _join_job_id}
 
 app = web.Application(
-    client_max_size=1024 * 1024,  # JSON bodies are small (URLs + a short SRT)
+    # JSON bodies are small. The largest is an assemble body: one presigned URL per clip plus the partial pool,
+    # about 0.46 MB at MAX_CLIPS (600). tests/clip-cap-equality-1122.test.ts holds it under this limit.
+    client_max_size=1024 * 1024,
     middlewares=[bearer_middleware],
 )
 app.router.add_get("/health", health)
+app.router.add_get("/auth-check", auth_check)
+app.router.add_post("/selftest", selftest)
 app.router.add_post("/finish", finish)
 app.router.add_post("/overlay", overlay)
 app.router.add_post("/film-titles", film_titles)
@@ -1364,5 +2204,12 @@ app.router.add_post("/async/{route}", async_submit)
 app.router.add_get("/async/status/{jobId}", async_status)
 
 if __name__ == "__main__":
+    # cf#893: refuse to START without auth configured. At the real entry point rather than at module
+    # scope, and the difference is deliberate: `python app.py` is what the Dockerfile CMD runs, so
+    # this is the door opening, while an IMPORT is a test reading the module. Eleven container tests
+    # import app; gating import would have broken all of them for no security gain, because
+    # bearer_middleware independently answers 503 on every media route when no token is set.
+    # Two layers, each meaningful: this one refuses to bind, that one refuses to serve.
+    require_bearer_config()
     log.info("video-finish listening on 0.0.0.0:%d", PORT)
     web.run_app(app, host="0.0.0.0", port=PORT, access_log=None)

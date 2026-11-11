@@ -1,6 +1,6 @@
 {
   "name": "vivijure-cf",
-  "version": "1.33.9",
+  "version": "1.45.0",
   "description": "Vivijure Studio Cloudflare control panel: Workers host on @skyphusion-labs/vivijure-core. Pair with vivijure-local for self-hosted.",
   "license": "AGPL-3.0-only",
   "homepage": "https://vivijure.com",
@@ -18,8 +18,8 @@
   "type": "module",
   "dependencies": {
     "@cloudflare/containers": "0.3.7",
-    "@skyphusion-labs/vivijure-core": "^1.22.5",
-    "@skyphusion-labs/vivijure-mcp": "^1.2.1"
+    "@skyphusion-labs/vivijure-core": "^1.44.0",
+    "@skyphusion-labs/vivijure-mcp": "^2.1.0"
   },
   "scripts": {
     "dev": "wrangler dev",
@@ -29,22 +29,25 @@
     "typecheck": "tsc --noEmit && tsc -p tsconfig.scripts.json && tsc -p tsconfig.tests.json",
     "guard:resolve": "node scripts/resolve-guard.mjs",
     "check:catalog": "node scripts/check-tenant-module-catalog.mjs",
+    "check:matrix": "node scripts/check-capability-matrix.mjs",
     "typecheck:scripts": "tsc -p tsconfig.scripts.json",
     "test": "vitest run",
+    "test:browser": "node tests/browser/planner-phone.mjs && node tests/browser/film-board.mjs && node tests/browser/film-new.mjs && node tests/browser/make-video.mjs && node tests/browser/refine-guard-1334.mjs && node tests/browser/scene-editor-600.mjs",
     "test:watch": "vitest",
     "conformance": "vitest run tests/conformance.test.ts tests/conformance.live.test.ts"
   },
   "devDependencies": {
-    "@cloudflare/workers-types": "^5.20260817.1",
-    "@types/node": "^26.6.2",
-    "@vitest/coverage-v8": "^4.1.11",
+    "@cloudflare/workers-types": "^5.20261106.1",
+    "@types/node": "^26.6.6",
+    "@vitest/coverage-v8": "^5.1.0",
     "blake3-wasm": "2.1.5",
+    "playwright-core": "^1.65.0",
     "typescript": "^7.0.2",
-    "vitest": "^4.1.10",
-    "wrangler": "^4.123.0"
+    "vitest": "^5.0.3",
+    "wrangler": "^4.158.0"
   },
   "overrides": {
-    "sharp": "0.35.4",
-    "undici": "7.29.0"
+    "sharp": "0.35.5",
+    "undici": "7.30.1"
   }
 }

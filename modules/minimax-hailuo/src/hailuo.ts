@@ -1,7 +1,7 @@
 // Pure MiniMax Hailuo 2.3 Fast mapping/parsing: build the RunPod request body, parse the result
 // video URL, and encode/decode the async poll token. No I/O here, so it unit-tests without the
 // runtime or spend. The video-URL parse, poll token, and RunPod-GC helpers are shared, vendored
-// per-module so the module stays independent (matches the seedance reference).
+// per-module so the module stays independent (matches the alibaba-wan door).
 
 import type { MotionBackendInput } from "./contract";
 

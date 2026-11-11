@@ -98,13 +98,16 @@ describe("drift guard: no module serialises its own invoke request or input", ()
 
   it("no module logs or stringifies `req` / `input` / `body` / `payload` wholesale", () => {
     // The credential rides the invoke request, so serialising the request -- into a console line, an
-    // error message, anything -- is what would put it in `Logs` and from there into the tail worker
-    // and Loki. Field-scoped logging (shot_id, a status code, an error message) stays fine and is
-    // what every module does today.
+    // error message, anything -- is what would put it in `Logs`, and from there into any tail
+    // consumer the deploy has (cf#838: the core ships with none by default now, so the landing zone
+    // is Cloudflare Workers Logs, retained with persist = true). Field-scoped logging (shot_id, a
+    // status code, an error message) stays fine and is what every module does today.
     const offenders: string[] = [];
     // SCOPE, and it was narrowed by a real false positive on the first run rather than guessed.
     //
-    // The LEAK VECTOR is console output: it lands in `Logs`, which the tail worker forwards to Loki.
+    // The LEAK VECTOR is console output: it lands in `Logs` (and in Loki wherever an operator runs
+    // the opt-in tail tier). Unbinding the tail consumer narrowed the landing zone; it did not remove
+    // it, so this guard is unchanged by cf#838.
     // So the console patterns cover every name an invoke object goes by. The BARE-stringify pattern
     // is deliberately narrower -- `req` only -- because `payload` and `input` are ordinary local
     // names with legitimate uses that have nothing to do with logging: local-gpu's `encodePoll` does
@@ -165,7 +168,12 @@ describe("drift guard: no module serialises its own invoke request or input", ()
     // Declaring it hands a live tenant credential to a worker with no use for one. This is the check
     // that stops the field spreading by copy-paste; finish-upscale reaches a satellite endpoint and
     // must stay clean.
-    const text = readFileSync(join(MODULES_DIR, "finish-upscale", "src", "index.ts"), "utf8");
+    // cf#1308 moved finish-upscale's MANIFEST into manifest.ts, where needs_tenant_r2 would be
+    // declared. Read both, or this control passes on a file that cannot contain the declaration.
+    const text =
+      readFileSync(join(MODULES_DIR, "finish-upscale", "src", "index.ts"), "utf8") +
+      readFileSync(join(MODULES_DIR, "finish-upscale", "src", "manifest.ts"), "utf8");
+    expect(text).toContain("max_invocation_seconds"); // the manifest is in the scanned text
     expect(text).not.toContain("needs_tenant_r2");
     expect(text).not.toContain("takeTenantR2");
   });

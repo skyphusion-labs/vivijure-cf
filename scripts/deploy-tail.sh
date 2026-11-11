@@ -1,9 +1,16 @@
 #!/usr/bin/env bash
 # deploy-tail.sh -- render + deploy vivijure-tail (cf#294).
 #
-# vivijure-tail is OUR-fleet-only: it is the tail_consumers target that ships the core studio's
-# render logs to Loki (docs/observability.md), it has no meaning for a self-host or a WfP tenant
-# (see the SELFHOST-SKIP strip in wrangler.toml.example / studio-release.yml), and it changes rarely.
+# vivijure-tail is an OPT-IN tier: it is the tail_consumers target that ships the core studio's
+# render logs to a Loki the OPERATOR runs (docs/observability.md). It is stripped for a self-host
+# default and for a WfP tenant (see the SELFHOST-SKIP strip in wrangler.toml.example /
+# studio-release.yml), and it changes rarely.
+#
+# cf#838, 2026-09-27: the reference instance's Loki is gone and the root config no longer binds this
+# worker, so this script deploys nothing WE consume today. It is kept, not deleted, because the
+# shipper is generic and an operator with their own Loki is its actual audience; what died was the
+# sink, not the tier. Deploying it against a VPC service with no Loki behind it is now LOUD rather
+# than silent (see the sink_unreachable report in tail/src/index.ts).
 # It does not belong in deploy.sh (the self-host script) or the tag-gated CI release job (which
 # deploys the module fleet + the core), so it is a small standalone script instead -- run BY HAND
 # when tail needs to be (re)deployed, same discipline as every other example/render pair in this
@@ -14,7 +21,7 @@
 # closes that gap: the example is now the actual source the deployed config is rendered from.
 #
 # Requires: CLOUDFLARE_ACCOUNT_ID, CLOUDFLARE_API_TOKEN, LOKI_VPC_ID (the Workers-VPC service id for
-# the fleet's Loki; account-internal, not a credential, but not published -- see the .example header).
+# YOUR Loki; account-internal, not a credential, but not published -- see the .example header).
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -27,7 +34,7 @@ die()  { printf "\nERROR: %s\n" "$*" >&2; exit 1; }
 need() { local v; eval "v=\${$1:-}"; [ -n "$v" ] || die "$1 is required but unset/empty -- $2"; }
 need CLOUDFLARE_ACCOUNT_ID "your Cloudflare account id"
 need CLOUDFLARE_API_TOKEN  "a token with Workers Scripts: Edit + Workers VPC: Read"
-need LOKI_VPC_ID           "the Workers-VPC service id for the fleet Loki (recorded in the private store; not creatable via a documented CF API today, see wrangler.toml.example)"
+need LOKI_VPC_ID           "the Workers-VPC service id for the Loki you run (not creatable via a documented CF API today, see wrangler.toml.example)"
 command -v envsubst >/dev/null || die "envsubst not found -- install gettext (apt-get install gettext-base)"
 
 export CLOUDFLARE_ACCOUNT_ID CLOUDFLARE_API_TOKEN
@@ -50,4 +57,7 @@ info "rendered wrangler.toml ($(wc -l < wrangler.toml) lines)"
 
 say "Deploying vivijure-tail"
 npx wrangler deploy -c wrangler.toml
-info "done. The core's tail_consumers binding (wrangler.toml.example) expects this worker to be live under the name vivijure-tail."
+info "done. Deployed as vivijure-tail."
+info "NOTE: the core's tail_consumers line is COMMENTED OUT in wrangler.toml.example since cf#838."
+info "      Uncomment it and redeploy the core to actually ship logs -- in that order, never before"
+info "      this worker is live, or the core deploy fails on a dangling tail consumer."

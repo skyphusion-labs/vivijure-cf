@@ -179,6 +179,10 @@ jobs:
           # nothing pins. The invariant is that no hosted studio config binds this door, not that a
           # particular consumer happens to ignore it.
           sh scripts/strip-local-gpu.sh wrangler.toml.example .wrangler.hosted.toml
+          # cf#1347: stamp the CHECKED-OUT commit as git_sha, the same commit the fc#859 gate above
+          # asserts (git rev-parse HEAD, not $GITHUB_SHA). This render is a bare envsubst, so without the
+          # export the var renders empty, which projects as null: honest, but no sha.
+          STUDIO_GIT_SHA="$(git rev-parse HEAD)"; export STUDIO_GIT_SHA
           envsubst < .wrangler.hosted.toml > wrangler.toml
           rm -f .wrangler.hosted.toml
           sed -i "s/REPLACE_WITH_VIVIJURE_SECRETS_STORE_ID/00000000-0000-0000-0000-000000000000/g" wrangler.toml
@@ -190,8 +194,16 @@ jobs:
 
       # The bundle comes from WRANGLER's own bundler against the real config -- not a parallel esbuild
       # that could silently drift from what actually deploys. The artifact IS the deploy shape.
-      - name: Bundle the studio worker (wrangler --dry-run)
-        run: npx wrangler deploy --dry-run --outdir=bundle-out
+      #
+      # --containers-rollout=none (cf#809), same flag and same reason as bundle-gate in ci.yml. This
+      # step wants the JS, and the flag does not change a byte of it. Without it wrangler builds the
+      # whole ffmpeg image before emitting the bundle, because #798 made the [[containers]] image a
+      # local Dockerfile. This runner HAS Docker so it would not fail -- it would just put a
+      # multi-minute image build in front of every tag and make the published tenant release
+      # artifact depend on that build succeeding. A Dockerfile defect must not block the release of
+      # code that does not contain it.
+      - name: Bundle the studio worker (wrangler --dry-run, no container build)
+        run: npx wrangler deploy --dry-run --containers-rollout=none --outdir=bundle-out
 
       - name: Assemble the release artifact
         id: build
