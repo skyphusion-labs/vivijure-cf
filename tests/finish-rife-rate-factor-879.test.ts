@@ -1,11 +1,18 @@
 // vivijure-cf#879 (MA-8): finish-rife declares its frame-rate change (finish_artifacts.rate_factor), so the
 // core can stop reading it off the binding name. The declaration must give the SAME factor the legacy
 // /RIFE/ reading gives today, for every config the schema allows, or dropping the fallback changes what
-// a film ships at. The legacy reading is core's own finishStepRateFactor (2-argument form, which on the
-// pinned core is the binding rule). The declared reading follows the core contract text (core#536).
+// a film ships at. The legacy reading is copied below as it stood in core before cf#879 step 3 removed
+// it (core's binding rule). The declared reading is core's own finishStepRateFactor with the declaration.
 import { describe, expect, it } from "vitest";
 import { MANIFEST } from "../modules/finish-rife/src/manifest";
 import { finishStepRateFactor } from "@skyphusion-labs/vivijure-core/film-model";
+
+/** core's binding-name rule before cf#879 step 3, for /RIFE/ bindings: what finish-rife shipped at. */
+function legacyRifeFactor(config: Record<string, unknown>): number {
+  if (config.interpolate === false) return 1;
+  const f = Number(config.interpolation_factor ?? 2);
+  return Number.isFinite(f) && f > 1 ? f : 1;
+}
 
 type RateFactor = { knob: string; default: number; off_when?: { knob: string; equals: unknown } };
 function declaredFactor(rf: RateFactor, config: Record<string, unknown>): number {
@@ -35,10 +42,12 @@ describe("finish-rife rate_factor", () => {
   }
   it(`gives the legacy factor for all ${configs.length} schema configs`, () => {
     for (const c of configs) {
-      expect(declaredFactor(rf!, c), JSON.stringify(c)).toBe(finishStepRateFactor("MODULE_FINISH_RIFE", c));
+      expect(declaredFactor(rf!, c), JSON.stringify(c)).toBe(legacyRifeFactor(c));
+      // And core's declared reading agrees, so this holds on every core with rate_factor.
+      expect(finishStepRateFactor("MODULE_FINISH_RIFE", c, MANIFEST.finish_artifacts as never), JSON.stringify(c)).toBe(legacyRifeFactor(c));
     }
   });
   it("CONTROL: the comparison can fail (a wrong default would be caught)", () => {
-    expect(declaredFactor({ ...rf!, default: 3 }, {})).not.toBe(finishStepRateFactor("MODULE_FINISH_RIFE", {}));
+    expect(declaredFactor({ ...rf!, default: 3 }, {})).not.toBe(legacyRifeFactor({}));
   });
 });

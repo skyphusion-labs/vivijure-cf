@@ -29,6 +29,7 @@ vi.mock("@skyphusion-labs/vivijure-core/bundle-storyboard", async (orig) => {
 import worker from "../src/index";
 import { buildParentDoc, partInputs, type CreateParentBody } from "../src/film-parent";
 import { parentDefaultDeliveryFps } from "../src/parent-delivery-fps";
+import { MANIFEST as RIFE_MANIFEST } from "../modules/finish-rife/src/manifest";
 import { MODULE_API, type RegisteredModule } from "@skyphusion-labs/vivijure-core/modules/types";
 import type { Env } from "../src/env";
 
@@ -77,9 +78,13 @@ describe("POST /api/render/film delivery_fps (cf#1389)", () => {
   }
 });
 
-const finishMod = (name: string, binding: string) =>
-  ({ name, version: "1.0.0", api: MODULE_API, binding, hooks: ["finish"], ui: { order: 1 } }) as unknown as RegisteredModule;
-const MODS = [finishMod("finish-rife", "MODULE_FINISH_RIFE"), finishMod("finish-upscale", "MODULE_FINISH_UPSCALE")];
+const finishMod = (name: string, binding: string, finish_artifacts?: unknown) =>
+  ({ name, version: "1.0.0", api: MODULE_API, binding, hooks: ["finish"], ui: { order: 1 }, finish_artifacts }) as unknown as RegisteredModule;
+// The shipped finish-rife declaration, so the rate comes from it (vivijure-cf#879), not from the name.
+const MODS = [
+  finishMod("finish-rife", "MODULE_FINISH_RIFE", RIFE_MANIFEST.finish_artifacts),
+  finishMod("finish-upscale", "MODULE_FINISH_UPSCALE"),
+];
 
 describe("parentDefaultDeliveryFps: the rate the shared finish chain would ship at", () => {
   it("no finish config is 24", () => {
@@ -93,6 +98,10 @@ describe("parentDefaultDeliveryFps: the rate the shared finish chain would ship 
   it("reads the factor and the off switch from the config the step runs on", () => {
     expect(parentDefaultDeliveryFps(MODS, { "finish-rife": { interpolation_factor: 3 } })).toBe(72);
     expect(parentDefaultDeliveryFps(MODS, { "finish-rife": { interpolate: false } })).toBe(24);
+  });
+  it("cf#879: the rate comes from the declaration, so a smoother under any binding name counts", () => {
+    const named = [finishMod("smoother", "MODULE_SMOOTH", RIFE_MANIFEST.finish_artifacts)];
+    expect(parentDefaultDeliveryFps(named, { smoother: {} })).toBe(48);
   });
   it("a module this studio does not serve adds nothing (its part refuses it by name, cf#593)", () => {
     expect(parentDefaultDeliveryFps([], { "finish-rife": {} })).toBe(24);
