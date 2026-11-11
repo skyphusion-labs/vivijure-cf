@@ -191,6 +191,7 @@ import {
 import { analyzeAudioBeats } from "@skyphusion-labs/vivijure-core/beat-analyze";
 import { startScoreBedGenerate, pollScoreBedGenerate } from "./score-bed";
 import { muxAudioOntoRender } from "@skyphusion-labs/vivijure-core/render-mux";
+import { doorFitOffer } from "./door-fit-offer";
 
 // Container DOs -- exported so the runtime registers them (bound in wrangler.toml).
 
@@ -1294,6 +1295,8 @@ const hSubmitRender: Handler = async (req, env) => {
     keyframe_backend: mapped.keyframe_backend,
     keyframe_config: mapped.keyframe_config,
     motion_config: panelClip.config,
+    // vivijure-cf#930: doors a short-line shot may move to for its own clip.
+    ...doorFitOffer(modules, motionBackend, { spoken: panelSpoken, explicit: !!explicitMotionBackend?.trim() }),
     finish_config: mapped.finish_config,
     // vivijure-cf#1379 (core#339): the caller's dialogue module and its config, resolved from the same
     // overrides bag. Absent when the caller chose none, which keeps the first dialogue module by ui.order.
@@ -1493,6 +1496,8 @@ const hRenderFromKeyframes: Handler = async (req, env) => {
     keyframes: staged,
     motion_backend: motionBackend,
     motion_config: fromKfClip.config,
+    // vivijure-cf#930: doors a short-line shot may move to for its own clip.
+    ...doorFitOffer(modules, motionBackend, { spoken: spokenLinesPresent(fromKfDialogue), explicit: !!b.motion_backend?.trim() }),
     finish_config: mapped.finish_config,
     // vivijure-cf#1379 (core#339): the caller's dialogue module and its config, resolved from the same
     // overrides bag. Absent when the caller chose none, which keeps the first dialogue module by ui.order.
@@ -2194,6 +2199,11 @@ const hStartFilm: Handler = async (req, env) => {
   const job = await startFilmJob(env, {
     project, bundle_key: filmBundleKey, scenes: filmScenes,
     motion_backend: a.motion_backend, keyframe_backend: a.keyframe_backend, keyframe_config: a.keyframe_config, motion_config: filmClip.config,
+    // vivijure-cf#930: doors a short-line shot may move to for its own clip. With no named door, the film door
+    // is core's default, the first serving motion door.
+    ...doorFitOffer(filmModules, a.motion_backend?.trim() || servingForHook(filmModules, "motion.backend")[0]?.name, {
+      spoken: filmSpoken, explicit: !!a.motion_backend?.trim(),
+    }),
     // audio_key: a staged bed (score-bed music/narration) to mux after assemble. startFilmJob runs it
     // through resolveStagedAudioKey; without forwarding it here the mux phase is skipped and the film is
     // silent even when the caller supplied a bed (the scored/narrated render path).

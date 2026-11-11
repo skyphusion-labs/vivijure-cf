@@ -25,6 +25,7 @@ import type { OrchestratorEnv } from "@skyphusion-labs/vivijure-core/platform";
 import type { RunpodJobView } from "@skyphusion-labs/vivijure-core/runpod-types";
 import { animateFromPreview } from "./finalize-from-keyframes";
 import { readIdempotencyKey } from "./film-idempotency";
+import { doorFitOffer } from "./door-fit-offer";
 
 const RETRYABLE = new Set(["FAILED", "CANCELLED", "TIMED_OUT"]);
 
@@ -204,6 +205,8 @@ export async function retryFailedRender(
       keyframe_backend: mapped.keyframe_backend,
       keyframe_config: mapped.keyframe_config,
       motion_config: motionConfig,
+      // vivijure-cf#930: doors a short-line shot may move to for its own clip.
+      ...(keyframesOnly ? {} : doorFitOffer(modules, motionBackend, { spoken, explicit: !!rawMotion?.trim() })),
       finish_config: mapped.finish_config,
       // vivijure-cf#1379 (core#339): the caller's dialogue module and its config, resolved from the same
       // overrides bag. Absent when the caller chose none, which keeps the first dialogue module by ui.order.
