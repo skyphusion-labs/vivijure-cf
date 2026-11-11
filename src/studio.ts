@@ -1509,9 +1509,16 @@ const hRenderFromKeyframes: Handler = async (req, env) => {
 };
 const hRegenShot: Handler = async (req, env, _c, p) => {
   const renderId = await resolveRenderId(env, p.id);
-  const b = await readBody<{ shotId?: string }>(req);
+  const b = await readBody<{ shotId?: string; seed?: unknown }>(req);
   const shotId = typeof b.shotId === "string" ? b.shotId.trim() : "";
   if (!shotId) throw badRequest("shotId required");
+  // cf#1404: an optional keyframe seed, so a regen can draw a new picture. Without one the backend
+  // redraws with the row's stored settings, and an unchanged shot comes back as the stored still
+  // (it has no random seed, vivijure-backend#563). Refused before anything is read or spent.
+  const seed = b.seed;
+  if (seed !== undefined && (typeof seed !== "number" || !Number.isInteger(seed) || seed < 0 || seed > REGEN_SEED_MAX)) {
+    throw badRequest(`seed must be a whole number from 0 to ${REGEN_SEED_MAX}`);
+  }
 
   const row = await getRenderByIdForUser(env, renderId);
   if (!row) throw notFound("render");
@@ -1559,12 +1566,18 @@ const hRegenShot: Handler = async (req, env, _c, p) => {
     throw badRequest(regenPre.refusal.message);
   }
 
+  // cf#1404: the seed reaches the keyframe module only when its config_schema declares one. A module
+  // without a seed (a cloud door that picks its own) is not handed a key it would refuse or ignore,
+  // and the answer says `seed: null` so the caller can tell.
+  const kfModule = modules.find((m) => m.name === mapped.keyframe_backend);
+  const takesSeed = !!kfModule?.config_schema && Object.prototype.hasOwnProperty.call(kfModule.config_schema, "seed");
+  const seedApplied = typeof seed === "number" && takesSeed ? seed : null;
   const job = await startFilmJob(env, {
     project: row.project,
     bundle_key: row.bundle_key,
     scenes: [{ shot_id: scene.shot_id, prompt: scene.prompt, seconds: scene.seconds }],
     keyframe_backend: mapped.keyframe_backend,
-    keyframe_config: mapped.keyframe_config,
+    keyframe_config: seedApplied === null ? mapped.keyframe_config : { ...mapped.keyframe_config, seed: seedApplied },
     keyframes_only: true,
   }, modules);
   if (job.phase === "failed") {
@@ -1585,8 +1598,11 @@ const hRegenShot: Handler = async (req, env, _c, p) => {
     projectId: row.project_id,
     parentId: row.id,
   });
-  return json({ ok: true, jobId: view.jobId, status: view.status });
+  return json({ ok: true, jobId: view.jobId, status: view.status, seed: seedApplied });
 };
+
+/** The largest seed a regen takes: the backend clamps the keyframe seed to 0..2^31-1. */
+const REGEN_SEED_MAX = 2_147_483_647;
 /**
  * A film tick that finishes even when the client that started it goes away (vivijure-cf#1139).
  *

@@ -1471,8 +1471,13 @@ Advances the job one tick and returns its summary; keeps the history row in sync
 
 Regenerate a single shot's keyframe from a COMPLETED render's bundle (keyframes-only).
 
-**Request body:** `{ shotId (req) }`. **Response 200:** `{ ok: true, jobId, status }`.
-Errors: `400 "shotId required"`; `404 "render"`; `400 "render must be COMPLETED"`;
+**Request body:** `{ shotId (req), seed? }`. **Response 200:** `{ ok: true, jobId, status, seed }`.
+`seed` (cf#1404) is an optional whole number from 0 to 2147483647. It is handed to the keyframe module as its
+`seed` only when that module's `config_schema` declares one; the response's `seed` is the seed applied, or
+`null` when none was (none sent, or the module takes none). Without a seed the regen re-sends the row's stored
+settings, and the backend returns the stored still for an unchanged shot: it has no random seed
+(vivijure-backend#563). The panel's regen sends a fresh seed.
+Errors: `400 "shotId required"`; `400 "seed must be a whole number from 0 to 2147483647"`; `404 "render"`; `400 "render must be COMPLETED"`;
 `400 "render has no bundle_key"`; `400 "shot <id> not in bundle storyboard"`;
 `503 { ok:false, error: "no keyframe module installed ..." }`; `422 { ok:false, error }` on submit failure.
 

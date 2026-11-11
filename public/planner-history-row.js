@@ -1071,17 +1071,24 @@ function buildHistoryRow(r, childrenByParent) {
 // and img refs are passed in for the immediate UI flip (disabled +
 // "submitting..."); subsequent polls re-query the DOM each tick so
 // they survive a parent row re-render on the 30s auto-refresh.
+// cf#1404: a fresh keyframe seed for a regen, in the range the backend takes (0..2^31-1).
+function freshKeyframeSeed() {
+  // resolve-guard-allow: Uint32Array -- a standard JavaScript typed array, built into every browser
+  const buf = new Uint32Array(1);
+  crypto.getRandomValues(buf);
+  return buf[0] % 2147483648;
+}
+
 async function regenShot(row, kf, btnEl, imgEl) {
   const confirmMsg =
     "regen keyframe for " + kf.shot_id + "?\n\n"
     + "this runs " + keyframeLabel() + " only (no motion, no assembly) and overwrites the "
     + "thumbnail above. takes about 30 to 60 seconds.\n\n"
-    // cf#1385: regen sends this render's settings again, including its seed, so an unchanged shot
-    // comes back from the store (marked reused) instead of being redrawn.
-    + "regen keeps this render's settings, including its seed. if nothing about this shot changed, "
-    + "the same still comes back, marked reused. to get a different picture, set a new keyframe seed "
-    + "and render again (a seed of -1 draws the same picture every time).";
+    // cf#1404: regen sends a fresh seed, so it draws a new picture. Without one the backend would return
+    // the stored still for an unchanged shot (it has no random seed, vivijure-backend#563).
+    + "regen draws this shot with a new seed, so you get a different picture.";
   if (!window.confirm(confirmMsg)) return;
+  const seed = freshKeyframeSeed();
 
   const regenKey = String(row.id) + ":" + kf.shot_id;
   btnEl.disabled = true;
@@ -1095,7 +1102,7 @@ async function regenShot(row, kf, btnEl, imgEl) {
       {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ shotId: kf.shot_id }),
+        body: JSON.stringify({ shotId: kf.shot_id, seed: seed }),
       },
     );
     data = await resp.json();
@@ -1117,6 +1124,11 @@ async function regenShot(row, kf, btnEl, imgEl) {
 
   // Submitted. Park the state in regenJobs and start polling.
   btnEl.textContent = "regen...";
+  // cf#1404: `seed: null` means the keyframe module takes no seed (a cloud door that picks its own), so
+  // the new still depends on that door. Say so on the button rather than promise a new picture.
+  btnEl.title = data.seed === null
+    ? "this keyframe module takes no seed; it picks its own, so the new still may match the old one"
+    : "drawing with seed " + data.seed;
   imgEl.classList.add("planner-history-keyframe-img-regen-pending");
   historyState.regenJobs.set(regenKey, {
     jobId: data.jobId,
