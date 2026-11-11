@@ -7,8 +7,8 @@ When you finish this page you will have the **standard install**: the studio cor
 render, and the **media stack** (the always-on CPU helpers that assemble your rendered clips into one
 finished film, add title cards, and polish the audio). The media stack is standard because the film
 assembly step runs inside it: without it, a render gives you a folder of separate clips, not a single
-movie. The only things NOT included are the two GPU "finish" satellites (sharper video, cleaner speech);
-those cost extra GPU money and stay opt-in (see [opt-in-tiers.md](opt-in-tiers.md)).
+movie. The only thing NOT included is the GPU "finish" satellite (sharper video, by upscale);
+it costs extra GPU money and stays opt-in (see [opt-in-tiers.md](opt-in-tiers.md)).
 
 New here? The one-page picture of how the parts fit together is in
 [constellation.md](constellation.md). You are about to stand up the **Studio** box in the center of
@@ -19,7 +19,8 @@ that map.
 You need two accounts and one tool:
 
 - A **Cloudflare** account (hosts the studio and your data). Sign up at dash.cloudflare.com.
-- A **RunPod** account (rents the GPUs that render your video). Sign up at runpod.io.
+- A **RunPod** account (rents the GPUs that make your keyframes, and runs any RunPod-hosted motion
+  model you pick). Sign up at runpod.io.
 - **Node 22 or newer** on your computer.
 - **Docker** on the computer that will run the media-stack containers (usually the same computer). The
   media stack is five small always-on CPU containers; `docker compose` starts them.
@@ -30,7 +31,7 @@ You need two accounts and one tool:
 > credits the planner spends, or $0 if you render on your own GPU). This is live-proven: a brand-new
 > free-plan account ran the full 27 MODULE_* service bindings from wrangler.toml.example and rendered finished 1080p films on all
 > three render paths (own GPU, cloud, and local GPU). The one thing that needs Cloudflare's **Workers
-> Paid** plan ($5/month) is the two GPU "finish" satellites (sharper video, cleaner speech); everything on
+> Paid** plan ($5/month) is the GPU "finish" satellite (sharper video, by upscale); everything on
 > this page runs free. One caveat: a plan change (free to paid, or back) only takes effect after you
 > redeploy the core, because a running Worker keeps the plan it was deployed under.
 
@@ -57,7 +58,7 @@ to click to get each one, and why each is needed.
 
 - Cloudflare **account id** and an **API token** (scoped to your account; 2a has the exact
   permission list).
-- RunPod **API key** and your **endpoint id** (the RunPod endpoint running the render backend).
+- RunPod **API key** and your **endpoint id** (the RunPod endpoint running the keyframe backend).
   No endpoint yet? `python3 scripts/runpod-provision.py` creates one for you (DEPLOYMENT.md
   section 4).
 - Two **R2 storage keys** (an access key and secret) for the GPU backend.
@@ -149,7 +150,8 @@ No cron trigger on your deployment? Set the optional `SWEEP_TOKEN` secret and ha
 [CONTRACT.md 2.22b](CONTRACT.md).
 
 Want a stronger front door (single sign-on, a team, audit logs)? That is Cloudflare Access, the
-optional hardening path: set `AUTH_MODE=access` in `deploy.env` (the script then requires the two
+optional hardening path (the project's own studio runs the token gate, not Access): set
+`AUTH_MODE=access` in `deploy.env` (the script then requires the two
 `ACCESS_*` values and refuses to run without them). Details in [SECURITY.md](SECURITY.md).
 
 ## Make your first film
@@ -165,8 +167,8 @@ gateway's Credits page (DEPLOYMENT.md 2e).
 ## Growing later
 
 Title cards, on-screen text, beat-synced music, and audio mastering are already part of your standard
-install -- they run on the media stack you just started. When you want the GPU "finish" satellites --
-sharper video (upscale) or cleaner spoken lines (speech upscale) -- those are the **opt-in add-ons**. Each one
+install -- they run on the media stack you just started. When you want the GPU "finish" satellite --
+sharper video (upscale) -- that is the **opt-in add-on**. It
 is explained in plain words -- what it is, what it adds, and how to turn it on -- in
 [opt-in-tiers.md](opt-in-tiers.md). When you are ready, set `VIVIJURE_PROFILE=satellites` in
 `deploy.env` (after standing up the extra RunPod endpoints) and run `./deploy.sh` again.
