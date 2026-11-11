@@ -23,6 +23,8 @@ export interface FinishArtifactsDecl {
     | { kind: "shot_named"; filename: string }
     | { kind: "append_suffix"; suffix: string };
   applied?: Array<{ when?: { knob: string; equals: string | number | boolean }; tag: string }>;
+  /** vivijure-cf#879 (MA-8): how this step changes the frame rate, read from its config (core 1.46+). */
+  rate_factor?: { knob: string; default: number; off_when?: { knob: string; equals: string | number | boolean } };
 }
 
 export interface ModuleManifest {

@@ -7,7 +7,7 @@ import { MODULE_API, type ModuleManifest } from "./contract";
 // against a transcribed copy in the test file. finish-lipsync already exported its own.
 export const MANIFEST: ModuleManifest = {
   name: "finish-rife",
-  version: "0.1.3",
+  version: "0.1.4",
   api: MODULE_API,
   hooks: ["finish"],
   // max_invocation_seconds: the ceiling THIS module declares to the core (core#182 / core#223).
@@ -54,5 +54,8 @@ export const MANIFEST: ModuleManifest = {
       { when: { knob: "interpolate", equals: false }, tag: "noop:interpolate-off" },
       { tag: "interpolate:{interpolation_factor|2}x" },
     ],
+    // cf#879 (MA-8): the frame rate this step ships, so the core prices delivery from the declaration
+    // instead of the binding name. Same reading as the applied tag above.
+    rate_factor: { knob: "interpolation_factor", default: 2, off_when: { knob: "interpolate", equals: false } },
   },
 };
