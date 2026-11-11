@@ -1,3 +1,0 @@
-### Feat: finish-rife declares its frame-rate change (`finish_artifacts.rate_factor`, #879)
-
-finish-rife 0.1.4 declares `rate_factor: { knob: "interpolation_factor", default: 2, off_when: { knob: "interpolate", equals: false } }` (vivijure-core#536). A core that reads it prices delivery from the declaration rather than from the binding name, and the pinned core ignores it. `tests/finish-rife-rate-factor-879.test.ts` checks that it gives the same factor as the legacy binding reading for every schema config, so retiring that fallback changes nothing finish-rife ships. Installed dispatch copies pick it up on their next install or upgrade.
