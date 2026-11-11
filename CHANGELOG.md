@@ -5,6 +5,38 @@ for new features). Newest first.
 
 ## Unreleased
 
+## v1.47.0 -- 2026-11-11
+
+### Feat: finish-upscale `/ready?probe=endpoint` says whether its RunPod endpoint exists (#1373)
+
+`GET /ready` stays zero-network, and its body is unchanged unless a prober asks. With `?probe=endpoint` it adds `endpoint: { present, checked_at }` from one `GET /health` on the endpoint, direct or through the control-plane proxy, which passes `/health` through. `present` is `true` on a 2xx, `false` only on RunPod's measured missing-endpoint answer (#757), and `null` with an `error` for anything it cannot tell, for a door-served module, or with no credentials. It never changes `ok`. Shared helper: `probeEndpointPresence` (`modules/_shared/runpod-endpoint-absent.ts`).
+
+### Fix: a running finish job keeps its container awake, and a finished job's answer survives the container (#784)
+
+`/async/finish` returns at once, so nothing renewed the finish container's idle timer while an encode ran. A job that outlived it was put to sleep under itself. The container's job state is also process memory, so a finished job's answer died with a restart or sleep, and core saw `not_found`.
+
+- When the idle timer runs out, the Durable Object asks the container about each job it saw accepted and not yet finish. While one is still pending, or the probe cannot tell, it keeps the instance awake. A hold ends at core's phase deadline (90 minutes).
+- Every terminal status the Durable Object sees, from core's poll or from its own probe, is recorded in Durable Object storage for an hour. A later status read carrying the container's bearer is answered from the record without reaching the container, marked `recorded: true`.
+- No module contract or core input changes. A job still running when the container process dies is still lost, and core re-submits as before.
+
+### Feat: finish-rife declares its frame-rate change (`finish_artifacts.rate_factor`, #879)
+
+finish-rife 0.1.4 declares `rate_factor: { knob: "interpolation_factor", default: 2, off_when: { knob: "interpolate", equals: false } }` (vivijure-core#536). A core that reads it prices delivery from the declaration rather than from the binding name, and the pinned core ignores it. `tests/finish-rife-rate-factor-879.test.ts` checks that it gives the same factor as the legacy binding reading for every schema config, so retiring that fallback changes nothing finish-rife ships. Installed dispatch copies pick it up on their next install or upgrade.
+
+### chore(deps): core 1.45.0 from npm
+
+The studio now pins `@skyphusion-labs/vivijure-core` `^1.45.0` from the registry, replacing 1.44.0. Core 1.45.0 carries the backend keyframe reuse mark to the render row (`keyframe_reuse` on the payload, and `reused` on keyframes-only entries), so the panel's "reused" tag and row line from cf#1385 now show (vivijure-core#532). It also adds `requires` in `config_schema` (a value tied to shot length, refused at start by name, core#507), `finish_artifacts.rate_factor` for a finish step that changes the frame rate, install-scope module config through `invokeRegistered` (vivijure-cf#879), and beat analysis that signs only a served artifact key.
+
+### Upload reads, beat analysis, route parameters, and provider media
+
+Upload routes check `Content-Length` before reading, and stop the stream at the cap. That covers `/api/upload`, `/api/storyboard/character-ref`, `/api/storyboard/audio-upload`, cast raw-byte portrait, ref and source adds, and voice-sample attach. An over-cap body is `413`.
+
+`POST /api/audio/analyze` accepts an `audioKey` only when it is in served artifact space, the same prefixes `/api/artifact` uses. The `<audioKey>.beats.json` marker is written only for such a key.
+
+A route parameter that is not a valid percent-encoding returns `400` with the usual response headers.
+
+A provider media URL is read up to a cap. The stored content type is a sniffed or allowlisted media type. A type outside that list is not stored.
+
 ## v1.46.0 -- 2026-11-11
 
 ### Panel: say when a still was reused rather than redrawn (cf#1385)

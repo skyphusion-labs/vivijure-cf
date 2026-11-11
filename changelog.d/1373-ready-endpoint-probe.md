@@ -1,3 +1,0 @@
-### Feat: finish-upscale `/ready?probe=endpoint` says whether its RunPod endpoint exists (#1373)
-
-`GET /ready` stays zero-network, and its body is unchanged unless a prober asks. With `?probe=endpoint` it adds `endpoint: { present, checked_at }` from one `GET /health` on the endpoint, direct or through the control-plane proxy, which passes `/health` through. `present` is `true` on a 2xx, `false` only on RunPod's measured missing-endpoint answer (#757), and `null` with an `error` for anything it cannot tell, for a door-served module, or with no credentials. It never changes `ok`. Shared helper: `probeEndpointPresence` (`modules/_shared/runpod-endpoint-absent.ts`).
