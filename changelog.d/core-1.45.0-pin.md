@@ -1,0 +1,3 @@
+### chore(deps): core 1.45.0 from npm
+
+The studio now pins `@skyphusion-labs/vivijure-core` `^1.45.0` from the registry, replacing 1.44.0. Core 1.45.0 carries the backend keyframe reuse mark to the render row (`keyframe_reuse` on the payload, and `reused` on keyframes-only entries), so the panel's "reused" tag and row line from cf#1385 now show (vivijure-core#532). It also adds `requires` in `config_schema` (a value tied to shot length, refused at start by name, core#507), `finish_artifacts.rate_factor` for a finish step that changes the frame rate, install-scope module config through `invokeRegistered` (vivijure-cf#879), and beat analysis that signs only a served artifact key.
