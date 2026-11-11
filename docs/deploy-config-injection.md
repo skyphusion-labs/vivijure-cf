@@ -352,8 +352,8 @@ if: startsWith(github.ref, 'refs/tags/v')
 and `needs: [ci, container-tests, migrations-gate, assert-on-main]` (`assert-on-main` refuses a tag
 whose commit is not on `main`). A bare merge to `main` runs `ci` (typecheck + test) but never deploys
 -- so a docs merge cannot redeploy prod or unset F2. Releases are deliberate, on the 1.x SemVer line,
-with an annotated tag that matches `package.json` (`studio-release.yml` refuses a mismatch):
-`git tag -a vX.Y.Z -m "vX.Y.Z" && git push origin vX.Y.Z`.
+with an annotated tag that matches `package.json` (`studio-release.yml` refuses a mismatch). An
+org admin creates it on the release PR's merge commit (see CLAUDE.md "Cut a release").
 
 ---
 

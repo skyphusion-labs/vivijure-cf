@@ -15,11 +15,11 @@ Read **`@skyphusion-labs/vivijure-core` module types** first (package path `modu
 
 Version: see root `package.json` / latest `v*` tag / `CHANGELOG.md` (do not freeze a number here).
 
-GPU render backend: `vivijure-backend` (RunPod serverless). Production panel UI:
-**vivijure.skyphusion.org** (measured 2026-10-14). Decided the same day and not cut
-over: the main studio moves to **app.studio.vivijure.com**, the same Worker, the same
-D1, and the same R2. `studio.vivijure.com` stays the control-plane door. The project
-site is `https://vivijure.dev` (2026-11-11). The old host redirects only after the new one is proven. Local-GPU is
+GPU: the project's operated RunPod endpoints make SDXL keyframes (`vivijure-backend`) and upscale;
+motion comes from cloud motion doors (through the AI Gateway) or an operator's own GPU.
+Production studio: **app.studio.vivijure.com** (same Worker, D1 and R2). The legacy host
+**vivijure.skyphusion.org** is still served until that host is proven. Skyphusion's own
+deployment of the control plane is retired (cp#574). The project site is `https://vivijure.dev`. Local-GPU is
 opt-in and on-box; the fleet named tunnel
 (`door-fatmike` / `door-propagandhi`) was deleted (fleet-chezmoi #2042). The public
 demo is REMOVED ENTIRELY (Conrad's ruling), not deprecated, and it went in TWO
@@ -53,14 +53,13 @@ Neither pin is "wrong" solely for lagging; ship the dual-panel wave deliberately
         slate  -->  vivijure-cf (THIS REPO)  /  vivijure-local
                         |  orchestration: vivijure-core
                         v
-                  vivijure-backend (GPU: keyframes -> i2v -> assemble)
-                        |
-     +----------+----------+----------------+------------------+
-     |          |          |                |                  |
-  upscale  wan-train          local-12/16gb
-  (video)  (cast LoRA)        (homelab i2v)
+     +--------------------+-------------------+------------------+
+     |                    |                   |                  |
+  vivijure-backend    upscale          cloud motion doors   local-12/16gb
+  (RunPod: SDXL       (RunPod: video)  (AI Gateway)         (your own GPU i2v)
+   keyframes)
 
-  vivijure-control-plane = hosted multi-tenant provisioner (not this UI)
+  vivijure-control-plane = reference multi-tenant control plane; maintained, not operated by Skyphusion (not this UI)
   hub vivijure = docs/legal history only; issues for the live studio go HERE
 ```
 
@@ -81,7 +80,7 @@ of these areas, update the matching doc.
 - `docs/make-a-video.md` -- the one-screen Make a video page (cf#1242): its face-consistency default-style rule, shapes, price, and `PANEL_HOME`.
 - `docs/DEPLOYMENT.md` + `docs/deploy-runbook.md` + `docs/deploy-config-injection.md` -- deploy, env, `account_id` injection.
 - `docs/dev-modbound.md` -- run host + every module worker as one local dev so `/api/modules` returns the REAL catalog.
-- Hosted tier: [vivijure-control-plane](https://github.com/skyphusion-labs/vivijure-control-plane) (own repo). This repo is the self-hostable studio panel.
+- Multi-tenant hosting: [vivijure-control-plane](https://github.com/skyphusion-labs/vivijure-control-plane) is a reference implementation of a multi-tenant control plane for hosting Vivijure Studio; maintained, not operated by Skyphusion. This repo is the self-hostable studio panel.
 - `docs/SECURITY.md` + `docs/legal/` -- security posture and public legal/AUP framing.
 - `docs/real-run-confirmations.md` -- phase-2 standing list: properties only a real run can confirm (#369).
 - `docs/runpod-public-endpoint-slugs.md` -- free slug existence probe + measured rates for cloud i2v (#267).
@@ -218,11 +217,14 @@ releases; see vivijure-local CLAUDE.md).
 
 1. **Release PR on `main`:** bump `package.json` version, add `CHANGELOG.md` `## vX.Y.Z`, install
    lockfile if deps changed, land the PR.
-2. **Tag** (must match `package.json`; studio-release refuses a mismatch):
+2. **Tag the release PR's merge commit.** Only an org admin (the lead or Conrad) can create a release
+   tag; crew open the release PR and ask the lead to tag. The tag must match `package.json`
+   (studio-release refuses a mismatch):
 
 ```bash
-git fetch origin main && git checkout main && git pull --ff-only
-git tag -a vX.Y.Z -m "vX.Y.Z"
+git fetch origin main --tags
+sha="$(gh pr view <release-pr> --json mergeCommit -q .mergeCommit.oid)"
+git tag -a vX.Y.Z -m "vX.Y.Z" "$sha"
 git push origin vX.Y.Z
 ```
 

@@ -175,9 +175,10 @@ deploy job. So:
 #    root cause). Refuses loudly and writes nothing if that version heading already exists:
 python3 scripts/changelog-assemble.py v1.26.0 2026-08-14
 #    Commit the version bump, the new CHANGELOG.md section, and the deleted fragment files
-#    together, in the same release-prep commit. Merge it.
-# 2. Tag the merged commit and push.
-git tag -a v1.26.0 -m "vivijure-studio v1.26.0" && git push origin v1.26.0
+#    together, in the same release-prep commit, as a release PR. Merge it through the gate.
+# 2. An org admin tags that PR's MERGE COMMIT and pushes the tag (crew cannot create release tags):
+sha="$(gh pr view <release-pr> --json mergeCommit -q .mergeCommit.oid)"
+git tag -a v1.26.0 -m "vivijure-studio v1.26.0" "$sha" && git push origin v1.26.0
 # 3. Watch BOTH jobs of the tag's CI run. Since cf#562 a `v*` tag starts ONE workflow run (ci.yml)
 #    with two publishing jobs, each gated by needs: [ci, container-tests, migrations-gate, assert-on-main]:
 #      deploy         -> modules, D1 migrations (`wrangler d1 migrations apply --remote`), core,
@@ -501,8 +502,7 @@ config that ships with every deploy -- no per-deploy `wrangler secret put`, and 
 fresh-create.
 
 `RUNPOD_ENDPOINT_ID` is bound from one store secret PER ENDPOINT, because the modules target
-different RunPod endpoints (keyframe / i2v on the main backend, upscale on the upscale endpoint,
-upscale on the video-upscale endpoint). The binding name in code stays `RUNPOD_ENDPOINT_ID`; only the
+different RunPod endpoints (keyframe on the main backend, upscale on the video-upscale endpoint). The binding name in code stays `RUNPOD_ENDPOINT_ID`; only the
 store `secret_name` differs. Modules that share an endpoint share one secret (single source of truth):
 
 | module(s)                      | store secret_name (RUNPOD_ENDPOINT_ID) | RunPod endpoint |
@@ -577,9 +577,9 @@ if the feature behind it is unused. Beyond the ones seeded above:
 | store secret_name | bound by (binding name) | what it is |
 | --- | --- | --- |
 | `FINISH_DOOR_TOKEN` | core (`MEDIA_FINISH_TOKEN`); `film-titles`, `subtitle`, `beat-sync`, `audio-master` (`MEDIA_FINISH_TOKEN`); `finish-upscale` (`FINISH_DOOR_TOKEN`) | bearer the media containers / finish doors check |
-| `BACKEND_RUNPOD_WAN_TRAIN_ENDPOINT_ID` | core (`RUNPOD_WAN_TRAIN_ENDPOINT_ID`) | Wan 2.2 LoRA-training endpoint (cast `/train-wan-lora`) |
+| `BACKEND_RUNPOD_WAN_TRAIN_ENDPOINT_ID` | core (`RUNPOD_WAN_TRAIN_ENDPOINT_ID`) | Wan 2.2 LoRA-training endpoint (cast `/train-wan-lora`). The hosted one is retired; Wan training is self-host only, so this points at an operator's own endpoint |
 | `IMAGE_GENERATE_OPENAI_API_KEY` | `image-generate` (`OPENAI_API_KEY`) | optional BYOK OpenAI key for transparent PNGs |
-| `FINISH_DOOR_TOKEN_PROPAGANDHI` | `finish-upscale` | second upscale door bearer |
+| `FINISH_DOOR_TOKEN_PROPAGANDHI` | `finish-upscale` | second upscale door bearer (named for a retired host; still bound in `modules/finish-upscale/wrangler.toml`) |
 | `BLENDER_DOOR_TOKEN` | `finish-blender` | blender door bearer |
 | `LOCAL_BACKEND_URL`, `LOCAL_BACKEND_TOKEN` | `local-gpu` | local-GPU door (section 6) |
 
@@ -619,8 +619,8 @@ The render backend is the `vivijure-backend` container image, run as a **RunPod 
 
 > **Three version lines, do not conflate them.** The GPU render image is cut from a `backend-vX.Y.Z`
 > git tag in the `vivijure-backend` repo and published to GHCR as `:X.Y.Z` (the image tag drops the
-> `backend-v` prefix). The Studio (this repo) ships on its own `vX.Y.Z` deploy tags. The HOSTED
-> control plane is a separate product in the `vivijure-control-plane` repo, versioned and deployed
+> `backend-v` prefix). The Studio (this repo) ships on its own `vX.Y.Z` deploy tags. The
+> `vivijure-control-plane` repo (a reference implementation of a multi-tenant control plane for hosting Vivijure Studio, maintained, not operated by Skyphusion) is versioned
 > independently again -- you do not need it, and this document does not cover it; self-hosting the
 > Studio never requires running a hosted service. A `backend-v0.2.26` image and a Studio `v0.2.2`
 > deploy are independent release lines; pin the RunPod endpoint to the **GHCR image tag**, not the

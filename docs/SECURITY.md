@@ -8,7 +8,8 @@ The studio is **single-operator by design**. There is no tenant model, no per-us
 account system: the anti-SaaS identity strip (#292) deliberately removed the `user_email` /
 tenancy primitive so there is no seam to hang multi-tenancy on. "Who are you" is answered once, by
 the deploy's auth gate: the built-in studio API token (`AUTH_MODE = "token"`, section 1b, the
-production posture on `vivijure.skyphusion.org` and the quickstart default) or Cloudflare Access
+production posture on `app.studio.vivijure.com` (and the legacy host `vivijure.skyphusion.org`) and the
+quickstart default) or Cloudflare Access
 (`AUTH_MODE = "access"`, sections 1/1a, the optional edge-identity hardening for team/org
 deployments). Everything behind the gate belongs to the one operator.
 
@@ -321,11 +322,11 @@ authentication, by design:
   `/api/*` behind the gate, and the token prompt is part of the shell. A secret must therefore never
   be placed under `public/`.
 
-On the production
-instance `/welcome` and `/health` each sit behind their own path-scoped Cloudflare Access app whose
-policy is a public bypass (everyone for `/welcome`, a production-IP allowlist for `/health`); those
-path-scoped apps are independent of `AUTH_MODE` and do NOT extend to `/api/*`. The public
-`/welcome` bypass MUST stay in place so the 301 redirect resolves for anonymous visitors.
+On production, nothing sits in front of these paths. Measured 2026-11-11 from an anonymous
+client on both production hosts: `/health` is public and returns only
+`{"ok": true, "service": "vivijure-studio", "phase": 1}`; `/welcome` returns its 301 to
+https://vivijure.com/; and `/api/*` returns 403 without a token. The project uses no Cloudflare
+Access app on the studio.
 
 **`GET /api/modules`** -- the registry projection that the self-assembling UI renders from -- sits
 BEHIND the auth gate like every other `/api/*` route. Its payload is scrubbed as defense in depth:
