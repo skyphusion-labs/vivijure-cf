@@ -193,7 +193,7 @@ describe("finish-rife: manifest conformance", () => {
 
   it("is opt_in and exposes a style knob (cf#1038)", () => {
     expect(MANIFEST.participation).toBe("opt_in");
-    expect(MANIFEST.version).toBe("0.1.3");
+    expect(MANIFEST.version).toBe("0.1.4");
     expect(MANIFEST.config_schema?.style).toMatchObject({
       type: "enum",
       values: ["photoreal", "anime"],
