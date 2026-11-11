@@ -2819,6 +2819,11 @@ const hInstallModule: Handler = async (req, env) => {
   const body = await readBody<{ script_name?: string }>(req);
   const script = typeof body?.script_name === "string" ? body.script_name.trim() : "";
   if (!script) throw badRequest("script_name required");
+  // Checked before the namespace is touched, so a script outside this studio's own set is never read.
+  const ownPrefix = typeof env.TENANT_MODULE_PREFIX === "string" ? env.TENANT_MODULE_PREFIX.trim() : "";
+  if (ownPrefix && !script.startsWith(ownPrefix)) {
+    throw new HttpError(403, `script "${script}" is not one of this studio's module scripts`);
+  }
   let fetcher: Fetcher;
   try {
     fetcher = env.MODULE_DISPATCH.get(script);
