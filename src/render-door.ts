@@ -32,7 +32,10 @@ import {
   motionBackendPreflightError,
   motionConfigPreflightError,
   localGpuKeyframePreflightError,
+  configPreflightViolations,
+  validateConfig,
 } from "@skyphusion-labs/vivijure-core/modules/registry";
+import { dialogueModules, pickDialogueModule } from "@skyphusion-labs/vivijure-core/modules/dialogue-select";
 import { selectForChain } from "@skyphusion-labs/vivijure-core/modules/render-pipeline";
 import { parseHookSelection } from "@skyphusion-labs/vivijure-core/render-module-config";
 import { resolveCastLoras, untrainedCastMessage } from "@skyphusion-labs/vivijure-core/cast-loras";
@@ -285,6 +288,44 @@ export function resolveAgentFinishSelect(
     (k) => k.trim() !== "" && !FINISH_CONFIG_NON_MODULE_KEYS.has(k),
   );
   return { mode: "named", modules };
+}
+
+export type AgentDialogue =
+  | { ok: true; dialogue_backend?: string; dialogue_config?: Record<string, Record<string, unknown>> }
+  | { ok: false; error: string };
+
+/**
+ * cf#1391: the agent door carries no overrides bag, so it resolves the dialogue choice itself, as core's
+ * resolver does for the panel bag. The named module must serve `dialogue` (core's own pick, so the door
+ * and the dialogue tick agree). Each `dialogue_config` key must name a serving dialogue module, its map is
+ * judged against that module's schema, then clamped by validateConfig. A refusal names the field, before
+ * any spend. The map's shape is checked first by checkRenderRequestShape (deep).
+ */
+export function resolveAgentDialogue(modules: RegisteredModule[], backend: unknown, config: unknown): AgentDialogue {
+  const out: { dialogue_backend?: string; dialogue_config?: Record<string, Record<string, unknown>> } = {};
+  if (backend !== undefined) {
+    if (typeof backend !== "string" || !backend.trim()) {
+      return { ok: false, error: "dialogue_backend must be a non-empty string (a dialogue module name)" };
+    }
+    const pick = pickDialogueModule(modules, backend);
+    if (!pick.ok) return { ok: false, error: pick.error };
+    out.dialogue_backend = backend.trim();
+  }
+  if (config !== undefined) {
+    const serving = dialogueModules(modules);
+    const clamped: Record<string, Record<string, unknown>> = {};
+    for (const [name, sent] of Object.entries(config as Record<string, Record<string, unknown>>)) {
+      const m = serving.find((x) => x.name === name);
+      if (!m) return { ok: false, error: `dialogue_config names "${name}", which is not a serving dialogue module` };
+      const violations = configPreflightViolations(m.config_schema, sent);
+      if (violations.length) {
+        return { ok: false, error: `dialogue_config rejected by "${name}" before any GPU spend: ${violations.join("; ")}.` };
+      }
+      clamped[name] = validateConfig(m.config_schema, sent);
+    }
+    out.dialogue_config = clamped;
+  }
+  return { ok: true, ...out };
 }
 
 /** cf#593: a named finish module this studio does not serve is a hard error, not a silent drop. */

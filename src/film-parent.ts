@@ -58,10 +58,16 @@ export interface ParentShared {
   motion_config?: Record<string, unknown>;
   finish_config?: Record<string, unknown>;
   film_finish_config?: Record<string, unknown>;
+  /** cf#1391: one dialogue module, and its config, sent to every part so the parts speak with one voice module. */
+  dialogue_backend?: string;
+  dialogue_config?: Record<string, Record<string, unknown>>;
   cast_loras?: Record<string, string>;
   film_titles?: { title?: unknown; credits?: unknown };
   delivery_width: number;
   delivery_height: number;
+  /** cf#1389: one rate for every part, the caller's or the parent's default, set once when the film is made.
+   *  Absent only on a film made before this, whose parts are then sent no rate, as before. */
+  delivery_fps?: number;
   qualityTier?: string;
 }
 
@@ -185,6 +191,10 @@ export interface CreateParentBody {
 
 export class ParentRefusal extends Error {}
 
+/** core DEFAULT_DELIVERY_FPS. The route passes the rate the shared finish chain would ship at instead
+ *  (src/parent-delivery-fps.ts); this is only the default for a caller that passes none. */
+export const DEFAULT_PARENT_FPS = 24;
+
 function refuse(message: string): never {
   throw new ParentRefusal(message);
 }
@@ -261,8 +271,9 @@ export function buildParentDoc(
   filmId: string,
   body: CreateParentBody,
   now: number,
-  predictBytes?: (width: number, height: number, seconds: number) => number,
+  predictBytes?: (width: number, height: number, fps: number, seconds: number) => number,
   requestHash = "",
+  defaultFps = DEFAULT_PARENT_FPS,
 ): ParentDoc {
   const project = typeof body.project === "string" ? body.project.trim() : "";
   if (!/^[A-Za-z0-9_-]{1,48}$/.test(project)) refuse("project must be 1 to 48 letters, digits, _ or -");
@@ -279,6 +290,18 @@ export function buildParentDoc(
     || (shared.delivery_width as number) <= 0 || (shared.delivery_height as number) <= 0) {
     refuse("shared.delivery_width and shared.delivery_height are required: the join refuses films of different frames");
   }
+  if ("dialogue_backend" in shared && (typeof shared.dialogue_backend !== "string" || !shared.dialogue_backend.trim())) {
+    refuse("shared.dialogue_backend must be a non-empty string (a dialogue module name)");
+  }
+  if ("dialogue_config" in shared && (!isObject(shared.dialogue_config)
+    || Object.values(shared.dialogue_config).some((v) => !isObject(v)))) {
+    refuse("shared.dialogue_config must be a map of dialogue module name to config object");
+  }
+  // cf#1389: the join refuses parts of different rates too, so the rate is pinned with the frame.
+  if ("delivery_fps" in shared && (!Number.isInteger(shared.delivery_fps) || (shared.delivery_fps as number) <= 0)) {
+    refuse("shared.delivery_fps must be a whole number above 0");
+  }
+  const fps = "delivery_fps" in shared ? (shared.delivery_fps as number) : defaultFps;
   if ("audio_key" in shared) refuse("shared.audio_key is not supported yet: a bed on the joined film is not built");
   const ceiling = body.spend_ceiling_usd;
   if (typeof ceiling !== "number" || !Number.isFinite(ceiling) || ceiling <= 0) refuse("spend_ceiling_usd is required");
@@ -290,7 +313,7 @@ export function buildParentDoc(
   const ranges = planPartRanges(scenes.length, body.part_size, body.breaks);
   if (predictBytes) {
     const seconds = scenes.reduce((n, s) => n + (sceneSeconds(s) ?? 0), 0);
-    const bytes = predictBytes(shared.delivery_width as number, shared.delivery_height as number, seconds);
+    const bytes = predictBytes(shared.delivery_width as number, shared.delivery_height as number, fps, seconds);
     // Refused here, because after the spend the join would refuse it instead.
     if (bytes > ONE_UPLOAD_BYTES) {
       refuse(`this board predicts ${bytes} bytes at this frame, over the ${ONE_UPLOAD_BYTES} one upload carries`);
@@ -336,7 +359,7 @@ export function buildParentDoc(
     finished_at: null,
     spend_ceiling_usd: ceiling,
     cost_usd_per_shot_est: perShot,
-    shared: shared as unknown as ParentShared,
+    shared: { ...shared, delivery_fps: fps } as unknown as ParentShared,
     storyboard: body.storyboard as ParentDoc["storyboard"],
     character_refs: body.character_refs,
     dialogue_lines: lines as ParentLine[],
@@ -422,11 +445,14 @@ export function partInputs(doc: ParentDoc, part: ParentPart): {
       ...(s.motion_config ? { motion_config: s.motion_config } : {}),
       ...(s.finish_config ? { finish_config: s.finish_config } : {}),
       ...(s.film_finish_config ? { film_finish_config: s.film_finish_config } : {}),
+      ...(s.dialogue_backend ? { dialogue_backend: s.dialogue_backend } : {}),
+      ...(s.dialogue_config ? { dialogue_config: s.dialogue_config } : {}),
       ...(cast ? { cast_loras: cast } : {}),
       ...(Object.keys(titles).length ? { film_titles: titles } : {}),
       ...(s.qualityTier ? { qualityTier: s.qualityTier } : {}),
       delivery_width: s.delivery_width,
       delivery_height: s.delivery_height,
+      ...(s.delivery_fps ? { delivery_fps: s.delivery_fps } : {}),
       // A deliberate retry moves the generation, so it does not match the submit it replaces.
       idempotency_key: `${part.part_id}-g${part.generation}`,
       // Keeps paid work on a retry. Nothing to keep on a first run.

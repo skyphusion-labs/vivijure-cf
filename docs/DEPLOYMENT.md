@@ -738,7 +738,8 @@ this repo's `containers/` (there is no `containers/blender`). The studio reaches
 time, against its `LOCAL_FINISH_TOKEN` wrangler secret before it forwards anything
 (`cf-container/src/gate.ts`, vendored byte-for-byte into each door). A missing or wrong bearer is
 401 from the Worker. Two routes skip that check: `GET /health` is forwarded to the container, which
-also leaves it open, and `GET /ready` is answered by the Worker itself with
+also leaves it open (on video-finish an open `/health` drops the affinity header and is served by the
+fixed fallback instance, so only an authenticated request picks a per-film instance), and `GET /ready` is answered by the Worker itself with
 `{"ok":true,"token_configured":<bool>}` and nothing derived from the token's value. The Worker
 passes the same secret into the container through `envVars` as `LOCAL_FINISH_TOKEN`, so the
 container's own `bearer.py` checks the request again. A door with no secret set therefore 401s at

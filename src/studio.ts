@@ -24,7 +24,8 @@ import { animateFromPreview, clipAnimateProgress } from "./finalize-from-keyfram
 import { isParentPartProject } from "./film-parent";
 import { FULL_RETRY_DEGRADE, retryFailedRender, retryStatusRefusal } from "./render-retry";
 import { advanceParent, buildParentDoc, cancelRetake, heldEndFrames, parentCanAct, partShotRows, rotateFrom, FILM_LIST_LIMIT, markRetake, parentListRow, MAX_PARTS, MAX_SCENES_PER_PART, ParentRefusal, parentView, raiseCeiling, requestFingerprint, resumeParent, retakeScenesAndLines, retryPart, SubmitNotStarted, SubmitRefused, type CreateParentBody, type RetakeEdits } from "./film-parent";
-import { CONTAINER_DEFAULT_FPS, predictNormalizedBytes } from "@skyphusion-labs/vivijure-core/assemble-admission";
+import { predictNormalizedBytes } from "@skyphusion-labs/vivijure-core/assemble-admission";
+import { parentDefaultDeliveryFps } from "./parent-delivery-fps";
 import { clearActiveMarker, insertParent, overlayLiveProgress, readCronHeartbeat, readPartJobs, reconcileActiveMarkers, writeCronHeartbeat, listActiveParents, listParents, repairListRow, loadParent, parentDeps, saveParent, type ParentDoors, childPollBody } from "./film-parent-store";
 import { readIdempotencyKey } from "./film-idempotency";
 import { beatsMarkerKey, jobAfterSkippedJoin, songStartRefusal, downloadableClips } from "./film-join-gate";
@@ -106,7 +107,7 @@ import { handleAbuseReport } from "./abuse-report";
 import { ARTIFACT_PREFIXES, getServedArtifact, isServedArtifactKey } from "./shared";
 import {
   checkRenderRequestShape, preflightRenderModules, productionRenderDoorDeps,
-  resolveAgentFinishSelect,
+  resolveAgentDialogue, resolveAgentFinishSelect,
   type RenderDoorProfile,
 } from "./render-door";
 import {
@@ -1509,9 +1510,16 @@ const hRenderFromKeyframes: Handler = async (req, env) => {
 };
 const hRegenShot: Handler = async (req, env, _c, p) => {
   const renderId = await resolveRenderId(env, p.id);
-  const b = await readBody<{ shotId?: string }>(req);
+  const b = await readBody<{ shotId?: string; seed?: unknown }>(req);
   const shotId = typeof b.shotId === "string" ? b.shotId.trim() : "";
   if (!shotId) throw badRequest("shotId required");
+  // cf#1404: an optional keyframe seed, so a regen can draw a new picture. Without one the backend
+  // redraws with the row's stored settings, and an unchanged shot comes back as the stored still
+  // (it has no random seed, vivijure-backend#563). Refused before anything is read or spent.
+  const seed = b.seed;
+  if (seed !== undefined && (typeof seed !== "number" || !Number.isInteger(seed) || seed < 0 || seed > REGEN_SEED_MAX)) {
+    throw badRequest(`seed must be a whole number from 0 to ${REGEN_SEED_MAX}`);
+  }
 
   const row = await getRenderByIdForUser(env, renderId);
   if (!row) throw notFound("render");
@@ -1559,12 +1567,18 @@ const hRegenShot: Handler = async (req, env, _c, p) => {
     throw badRequest(regenPre.refusal.message);
   }
 
+  // cf#1404: the seed reaches the keyframe module only when its config_schema declares one. A module
+  // without a seed (a cloud door that picks its own) is not handed a key it would refuse or ignore,
+  // and the answer says `seed: null` so the caller can tell.
+  const kfModule = modules.find((m) => m.name === mapped.keyframe_backend);
+  const takesSeed = !!kfModule?.config_schema && Object.prototype.hasOwnProperty.call(kfModule.config_schema, "seed");
+  const seedApplied = typeof seed === "number" && takesSeed ? seed : null;
   const job = await startFilmJob(env, {
     project: row.project,
     bundle_key: row.bundle_key,
     scenes: [{ shot_id: scene.shot_id, prompt: scene.prompt, seconds: scene.seconds }],
     keyframe_backend: mapped.keyframe_backend,
-    keyframe_config: mapped.keyframe_config,
+    keyframe_config: seedApplied === null ? mapped.keyframe_config : { ...mapped.keyframe_config, seed: seedApplied },
     keyframes_only: true,
   }, modules);
   if (job.phase === "failed") {
@@ -1585,8 +1599,11 @@ const hRegenShot: Handler = async (req, env, _c, p) => {
     projectId: row.project_id,
     parentId: row.id,
   });
-  return json({ ok: true, jobId: view.jobId, status: view.status });
+  return json({ ok: true, jobId: view.jobId, status: view.status, seed: seedApplied });
 };
+
+/** The largest seed a regen takes: the backend clamps the keyframe seed to 0..2^31-1. */
+const REGEN_SEED_MAX = 2_147_483_647;
 /**
  * A film tick that finishes even when the client that started it goes away (vivijure-cf#1139).
  *
@@ -2011,7 +2028,14 @@ function filmDeliveryFrame(width: unknown, height: unknown): { delivery_width?: 
   return { delivery_width: width as number, delivery_height: height as number };
 }
 
-type FilmSubmitBody = { project?: string; bundle_key?: string; scenes?: FilmScene[]; motion_backend?: string; keyframe_backend?: string; keyframe_config?: Record<string, unknown>; motion_config?: Record<string, unknown>; finish_config?: Record<string, Record<string, unknown>>; finish_select?: unknown; speech_config?: Record<string, Record<string, unknown>>; film_finish_config?: Record<string, Record<string, unknown>>; master_config?: Record<string, Record<string, unknown>>; audio_key?: string; film_titles?: { title?: { text: string; subtitle?: string }; credits?: { lines: string[] } }; dialogue_lines?: DialogueLine[]; cast_loras?: Record<string, string>; qualityTier?: string; shard_count?: number; shardCount?: number; delivery_width?: unknown; delivery_height?: unknown; reuse_finished?: unknown; idempotency_key?: unknown; idempotencyKey?: unknown; projectId?: unknown };
+/** cf#1389 (core#431): a pinned rate wins over the rate the finish chain produced. Whole and above 0. */
+function filmDeliveryFps(fps: unknown): { delivery_fps?: number } {
+  if (fps === undefined) return {};
+  if (!Number.isInteger(fps) || (fps as number) <= 0) throw badRequest("delivery_fps must be a whole number above 0");
+  return { delivery_fps: fps as number };
+}
+
+type FilmSubmitBody = { project?: string; bundle_key?: string; scenes?: FilmScene[]; motion_backend?: string; keyframe_backend?: string; keyframe_config?: Record<string, unknown>; motion_config?: Record<string, unknown>; finish_config?: Record<string, Record<string, unknown>>; finish_select?: unknown; speech_config?: Record<string, Record<string, unknown>>; film_finish_config?: Record<string, Record<string, unknown>>; master_config?: Record<string, Record<string, unknown>>; audio_key?: string; film_titles?: { title?: { text: string; subtitle?: string }; credits?: { lines: string[] } }; dialogue_lines?: DialogueLine[]; cast_loras?: Record<string, string>; qualityTier?: string; shard_count?: number; shardCount?: number; delivery_width?: unknown; delivery_height?: unknown; delivery_fps?: unknown; reuse_finished?: unknown; idempotency_key?: unknown; idempotencyKey?: unknown; projectId?: unknown; dialogue_backend?: unknown; dialogue_config?: unknown };
 const hStartFilm: Handler = async (req, env) => {
   const submitted = await req.clone().text();
   const a = await readBody<FilmSubmitBody>(req);
@@ -2038,6 +2062,7 @@ const hStartFilm: Handler = async (req, env) => {
       { label: "speech_config", value: a.speech_config, deep: true },
       { label: "film_finish_config", value: a.film_finish_config, deep: true },
       { label: "master_config", value: a.master_config, deep: true },
+      { label: "dialogue_config", value: a.dialogue_config, deep: true },
     ],
   }, filmProfile);
   if (!filmShape.ok) throw badRequest(filmShape.refusal.message);
@@ -2057,6 +2082,9 @@ const hStartFilm: Handler = async (req, env) => {
   // cf#386: omit finish_config (and finish_select) = no finish. Do this BEFORE preflight so a
   // named-but-not-serving key 400s here (cf#593) instead of after keyframe spend.
   const filmFinishSelect = resolveAgentFinishSelect(a.finish_select, a.finish_config);
+  // cf#1391: this door's dialogue choice, refused by name before any spend (no overrides bag here).
+  const filmDialogue = resolveAgentDialogue(filmModules, a.dialogue_backend, a.dialogue_config);
+  if (!filmDialogue.ok) throw badRequest(filmDialogue.error);
 
   // Bundle-only voicing (#313): when the caller passed NO explicit dialogue_lines, derive them from the
   // bundle storyboard's per-shot dialogue (round-tripped by #307), resolving each speaking slot's voice
@@ -2156,6 +2184,9 @@ const hStartFilm: Handler = async (req, env) => {
     // (same parser as the panel bag) and treats an omitted finish_config as named-empty: an MCP
     // caller who does not mention finish does not get billed for default rife+upscale.
     finish_select: filmFinishSelect,
+    // cf#1391 (core#339): absent when the caller chose none, which keeps the first dialogue module by ui.order.
+    ...(filmDialogue.dialogue_backend ? { dialogue_backend: filmDialogue.dialogue_backend } : {}),
+    ...(filmDialogue.dialogue_config ? { dialogue_config: filmDialogue.dialogue_config } : {}),
     speech_config: a.speech_config, film_finish_config: a.film_finish_config, master_config: a.master_config, audio_key: a.audio_key, film_titles: a.film_titles,
     // dialogue_lines (#296 explicit arg, #313 bundle-derived): the per-shot lines for the dialogue/
     // TTS + finish stage (enterDialogueOrFinish) and the subtitle module (buildCaptionCues), both of
@@ -2182,6 +2213,8 @@ const hStartFilm: Handler = async (req, env) => {
     // Both or neither, whole and positive. A part of a long film pins its frame here, because the join
     // refuses films of different frames.
     ...filmDeliveryFrame(a.delivery_width, a.delivery_height),
+    // cf#1389: a part of a long film pins its rate here too, for the same reason.
+    ...filmDeliveryFps(a.delivery_fps),
   }, filmModules);
   // cf#392: persist {injected, dropped} on the film job + emit structured event so poll/summary
   // can prove the Wan motion adapter was projected (or cap-dropped) without R2 archaeology.
@@ -2437,16 +2470,34 @@ const hCreateParentFilm: Handler = async (req, env, ctx) => {
   const hex = [...new Uint8Array(digest)].slice(0, 16).map((b) => b.toString(16).padStart(2, "0")).join("");
   const filmId = `feature-${hex}`;
   const fingerprint = requestFingerprint(a);
+  // cf#1389: with no shared.delivery_fps, the rate the shared finish chain would ship at, worked out once.
+  const sharedIn = (a as { shared?: unknown }).shared;
+  // One discovery serves both the rate default and the dialogue check below.
+  const parentModules = await discoverModules(env as unknown as Record<string, unknown>);
+  const defaultFps = parentDefaultDeliveryFps(
+    parentModules,
+    sharedIn && typeof sharedIn === "object" ? (sharedIn as { finish_config?: unknown }).finish_config : undefined,
+  );
   let doc;
   try {
     doc = buildParentDoc(
       filmId, a, Date.now(),
-      (width, height, seconds) => predictNormalizedBytes(width, height, CONTAINER_DEFAULT_FPS, seconds),
+      (width, height, fps, seconds) => predictNormalizedBytes(width, height, fps, seconds),
       fingerprint,
+      defaultFps,
     );
   } catch (e) {
     if (e instanceof ParentRefusal) throw badRequest(e.message);
     throw e;
+  }
+  // cf#1391: one dialogue module for every part. A name this studio does not serve is refused here, before
+  // any part spends, rather than at the first part's submit.
+  if (doc.shared.dialogue_backend !== undefined || doc.shared.dialogue_config !== undefined) {
+    const parentDialogue = resolveAgentDialogue(
+      parentModules,
+      doc.shared.dialogue_backend, doc.shared.dialogue_config,
+    );
+    if (!parentDialogue.ok) throw badRequest(`shared.${parentDialogue.error}`);
   }
   // No tick here: a submit in waitUntil can be cut off after the response, and that leaves a claim nobody can
   // resolve. The cron or the first GET starts the film.
