@@ -41,6 +41,37 @@ export function capacityResponse(): Response {
   );
 }
 
+/** The request with the affinity header removed, so it routes to the fallback instance. */
+export function withoutAffinity(request: Request): Request {
+  if (!request.headers.has(FINISH_AFFINITY_HEADER)) return request;
+  const headers = new Headers(request.headers);
+  headers.delete(FINISH_AFFINITY_HEADER);
+  return new Request(request, { headers });
+}
+
+function unauthorized(): Response {
+  return Response.json({ ok: false, error: "unauthorized" }, { status: 401 });
+}
+
+/**
+ * The door's routing decision. `authed` is the result of the bearer check.
+ *
+ * GET /health stays open: the studio's readiness read calls it with no token to learn whether the
+ * container process is up. Only an authenticated request picks its instance, though. An open /health
+ * drops the affinity header and is served by the fixed fallback instance, so it can neither start nor
+ * address a per-film instance. Every other path needs the bearer.
+ */
+export async function routeDoorRequest(
+  request: Request,
+  authed: boolean,
+  send: (name: string, request: Request) => Promise<Response>,
+): Promise<Response> {
+  const url = new URL(request.url);
+  const isHealth = request.method === "GET" && url.pathname === "/health";
+  if (!authed && !isHealth) return unauthorized();
+  return forwardToInstance(authed ? request : withoutAffinity(request), send);
+}
+
 /** Send the request to its instance. A full door answers 429, the one answer a caller may wait on. */
 export async function forwardToInstance(
   request: Request,

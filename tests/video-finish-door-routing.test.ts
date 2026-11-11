@@ -6,6 +6,7 @@ import {
   FINISH_AFFINITY_HEADER,
   forwardToInstance,
   instanceName,
+  routeDoorRequest,
 } from "../containers/video-finish/cf-container/src/routing";
 import { FINISH_AFFINITY_HEADER as MODULE_HEADER, finishAffinity, withAffinity } from "../modules/_shared/finish-affinity";
 import { FINISH_AFFINITY_HEADER as CORE_DOOR_HEADER } from "../src/video-finish-binding";
@@ -61,10 +62,51 @@ describe("a full door", () => {
   });
 });
 
+describe("only an authenticated request picks its instance", () => {
+  const recorder = () => {
+    const seen: string[] = [];
+    const send = async (name: string) => { seen.push(name); return new Response("{}"); };
+    return { seen, send };
+  };
+  const health = (headers: Record<string, string> = {}) => new Request("https://door/health", { headers });
+
+  it("an open /health is served by the fallback instance, whatever affinity it names", async () => {
+    const { seen, send } = recorder();
+    const resp = await routeDoorRequest(health({ [FINISH_AFFINITY_HEADER]: "film-a" }), false, send);
+    expect(resp.status).toBe(200);
+    expect(seen).toEqual([FALLBACK_INSTANCE]);
+  });
+
+  it("many open /health calls naming different films all reach the one fallback instance", async () => {
+    const { seen, send } = recorder();
+    for (let i = 0; i < 25; i++) await routeDoorRequest(health({ [FINISH_AFFINITY_HEADER]: `film-${i}` }), false, send);
+    expect(new Set(seen)).toEqual(new Set([FALLBACK_INSTANCE]));
+  });
+
+  it("an authenticated request still routes by affinity", async () => {
+    const { seen, send } = recorder();
+    await routeDoorRequest(health({ [FINISH_AFFINITY_HEADER]: "film-a" }), true, send);
+    await routeDoorRequest(req({ [FINISH_AFFINITY_HEADER]: "film-a" }), true, send);
+    expect(seen).toEqual([instanceName(new Headers({ [FINISH_AFFINITY_HEADER]: "film-a" })), instanceName(new Headers({ [FINISH_AFFINITY_HEADER]: "film-a" }))]);
+    expect(seen[0]).not.toBe(FALLBACK_INSTANCE);
+  });
+
+  it("an unauthenticated request to any other path is refused before any instance is addressed", async () => {
+    const { seen, send } = recorder();
+    const resp = await routeDoorRequest(req({ [FINISH_AFFINITY_HEADER]: "film-a" }), false, send);
+    expect(resp.status).toBe(401);
+    expect(seen).toEqual([]);
+    const post = await routeDoorRequest(new Request("https://door/health", { method: "POST" }), false, send);
+    expect(post.status).toBe(401);
+    expect(seen).toEqual([]);
+  });
+});
+
 describe("the real door wiring", () => {
-  it("routes through forwardToInstance, with the fixed name only as the fallback", () => {
+  it("routes through routeDoorRequest with the bearer result, with the fixed name only as the fallback", () => {
     const src = readFileSync(join(here, "../containers/video-finish/cf-container/src/index.ts"), "utf8");
-    expect(src).toContain("forwardToInstance(request, (name, req) => getContainer(env.FINISH, name).fetch(req))");
+    expect(src).toContain("routeDoorRequest(request, authed, (name, req) => getContainer(env.FINISH, name).fetch(req))");
+    expect(src).toContain("const authed = await bearerOk(");
     expect(src).not.toContain('getContainer(env.FINISH, "subtitle")');
   });
   it("is the size this door was ruled to be", () => {
