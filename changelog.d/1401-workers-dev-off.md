@@ -1,3 +1,0 @@
-### Containers: the five media doors stop answering on workers.dev (cf#1401)
-
-`audio-beat-sync`, `audio-master`, `audio-mix`, `image-prep` and `video-finish` set `workers_dev = false` in their `cf-container/wrangler.toml`. Each door already answers on its custom domain (`<door>.skyphusion.org`), and its bearer gate already refused a request without the token on every hostname, so the `*.workers.dev` name was a second hostname nobody used, not a bypass. `preview_urls` stays `false`. Nothing calls a door on workers.dev: measured 2026-11-11 across every Worker's bindings on the account and the repo variables in this repo, vivijure-control-plane and vivijure-blender. The sixth door, blender, makes the same change in skyphusion-labs/vivijure-blender.
