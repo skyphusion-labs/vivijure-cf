@@ -1495,7 +1495,7 @@ A long film is built as ordinary film jobs (parts) under one parent, joined at t
 | `character_refs` | object | yes | As `characterRefs` on the bundle route. |
 | `dialogue_lines` | `[{shot_id,text,voice_id?}]` | no | By the board's scene id. Omitted, they come from each scene's `dialogue.text`. |
 | `part_size` or `breaks` | number or number[] | one of them | `breaks` are shot counts where a part ends. |
-| `shared` | object | yes | `motion_backend`, `style` (`photoreal` or `anime`), `delivery_width`, `delivery_height` are required. Also `keyframe_backend`, `keyframe_config`, `motion_config`, `finish_config`, `film_finish_config`, `dialogue_backend`, `dialogue_config`, `cast_loras`, `film_titles`, `qualityTier`. `dialogue_backend` and `dialogue_config` go to every part, so the parts speak with one dialogue module (cf#1391); a module this studio does not serve is `400` before the film is stored. `audio_key` is refused: a bed on the joined film is not built. |
+| `shared` | object | yes | `motion_backend`, `style` (`photoreal` or `anime`), `delivery_width`, `delivery_height` are required. `delivery_fps` (a whole number above 0) is optional: without it the film works out once the rate its shared `finish_config` would ship at (24, or 24 times the interpolation factor), and every part is sent that one rate, because the join refuses parts of different rates (cf#1389). Also `keyframe_backend`, `keyframe_config`, `motion_config`, `finish_config`, `film_finish_config`, `dialogue_backend`, `dialogue_config`, `cast_loras`, `film_titles`, `qualityTier`. `dialogue_backend` and `dialogue_config` go to every part, so the parts speak with one dialogue module (cf#1391); a module this studio does not serve is `400` before the film is stored. `audio_key` is refused: a bed on the joined film is not built. |
 | `part_overrides` | `[{index,cast_loras?,character_refs?,motion_backend?}]` | no | What differs for one part. |
 | `spend_ceiling_usd` | number | yes | No new part is submitted if its estimate would cross this. |
 | `cost_usd_per_shot_est` | number | yes | The caller's estimate per shot. The ceiling works from this, so it is only as good as this number. |
@@ -1544,7 +1544,7 @@ A join that fails for good ends the film in `failed` with every part kept, and `
 
 **`POST /api/film/:id/ceiling`** with `{"spend_ceiling_usd": n}` raises the ceiling and lets a film stopped by it carry on. `n` must be above the current value. `400` otherwise, or if the film is `done` or `failed`. `409` if the film changed during the call.
 
-`POST /api/render/film` also takes `delivery_width` and `delivery_height`: both or neither, whole numbers above 0.
+`POST /api/render/film` also takes `delivery_width` and `delivery_height`: both or neither, whole numbers above 0. It also takes `delivery_fps`, a whole number above 0, which wins over the rate the finish chain produced (core#431, cf#1389); a clip above it loses frames at assemble, with a note.
 
 ### 2.22b POST /api/internal/sweep -- the cron pass, for a deployment with no cron
 

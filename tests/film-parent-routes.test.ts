@@ -906,3 +906,23 @@ describe("POST /api/film/:id/shots/:shot/retake", () => {
     expect(h.fromKeyframes).toEqual([]);
   });
 });
+
+describe("POST /api/film pins one delivery_fps on every part (cf#1389)", () => {
+  const rifeEnv = () => ({ ...env(), MODULE_FINISH_RIFE: moduleBinding("finish-rife", ["finish"]) });
+  for (const [label, shared, want] of [
+    ["the shared chain interpolates: 48, worked out once", { finish_config: { "finish-rife": {} } }, 48],
+    ["no finish: 24", {}, 24],
+    ["the caller's rate wins", { delivery_fps: 30, finish_config: { "finish-rife": {} } }, 30],
+  ] as [string, Record<string, unknown>, number][]) {
+    it(label, async () => {
+      h.started = [];
+      const e = rifeEnv();
+      const res = await worker.fetch(post("/api/film", { ...BODY, idempotency_key: `fps-${want}`, shared: { ...BODY.shared, ...shared } }), e as never, ctx);
+      await settle();
+      expect(res.status).toBe(201);
+      await tick(e);
+      expect(h.started).toHaveLength(1);
+      expect(h.started[0].delivery_fps).toBe(want);
+    });
+  }
+});

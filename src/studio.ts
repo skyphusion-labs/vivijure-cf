@@ -24,7 +24,8 @@ import { animateFromPreview, clipAnimateProgress } from "./finalize-from-keyfram
 import { isParentPartProject } from "./film-parent";
 import { FULL_RETRY_DEGRADE, retryFailedRender, retryStatusRefusal } from "./render-retry";
 import { advanceParent, buildParentDoc, cancelRetake, heldEndFrames, parentCanAct, partShotRows, rotateFrom, FILM_LIST_LIMIT, markRetake, parentListRow, MAX_PARTS, MAX_SCENES_PER_PART, ParentRefusal, parentView, raiseCeiling, requestFingerprint, resumeParent, retakeScenesAndLines, retryPart, SubmitNotStarted, SubmitRefused, type CreateParentBody, type RetakeEdits } from "./film-parent";
-import { CONTAINER_DEFAULT_FPS, predictNormalizedBytes } from "@skyphusion-labs/vivijure-core/assemble-admission";
+import { predictNormalizedBytes } from "@skyphusion-labs/vivijure-core/assemble-admission";
+import { parentDefaultDeliveryFps } from "./parent-delivery-fps";
 import { clearActiveMarker, insertParent, overlayLiveProgress, readCronHeartbeat, readPartJobs, reconcileActiveMarkers, writeCronHeartbeat, listActiveParents, listParents, repairListRow, loadParent, parentDeps, saveParent, type ParentDoors, childPollBody } from "./film-parent-store";
 import { readIdempotencyKey } from "./film-idempotency";
 import { beatsMarkerKey, jobAfterSkippedJoin, songStartRefusal, downloadableClips } from "./film-join-gate";
@@ -2027,7 +2028,14 @@ function filmDeliveryFrame(width: unknown, height: unknown): { delivery_width?: 
   return { delivery_width: width as number, delivery_height: height as number };
 }
 
-type FilmSubmitBody = { project?: string; bundle_key?: string; scenes?: FilmScene[]; motion_backend?: string; keyframe_backend?: string; keyframe_config?: Record<string, unknown>; motion_config?: Record<string, unknown>; finish_config?: Record<string, Record<string, unknown>>; finish_select?: unknown; speech_config?: Record<string, Record<string, unknown>>; film_finish_config?: Record<string, Record<string, unknown>>; master_config?: Record<string, Record<string, unknown>>; audio_key?: string; film_titles?: { title?: { text: string; subtitle?: string }; credits?: { lines: string[] } }; dialogue_lines?: DialogueLine[]; cast_loras?: Record<string, string>; qualityTier?: string; shard_count?: number; shardCount?: number; delivery_width?: unknown; delivery_height?: unknown; reuse_finished?: unknown; idempotency_key?: unknown; idempotencyKey?: unknown; projectId?: unknown; dialogue_backend?: unknown; dialogue_config?: unknown };
+/** cf#1389 (core#431): a pinned rate wins over the rate the finish chain produced. Whole and above 0. */
+function filmDeliveryFps(fps: unknown): { delivery_fps?: number } {
+  if (fps === undefined) return {};
+  if (!Number.isInteger(fps) || (fps as number) <= 0) throw badRequest("delivery_fps must be a whole number above 0");
+  return { delivery_fps: fps as number };
+}
+
+type FilmSubmitBody = { project?: string; bundle_key?: string; scenes?: FilmScene[]; motion_backend?: string; keyframe_backend?: string; keyframe_config?: Record<string, unknown>; motion_config?: Record<string, unknown>; finish_config?: Record<string, Record<string, unknown>>; finish_select?: unknown; speech_config?: Record<string, Record<string, unknown>>; film_finish_config?: Record<string, Record<string, unknown>>; master_config?: Record<string, Record<string, unknown>>; audio_key?: string; film_titles?: { title?: { text: string; subtitle?: string }; credits?: { lines: string[] } }; dialogue_lines?: DialogueLine[]; cast_loras?: Record<string, string>; qualityTier?: string; shard_count?: number; shardCount?: number; delivery_width?: unknown; delivery_height?: unknown; delivery_fps?: unknown; reuse_finished?: unknown; idempotency_key?: unknown; idempotencyKey?: unknown; projectId?: unknown; dialogue_backend?: unknown; dialogue_config?: unknown };
 const hStartFilm: Handler = async (req, env) => {
   const submitted = await req.clone().text();
   const a = await readBody<FilmSubmitBody>(req);
@@ -2205,6 +2213,8 @@ const hStartFilm: Handler = async (req, env) => {
     // Both or neither, whole and positive. A part of a long film pins its frame here, because the join
     // refuses films of different frames.
     ...filmDeliveryFrame(a.delivery_width, a.delivery_height),
+    // cf#1389: a part of a long film pins its rate here too, for the same reason.
+    ...filmDeliveryFps(a.delivery_fps),
   }, filmModules);
   // cf#392: persist {injected, dropped} on the film job + emit structured event so poll/summary
   // can prove the Wan motion adapter was projected (or cap-dropped) without R2 archaeology.
@@ -2460,12 +2470,21 @@ const hCreateParentFilm: Handler = async (req, env, ctx) => {
   const hex = [...new Uint8Array(digest)].slice(0, 16).map((b) => b.toString(16).padStart(2, "0")).join("");
   const filmId = `feature-${hex}`;
   const fingerprint = requestFingerprint(a);
+  // cf#1389: with no shared.delivery_fps, the rate the shared finish chain would ship at, worked out once.
+  const sharedIn = (a as { shared?: unknown }).shared;
+  // One discovery serves both the rate default and the dialogue check below.
+  const parentModules = await discoverModules(env as unknown as Record<string, unknown>);
+  const defaultFps = parentDefaultDeliveryFps(
+    parentModules,
+    sharedIn && typeof sharedIn === "object" ? (sharedIn as { finish_config?: unknown }).finish_config : undefined,
+  );
   let doc;
   try {
     doc = buildParentDoc(
       filmId, a, Date.now(),
-      (width, height, seconds) => predictNormalizedBytes(width, height, CONTAINER_DEFAULT_FPS, seconds),
+      (width, height, fps, seconds) => predictNormalizedBytes(width, height, fps, seconds),
       fingerprint,
+      defaultFps,
     );
   } catch (e) {
     if (e instanceof ParentRefusal) throw badRequest(e.message);
@@ -2475,7 +2494,7 @@ const hCreateParentFilm: Handler = async (req, env, ctx) => {
   // any part spends, rather than at the first part's submit.
   if (doc.shared.dialogue_backend !== undefined || doc.shared.dialogue_config !== undefined) {
     const parentDialogue = resolveAgentDialogue(
-      await discoverModules(env as unknown as Record<string, unknown>),
+      parentModules,
       doc.shared.dialogue_backend, doc.shared.dialogue_config,
     );
     if (!parentDialogue.ok) throw badRequest(`shared.${parentDialogue.error}`);
