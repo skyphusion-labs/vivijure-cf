@@ -1,4 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
+import { SHIPPED_FINISH_MODULES } from "./helpers/shipped-finish-modules";
 import { joinKeyframesToScenes, applyFinishOutput, applySpeechOutput, orderFinalClips, summarizeFilm, filmProgressMarker, resolveFinishConfigs, coerceSceneIds, coerceDialogueLineIds, callVideoFinish, classifyAssembleTransport, advanceFilmJob, clipKeysFromFilmJob, filmJobDocKey, clipJobDocKey, phaseAgeSeconds, ceilingAgeSeconds, listProjectKeyframes, keyframeSetCompleteInR2, listProjectClips, clipFileMatchesShot, finishShotAdoptableFromR2, finishShotRecoverable, reclaimFinishShotsFromR2, adoptFinishStepOutput, finishShotLedgerReconciles, classifyFinishFailure, classifyFinishRetry, FINISH_STEP_MAX_ATTEMPTS, FILM_FINISH_INFLIGHT_WINDOW_SECONDS, finishStepOutputKey, finishStepAppliedTag, KEYFRAME_STALL_SECONDS, PHASE_HARD_DEADLINE_SECONDS, applyMasterOutput, degradeMasterStep, masterChainDone, filmSeconds, masteredBedKey, MASTER_STEP_MAX_ATTEMPTS, MASTER_STALL_SECONDS, type FilmScene, type FinishShot, type SpeechShot, type FilmJob, type MasterState } from "@skyphusion-labs/vivijure-core/film-orchestrator";
 import type { ConfigSchema } from "@skyphusion-labs/vivijure-core/modules/types";
 import type { Env } from "../src/env";
@@ -114,7 +115,7 @@ describe("finish-phase R2 adoption (RUN #29: envelope frozen IN_PROGRESS, artifa
       chain: ["MODULE_FINISH_RIFE", "MODULE_FINISH_LIPSYNC", "MODULE_FINISH_UPSCALE", "MODULE_FINISH_STUB"],
     });
     const present = new Map([["shot_02", "renders/p/clips/shot_02_finished.mp4"]]); // the RIFE intermediate
-    const adopted = reclaimFinishShotsFromR2([failed], present);
+    const adopted = reclaimFinishShotsFromR2([failed], present, SHIPPED_FINISH_MODULES);
     expect(adopted).toBe(0);
     expect(failed.status).toBe("failed"); // NOT silently flipped to done on an intermediate
   });
@@ -132,7 +133,7 @@ describe("finish-phase R2 adoption (RUN #29: envelope frozen IN_PROGRESS, artifa
     const ok = finishShot({ shot_id: "shot_01", status: "done", clip_key: "renders/p/clips/shot_01_finished.mp4" });
     const shots = [ok, stuck];
     const present = new Map([["shot_02", "renders/p/clips/shot_02_finished.mp4"]]);
-    const adopted = reclaimFinishShotsFromR2(shots, present);
+    const adopted = reclaimFinishShotsFromR2(shots, present, SHIPPED_FINISH_MODULES);
     expect(adopted).toBe(1);
     expect(stuck.status).toBe("done");
     expect(stuck.clip_key).toBe("renders/p/clips/shot_02_finished.mp4");
@@ -144,7 +145,7 @@ describe("finish-phase R2 adoption (RUN #29: envelope frozen IN_PROGRESS, artifa
 
   it("leaves a stuck PENDING shot pending when its clip is genuinely absent from R2 (no false adoption)", () => {
     const stuck = finishShot({ shot_id: "shot_02", status: "pending", poll: "frozen", idx: 0, chain: ["MODULE_FINISH_RIFE"] });
-    const adopted = reclaimFinishShotsFromR2([stuck], new Map());
+    const adopted = reclaimFinishShotsFromR2([stuck], new Map(), SHIPPED_FINISH_MODULES);
     expect(adopted).toBe(0);
     expect(stuck.status).toBe("pending");
   });
@@ -172,7 +173,7 @@ describe("finish shot ledger reconciles 1:1 to its chain (#662, adopted-shot boo
     // through it rather than casting past it -- a cast here would be the test quietly opting out of
     // the very guarantee the brand exists to give, and would keep passing if the guard broke.
     if (!finishShotRecoverable(fs)) throw new Error("fixture must be recoverable before adoption");
-    adoptFinishStepOutput(fs, "clips/shot_03_finished.mp4", finishStepAppliedTag(fs));
+    adoptFinishStepOutput(fs, "clips/shot_03_finished.mp4", finishStepAppliedTag(fs, SHIPPED_FINISH_MODULES));
     // idx1..3 run: no-dialogue lip-sync no-ops, upscale, no-overlays text.
     applyFinishOutput(fs, finishOut("renders/p/clips/shot_03_finished.mp4", ["noop:no-dialogue"]), "p");
     applyFinishOutput(fs, finishOut("renders/p/clips/shot_03_finished_up.mp4", ["upscale:2x"]), "p");
@@ -196,7 +197,7 @@ describe("finish shot ledger reconciles 1:1 to its chain (#662, adopted-shot boo
     // idx0 LIPSYNC: reused from R2 (its _ls artifact + matching #583 provenance sidecar) -> mouth IS synced.
     // Narrowed through the core 1.23.0 brand guard, same reason as the RIFE case above.
     if (!finishShotRecoverable(fs)) throw new Error("fixture must be recoverable before adoption");
-    adoptFinishStepOutput(fs, "clips/shot_02_ls.mp4", finishStepAppliedTag(fs));
+    adoptFinishStepOutput(fs, "clips/shot_02_ls.mp4", finishStepAppliedTag(fs, SHIPPED_FINISH_MODULES));
     applyFinishOutput(fs, finishOut("renders/p/clips/shot_02_ls_rife.mp4", ["interpolate:2x"]), "p");
     applyFinishOutput(fs, finishOut("renders/p/clips/shot_02_ls_rife_up.mp4", ["upscale:2x"]), "p");
     applyFinishOutput(fs, finishOut("renders/p/clips/shot_02_ls_rife_up.mp4", ["noop:no-overlays"]), "p");
@@ -221,7 +222,7 @@ describe("finish shot ledger reconciles 1:1 to its chain (#662, adopted-shot boo
     expect(fs.idx).toBe(3);
     expect(fs.status).toBe("pending");
     fs.poll = "frozen"; // last-chain pending with a poll token -> adoptable (RUN #29 frozen-envelope path)
-    const n = reclaimFinishShotsFromR2([fs], new Map([[fs.shot_id, "clips/shot_01_finished_up.mp4"]]));
+    const n = reclaimFinishShotsFromR2([fs], new Map([[fs.shot_id, "clips/shot_01_finished_up.mp4"]]), SHIPPED_FINISH_MODULES);
     expect(n).toBe(1);
     expect(fs.status).toBe("done");
     expect(finishShotLedgerReconciles(fs)).toBe(true);
@@ -396,19 +397,19 @@ describe("finish-step R2 advance (FIX C: a MID-chain step GC'd/frozen with its o
 
   it("finishStepOutputKey: predicts each finish module's output key; null for an unmodeled module", () => {
     // finish-rife names its output off the shot id (container convention), not by appending to the input.
-    expect(finishStepOutputKey("neon", fs({ chain: ["MODULE_FINISH_RIFE"] }))).toBe("renders/neon/clips/shot_01_finished.mp4");
+    expect(finishStepOutputKey("neon", fs({ chain: ["MODULE_FINISH_RIFE"] }), SHIPPED_FINISH_MODULES)).toBe("renders/neon/clips/shot_01_finished.mp4");
     // the append-convention modules insert their suffix before the extension of the INPUT clip key.
-    expect(finishStepOutputKey("neon", fs({ clip_key: "renders/neon/clips/shot_01_finished.mp4", chain: ["MODULE_FINISH_LIPSYNC"] }))).toBe("renders/neon/clips/shot_01_finished_ls.mp4");
-    expect(finishStepOutputKey("neon", fs({ clip_key: "renders/neon/clips/shot_01_finished_ls.mp4", chain: ["MODULE_FINISH_UPSCALE"] }))).toBe("renders/neon/clips/shot_01_finished_ls_up.mp4");
+    expect(finishStepOutputKey("neon", fs({ clip_key: "renders/neon/clips/shot_01_finished.mp4", chain: ["MODULE_FINISH_LIPSYNC"] }), SHIPPED_FINISH_MODULES)).toBe("renders/neon/clips/shot_01_finished_ls.mp4");
+    expect(finishStepOutputKey("neon", fs({ clip_key: "renders/neon/clips/shot_01_finished_ls.mp4", chain: ["MODULE_FINISH_UPSCALE"] }), SHIPPED_FINISH_MODULES)).toBe("renders/neon/clips/shot_01_finished_ls_up.mp4");
     // an unmodeled module -> null: NO R2 shortcut, so it can never advance off a sibling step's artifact.
-    expect(finishStepOutputKey("neon", fs({ chain: ["MODULE_FINISH_STUB"] }))).toBeNull();
+    expect(finishStepOutputKey("neon", fs({ chain: ["MODULE_FINISH_STUB"] }), SHIPPED_FINISH_MODULES)).toBeNull();
   });
 
   it("finishStepAppliedTag: reconstructs each module's applied marker from its validated config", () => {
-    expect(finishStepAppliedTag(fs({ chain: ["MODULE_FINISH_LIPSYNC"], configs: [{ version: "v15" }] }))).toBe("lipsync:v15");
-    expect(finishStepAppliedTag(fs({ chain: ["MODULE_FINISH_UPSCALE"], configs: [{ scale: 2 }] }))).toBe("upscale:2x");
-    expect(finishStepAppliedTag(fs({ chain: ["MODULE_FINISH_RIFE"], configs: [{ interpolation_factor: 2 }] }))).toBe("interpolate:2x");
-    expect(finishStepAppliedTag(fs({ chain: ["MODULE_FINISH_STUB"], configs: [{}] }))).toBe("MODULE_FINISH_STUB:r2-adopted");
+    expect(finishStepAppliedTag(fs({ chain: ["MODULE_FINISH_LIPSYNC"], configs: [{ version: "v15" }] }), SHIPPED_FINISH_MODULES)).toBe("lipsync:v15");
+    expect(finishStepAppliedTag(fs({ chain: ["MODULE_FINISH_UPSCALE"], configs: [{ scale: 2 }] }), SHIPPED_FINISH_MODULES)).toBe("upscale:2x");
+    expect(finishStepAppliedTag(fs({ chain: ["MODULE_FINISH_RIFE"], configs: [{ interpolation_factor: 2 }] }), SHIPPED_FINISH_MODULES)).toBe("interpolate:2x");
+    expect(finishStepAppliedTag(fs({ chain: ["MODULE_FINISH_STUB"], configs: [{}] }), SHIPPED_FINISH_MODULES)).toBe("MODULE_FINISH_STUB:r2-adopted");
   });
 
   // The live wedge: a 4-step chain stuck at idx 0 (RIFE) whose poll froze IN_PROGRESS / 404s while the
@@ -461,7 +462,7 @@ describe("finish-step R2 advance (FIX C: a MID-chain step GC'd/frozen with its o
     const scHash = await finishStepInputHash(null, null, { interpolation_factor: 2 }); // #583 gate: matching sidecar
     const { env, read, lipsyncInvoked } = wedgeEnv(wedgeFilm(), { rifePoll: "pending", rifeOutputInR2: true },
       { "renders/neon/clips/shot_01_finished.mp4.hash": scHash });
-    await advanceFilmJob(orch(env), "film-fixc");
+    await advanceFilmJob(orch(env), "film-fixc", SHIPPED_FINISH_MODULES);
     const a = read().finish_shots![0];
     expect(a.idx).toBe(1);                                              // advanced off the RIFE step...
     expect(a.applied).toEqual([]);                                     // #583: adopted, NOT run -> never a fake applied-run tag
@@ -470,20 +471,20 @@ describe("finish-step R2 advance (FIX C: a MID-chain step GC'd/frozen with its o
     expect(a.status).toBe("pending");                                  // 3 modules still to run
     expect(a.poll).toBeUndefined();
     expect(lipsyncInvoked()).toBe(false);                             // lip-sync dispatches on the NEXT tick
-    await advanceFilmJob(orch(env), "film-fixc");
+    await advanceFilmJob(orch(env), "film-fixc", SHIPPED_FINISH_MODULES);
     expect(lipsyncInvoked()).toBe(true);                              // the wedge is cleared: lip-sync now runs
     expect(read().finish_shots![0].poll).toBe("ls-tok");
   });
 
   it("404 job-not-found + NO R2 output -> fails loud (not silent-pending)", async () => {
     const { env, read } = wedgeEnv(wedgeFilm(), { rifePoll: "404", rifeOutputInR2: false });
-    await advanceFilmJob(orch(env), "film-fixc");
+    await advanceFilmJob(orch(env), "film-fixc", SHIPPED_FINISH_MODULES);
     expect(read().finish_shots![0].status).toBe("failed");
   });
 
   it("frozen-pending + NO R2 output yet -> stays pending (the job may still finish), never false-fails", async () => {
     const { env, read } = wedgeEnv(wedgeFilm(), { rifePoll: "pending", rifeOutputInR2: false });
-    await advanceFilmJob(orch(env), "film-fixc");
+    await advanceFilmJob(orch(env), "film-fixc", SHIPPED_FINISH_MODULES);
     const a = read().finish_shots![0];
     expect(a.status).toBe("pending");
     expect(a.idx).toBe(0);
@@ -1631,7 +1632,7 @@ describe("advanceFinishPhase R2 reclaim (#141: finish output in R2 beats a finis
       "renders/neon/clips/shot_01_finished.mp4",
       "renders/neon/clips/shot_02_finished.mp4", // the failed shot's finish output IS present
     ], { "renders/neon/clips/shot_02_finished.mp4.hash": scHash });
-    const r = await advanceFilmJob(orch(env), "film-finish-reclaim");
+    const r = await advanceFilmJob(orch(env), "film-finish-reclaim", SHIPPED_FINISH_MODULES);
     const fs2 = read().finish_shots?.find((f) => f.shot_id === "shot_02");
     expect(fs2?.status).toBe("done");
     expect(fs2?.clip_key).toBe("renders/neon/clips/shot_02_finished.mp4");
@@ -1646,7 +1647,7 @@ describe("advanceFinishPhase R2 reclaim (#141: finish output in R2 beats a finis
       "renders/neon/clips/shot_01_finished.mp4",
       "renders/neon/clips/shot_02_finished.mp4",
     ]); // no sidecars -> unstamped legacy artifact
-    await advanceFilmJob(orch(env), "film-finish-reclaim");
+    await advanceFilmJob(orch(env), "film-finish-reclaim", SHIPPED_FINISH_MODULES);
     expect(read().finish_shots?.find((f) => f.shot_id === "shot_02")?.status).toBe("failed"); // NOT adopted
   });
 
@@ -1655,7 +1656,7 @@ describe("advanceFinishPhase R2 reclaim (#141: finish output in R2 beats a finis
       "renders/neon/clips/shot_01_finished.mp4",
       "renders/neon/clips/shot_02_finished.mp4",
     ], { "renders/neon/clips/shot_02_finished.mp4.hash": "0".repeat(64) }); // a prior take's stale hash
-    await advanceFilmJob(orch(env), "film-finish-reclaim");
+    await advanceFilmJob(orch(env), "film-finish-reclaim", SHIPPED_FINISH_MODULES);
     expect(read().finish_shots?.find((f) => f.shot_id === "shot_02")?.status).toBe("failed"); // NOT adopted -> re-run/fail-loud, never ships stale
   });
 
@@ -1663,7 +1664,7 @@ describe("advanceFinishPhase R2 reclaim (#141: finish output in R2 beats a finis
     const { env, read } = finishEnv(finishFilm(), [
       "renders/neon/clips/shot_01_finished.mp4", // only the already-done shot's output
     ]);
-    await advanceFilmJob(orch(env), "film-finish-reclaim");
+    await advanceFilmJob(orch(env), "film-finish-reclaim", SHIPPED_FINISH_MODULES);
     expect(read().finish_shots?.find((f) => f.shot_id === "shot_02")?.status).toBe("failed");
   });
 });
@@ -2711,7 +2712,7 @@ describe("advanceFinishPhase: mid-chain R2 adoption (#209 -- the FAC shot_03 inc
     const scHash = await finishStepInputHash(null, null, {}); // #583 gate: matching sidecar
     const { env, read } = env209(midChainFilm(), new Set(["renders/fac/clips/shot_03_finished.mp4"]),
       { "renders/fac/clips/shot_03_finished.mp4.hash": scHash });
-    await advanceFilmJob(orch(env), "film-209");
+    await advanceFilmJob(orch(env), "film-209", SHIPPED_FINISH_MODULES);
     const fs = read().finish_shots?.find((f) => f.shot_id === "shot_03");
     expect(fs?.idx).toBe(1); // advanced off RIFE -> the finish stub
     expect(fs?.clip_key).toBe("renders/fac/clips/shot_03_finished.mp4"); // now feeding the finish stub
@@ -2723,7 +2724,7 @@ describe("advanceFinishPhase: mid-chain R2 adoption (#209 -- the FAC shot_03 inc
 
   it("#583 gate: does NOT adopt the mid-chain artifact with NO sidecar -- stays pending, never advances on a legacy artifact", async () => {
     const { env, read } = env209(midChainFilm(), new Set(["renders/fac/clips/shot_03_finished.mp4"])); // no sidecar
-    await advanceFilmJob(orch(env), "film-209");
+    await advanceFilmJob(orch(env), "film-209", SHIPPED_FINISH_MODULES);
     const fs = read().finish_shots?.find((f) => f.shot_id === "shot_03");
     expect(fs?.idx).toBe(0);            // NOT advanced off RIFE
     expect(fs?.status).toBe("pending"); // stays pending (frozen poll), never adopts an unstamped artifact
@@ -2732,7 +2733,7 @@ describe("advanceFinishPhase: mid-chain R2 adoption (#209 -- the FAC shot_03 inc
   it("#583 gate: does NOT adopt the mid-chain artifact when the sidecar MISMATCHES the current inputs", async () => {
     const { env, read } = env209(midChainFilm(), new Set(["renders/fac/clips/shot_03_finished.mp4"]),
       { "renders/fac/clips/shot_03_finished.mp4.hash": "0".repeat(64) }); // stale hash
-    await advanceFilmJob(orch(env), "film-209");
+    await advanceFilmJob(orch(env), "film-209", SHIPPED_FINISH_MODULES);
     const fs = read().finish_shots?.find((f) => f.shot_id === "shot_03");
     expect(fs?.idx).toBe(0);
     expect(fs?.status).toBe("pending");
@@ -2740,7 +2741,7 @@ describe("advanceFinishPhase: mid-chain R2 adoption (#209 -- the FAC shot_03 inc
 
   it("stays pending (does NOT adopt) when the RIFE intermediate is NOT in R2 -- no phantom advance", async () => {
     const { env, read } = env209(midChainFilm(), new Set()); // nothing in R2
-    await advanceFilmJob(orch(env), "film-209");
+    await advanceFilmJob(orch(env), "film-209", SHIPPED_FINISH_MODULES);
     const fs = read().finish_shots?.find((f) => f.shot_id === "shot_03");
     expect(fs?.idx).toBe(0); // not advanced
     expect(fs?.status).toBe("pending");
@@ -2839,11 +2840,11 @@ describe("finish_artifacts: contract-carried conventions beat the legacy name-de
       .toBe("renders/neon/clips/shot_01_hires.mp4");
   });
 
-  it("no declaration + unmodeled name -> null (no R2 shortcut), and the legacy names still resolve", () => {
+  // What a name earns without a declaration is core's to test: vivijure-core#543 removes the name
+  // fallback, and this suite must pass on the pinned core and on that one alike.
+  it("no declaration + unmodeled name -> null (no R2 shortcut)", () => {
     const modules = [mod("MODULE_FINISH_STUB", undefined)];
     expect(finishStepOutputKey("neon", fs({ chain: ["MODULE_FINISH_STUB"] }), modules)).toBeNull();
-    expect(finishStepOutputKey("neon", fs({ chain: ["MODULE_FINISH_RIFE"] }), modules))
-      .toBe("renders/neon/clips/shot_01_finished.mp4");
   });
 
   it("applied rules: template {knob|default} + first-match-wins `when` gating", () => {
@@ -2860,10 +2861,12 @@ describe("finish_artifacts: contract-carried conventions beat the legacy name-de
     expect(finishStepAppliedTag(fs({ chain: ["MODULE_X_RIFE"], configs: [{ interpolate: false }] }), modules)).toBe("noop:interpolate-off");
   });
 
-  it("declared rules with NO match mark r2-adopted (never silent), and no-decl falls back to name rules", () => {
+  it("declared rules with NO match mark r2-adopted (never silent)", () => {
     const modules = [mod("MODULE_X_ODD", { output_key: { kind: "append_suffix", suffix: "_o" }, applied: [{ when: { knob: "on", equals: true }, tag: "on" }] })];
     expect(finishStepAppliedTag(fs({ chain: ["MODULE_X_ODD"], configs: [{}] }), modules)).toBe("MODULE_X_ODD:r2-adopted");
-    expect(finishStepAppliedTag(fs({ chain: ["MODULE_FINISH_LIPSYNC"], configs: [{ version: "v1" }] }), modules)).toBe("lipsync:v1");
+  });
+  it("CONTROL: the shipped finish-lipsync declaration gives its tag", () => {
+    expect(finishStepAppliedTag(fs({ chain: ["MODULE_FINISH_LIPSYNC"], configs: [{ version: "v1" }] }), SHIPPED_FINISH_MODULES)).toBe("lipsync:v1");
   });
 });
 

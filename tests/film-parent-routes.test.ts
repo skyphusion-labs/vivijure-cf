@@ -1,4 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
+import { MANIFEST as RIFE_MANIFEST } from "../modules/finish-rife/src/manifest";
 
 // The wiring: routes, the door calls, the etag write. R2 here enforces onlyIf the way the docs describe,
 // which is my reading of R2 and not R2 itself. A live run is what proves the conditional write.
@@ -908,7 +909,11 @@ describe("POST /api/film/:id/shots/:shot/retake", () => {
 });
 
 describe("POST /api/film pins one delivery_fps on every part (cf#1389)", () => {
-  const rifeEnv = () => ({ ...env(), MODULE_FINISH_RIFE: moduleBinding("finish-rife", ["finish"]) });
+  // The real finish-rife manifest, so the rate comes from its declared rate_factor (cf#879).
+  const rifeEnv = () => ({
+    ...env(),
+    MODULE_FINISH_RIFE: { fetch: async () => new Response(JSON.stringify({ ...RIFE_MANIFEST, ui: { order: 10, locality: "cloud" } }), { status: 200, headers: { "content-type": "application/json" } }) },
+  });
   for (const [label, shared, want] of [
     ["the shared chain interpolates: 48, worked out once", { finish_config: { "finish-rife": {} } }, 48],
     ["no finish: 24", {}, 24],
