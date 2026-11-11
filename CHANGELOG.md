@@ -5,6 +5,28 @@ for new features). Newest first.
 
 ## Unreleased
 
+## v1.48.0 -- 2026-11-11
+
+### Fix: the installer and `scripts/runpod-provision.py` use RunPod REST v2 (fleet-chezmoi#2085)
+
+RunPod retires REST v1 on 2026-11-15. Both now call `https://api.runpod.io/v2`. On v2 an endpoint carries its own image, env, disk and registry, so neither makes a template any more. GPUs are chosen by v2 pool: `GPU_POOLS` / `--gpu-pools` name pools directly, and `GPU_TYPE_IDS` / `--gpu-types` map through a GPU type table; an unmapped type stops the run before any RunPod call. Every list is read to its last page, so a same-name endpoint on a later page is found rather than duplicated. The create sets `type: QUEUE`, a 60 minute execution timeout (v2 defaults to 5) and FlashBoot on (v2 defaults to off). `down` still deletes a template or volume that a v1-era install recorded.
+
+### Fix: install-scope module config reaches the studio's own hook calls (#879)
+
+The studio invokes some hooks itself: plan.enhance (planner), image.generate (chat images), cast.image (cast references), score (the score bed) and the voice-sample motion call. These called core's raw `invokeModule`, so an install-scope config field set on the settings page never reached them. All five now go through `invokeRegistered` (vivijure-core 1.45, #535), the path the core orchestrators use, so an install-scope field is the operator's stored value on every hook. `tests/host-invoke-registered-879.test.ts` fails on a direct `invokeModule` call in `src/`.
+
+### Fix: a long film's default frame rate reads finish-rife's declaration (#879)
+
+`parentDefaultDeliveryFps` now passes each finish step's `finish_artifacts` to core's `predictDeliveryFps`, so the rate comes from finish-rife's declared `rate_factor`. vivijure-core#543 removes the binding-name fallback; without this, a long film with RIFE in its chain would default to 24 fps on that core. The pinned core (1.45.0) already reads the field. The finish-rife rate test now holds the declaration against a copy of the old binding rule rather than against core's removed fallback.
+
+### Feat: cf-veo's 1080p limit is refused when the film starts (cf#932, core#507)
+
+cf-veo 0.1.5 declares `requires: [{ when: "1080p", shot_seconds: { min: 7.5 } }]` on `resolution`, so core 1.45+ refuses a 1080p film with a shot that will not be an 8 second clip when the film starts, before keyframes are bought. Before, cf-veo refused it at clip time. The bound is 7.5 planned seconds because cf-veo rounds 7.5 s and up to an 8 s clip. The module keeps its own check at invoke. A test holds the two equal for every length on a grid.
+
+### chore(deps): core 1.46.0 from npm
+
+The studio now pins `@skyphusion-labs/vivijure-core` `^1.46.0` from the registry, replacing 1.45.0. Core 1.46.0 reads finish conventions only from a module's `finish_artifacts`; the binding-name fallbacks are gone (vivijure-cf#879, core#543). Every finish module this studio ships declares `finish_artifacts`, and the long-film default rate already passes them (#1420). Dispatch discovery honours `TENANT_MODULE_PREFIX` (core#542, the core side of #1412); a studio without the prefix set dispatches as before.
+
 ## v1.47.0 -- 2026-11-11
 
 ### Feat: finish-upscale `/ready?probe=endpoint` says whether its RunPod endpoint exists (#1373)

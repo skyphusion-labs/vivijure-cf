@@ -1,3 +1,0 @@
-### Fix: the installer and `scripts/runpod-provision.py` use RunPod REST v2 (fleet-chezmoi#2085)
-
-RunPod retires REST v1 on 2026-11-15. Both now call `https://api.runpod.io/v2`. On v2 an endpoint carries its own image, env, disk and registry, so neither makes a template any more. GPUs are chosen by v2 pool: `GPU_POOLS` / `--gpu-pools` name pools directly, and `GPU_TYPE_IDS` / `--gpu-types` map through a GPU type table; an unmapped type stops the run before any RunPod call. Every list is read to its last page, so a same-name endpoint on a later page is found rather than duplicated. The create sets `type: QUEUE`, a 60 minute execution timeout (v2 defaults to 5) and FlashBoot on (v2 defaults to off). `down` still deletes a template or volume that a v1-era install recorded.
