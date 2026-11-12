@@ -51,7 +51,7 @@ is `public/make-style.js` (pure, unit tested in `tests/make-style.test.ts`). In 
    while talking is unknown), then `ui.order`, then name. **Price never breaks a tie.**
 
 So a talking plan in Wide gets InfiniteTalk (then `cf-p-video-avatar` when InfiniteTalk is not
-installed), and Vertical or Square gets `cf-vidu-q3-turbo`, then `cf-seedance`.
+installed), and Vertical or Square gets `cf-vidu-q3-turbo`. `cf-seedance` is grade ONE since cf#954 (it does not end on the end still), so it is no longer a fallback.
 
 Each module states its own grade in `usage.face_hold` (`hold`, `two`, `one`, `drift`; cf#1246), and
 the page reads it. A module that predates the field falls back to the generic facts above. The values

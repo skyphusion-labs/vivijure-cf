@@ -14,7 +14,9 @@ describe("cf-hh1-r2v first+last", () => {
     expect(p.images).toEqual(["https://r2.example/a.png"]);
   });
 
-  it("next-shot still is images[1]", () => {
+  // cf#954: hh1.1-r2v reads images[] as references, not as an end frame, and two flip-control
+  // renders ended on neither still. The door declares no first_last and sends no end still.
+  it("a next-shot still is not sent", () => {
     const p = buildParams({
       shot_id: "s1",
       keyframe_url: "https://r2.example/a.png",
@@ -22,6 +24,6 @@ describe("cf-hh1-r2v first+last", () => {
       prompt: "walk",
       seconds: 5,
     }, cfg);
-    expect(p.images).toEqual(["https://r2.example/a.png", "https://r2.example/b.png"]);
+    expect(p.images).toEqual(["https://r2.example/a.png"]);
   });
 });

@@ -1,11 +1,12 @@
 // THE shared end-frame flip control. One function, imported by every door test that declares
 // `usage.first_last`, rather than a copy per door each asserting the others must not drift.
 //
-// WHAT IT IS FOR. `first_last: true` is a DECLARATION. Five doors carry it and, as of cf#954, only
-// one has been PROVEN to honour it: two send `last_frame_image` where the published schema says
-// `last_image` (cf#922) and two send array shapes nobody has controlled. A door that accepts an
-// end frame and silently discards it produces a perfectly plausible clip, so nothing about the
-// output betrays it. This is the instrument that does.
+// WHAT IT IS FOR. `first_last: true` is a DECLARATION. A door that accepts an end frame and
+// silently discards it produces a perfectly plausible clip, so nothing about the output betrays
+// it. This is the instrument that does. Measured through the studio on 2026-11-12 (cf#954), with
+// the end still a mirror of the start: cf-vidu-q3-turbo, cf-flux-3-video, cf-kling-v4 and
+// cf-minimax-h3 HONOURED it; cf-seedance (2.5) and cf-hh1-r2v did not in 2 of 2 renders each, and
+// no longer declare it.
 //
 // THE TRICK, and the reason it works: render with an end frame that is a HORIZONTAL FLIP of the
 // start frame. Honoured and ignored then give different readings, because a door that discarded

@@ -77,7 +77,7 @@ export interface WorkflowParams {
 
 const MANIFEST: ModuleManifest = {
   name: "cf-hh1-r2v",
-  version: "0.1.1",
+  version: "0.1.2",
   api: MODULE_API,
   hooks: ["motion.backend"],
   provides: [{ id: "i2v-cloud", label: "Silent look lock (reference stills)" }],
@@ -110,7 +110,9 @@ const MANIFEST: ModuleManifest = {
     scatter_native_audio: false,
     min_seconds: 3,
     max_seconds: 15,
-    first_last: true,
+    // cf#954: false. hh1.1-r2v is reference-to-video: images[] are looks, not a start and an end.
+    // Two flip-control renders through the studio (2026-11-12) ended on NEITHER still.
+    first_last: false,
     seed: true,
   },
 };
