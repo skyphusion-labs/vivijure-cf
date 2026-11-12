@@ -8,7 +8,7 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { execFileSync, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { mkdtempSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { mkdtempSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 
@@ -123,7 +123,18 @@ const hashTree = (d: string): string => {
   const walk = (p: string) => {
     for (const n of readdirSync(p).sort()) {
       const f = join(p, n);
-      if (statSync(f).isDirectory()) walk(f); else h.update(f.slice(d.length) + "\0" + readFileSync(f).toString("base64"));
+      // Read the name once. EISDIR is a directory (walk it). ENOENT and other errors still throw.
+      let body: Buffer;
+      try {
+        body = readFileSync(f);
+      } catch (err) {
+        if ((err as NodeJS.ErrnoException).code === "EISDIR") {
+          walk(f);
+          continue;
+        }
+        throw err;
+      }
+      h.update(f.slice(d.length) + "\0" + body.toString("base64"));
     }
   };
   walk(d);
