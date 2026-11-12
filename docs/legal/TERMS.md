@@ -115,6 +115,11 @@ sends the prompt text only to OpenAI's own image API, under the operator's own O
 Reference images are not forwarded. The Cloudflare AI Gateway is not in that path, so the Gateway's
 logging, retention, spend controls, and Unified Billing do not apply. OpenAI's API data terms apply.
 
+Whose contract those providers sit under depends on which door you came in by, and the two
+answers are different.
+
+### 6.1 If you self-host (the operator door)
+
 When you self-host, these are YOUR own accounts, and your use of them is subject to the providers'
 terms and acceptable-use policies. Those terms bind you directly and independently of this document.
 Skyphusion Labs is not a party to those contracts and is not responsible for those providers' acts,
@@ -151,6 +156,17 @@ This is a list of what to look for. It is not a summary of any one provider's te
 provider's terms carry every item. This document does not interpret a provider's terms or say how
 they apply to a given use. Read the terms for each model you turn on. They change, and the
 provider's current text controls. How it applies to you is between you and your own legal advice.
+
+### 6.2 If you use a studio Skyphusion Labs hosts for you (the tenant door)
+
+On a hosted studio, Cloudflare (Workers, D1, R2, AI Gateway, Workers AI) and the AI model providers
+reached through the AI Gateway run on Skyphusion Labs' accounts. Those providers' terms therefore
+bind Skyphusion Labs, not you, and you are not a party to them. Because we are bound, we pass the
+same conduct rules to you as conditions of the hosted studio, through the versioned hosted
+Acceptable Use Policy you accept at signup (Section 3.2 of that policy states them). GPU rendering
+is different: on the dedicated tier it runs on your own RunPod account under your own RunPod
+contract; on the shared tier it runs on capacity we operate. Nothing about the hosted door changes
+Section 6.1 for anyone who self-hosts.
 
 ---
 
