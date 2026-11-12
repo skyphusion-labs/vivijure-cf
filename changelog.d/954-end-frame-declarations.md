@@ -1,3 +1,0 @@
-### Fix: cf-seedance and cf-hh1-r2v no longer claim an end frame (cf#954)
-
-Flip-control renders through the studio (end still = mirror of the start still) showed both doors do not end on the end still: cf-seedance 2.5 stayed on the start still in one render and on the end still in the other; cf-hh1-r2v, a reference-to-video model, ended on neither. Both now declare `usage.first_last: false` and send no end still. cf-seedance's face grade drops from `two` to `one`, so the Make page no longer picks it as a consistency style. cf-vidu-q3-turbo, cf-flux-3-video, cf-kling-v4 and cf-minimax-h3 honoured the end still and are unchanged.

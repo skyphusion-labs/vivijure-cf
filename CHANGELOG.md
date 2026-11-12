@@ -5,6 +5,16 @@ for new features). Newest first.
 
 ## Unreleased
 
+## v1.49.1 -- 2026-11-12
+
+### Fix: cf-seedance and cf-hh1-r2v no longer claim an end frame (cf#954)
+
+Flip-control renders through the studio (end still = mirror of the start still) showed both doors do not end on the end still: cf-seedance 2.5 stayed on the start still in one render and on the end still in the other; cf-hh1-r2v, a reference-to-video model, ended on neither. Both now declare `usage.first_last: false` and send no end still. cf-seedance's face grade drops from `two` to `one`, so the Make page no longer picks it as a consistency style. cf-vidu-q3-turbo, cf-flux-3-video, cf-kling-v4 and cf-minimax-h3 honoured the end still and are unchanged.
+
+### Fix: studio release notes come from the CHANGELOG (cf#1437)
+
+The v1.49.0 GitHub Release was published with a one-line stub. `studio-release` now takes the release notes from this file's section for the tag (`scripts/changelog-section.sh`), and falls back to generated notes only when no section exists, saying so in the notes.
+
 ## v1.49.0 -- 2026-11-12
 
 ### Feat: the studio offers core a door for short-line shots (cf#930)
