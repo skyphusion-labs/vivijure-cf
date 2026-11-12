@@ -18,6 +18,7 @@
 // Pairs with the cloud-keyframe module: cloud keyframe -> THIS i2v -> shot clip.
 
 import { withRetryingR2 } from "../../_shared/r2-retry";
+import { PROVIDER_VIDEO_MAX_BYTES, readProviderMedia, toArrayBuffer } from "../../_shared/provider-media";
 import {
   type InvokeRequest,
   type InvokeResponse,
@@ -215,7 +216,8 @@ async function poll(env: Env, body: PollRequest): Promise<PollResponse<MotionBac
   try {
     const v = await fetch(url);
     if (!v.ok) return { ok: false, error: "fetch alibaba-wan-lora video -> " + v.status };
-    bytes = await v.arrayBuffer();
+    const media = await readProviderMedia(v, { maxBytes: PROVIDER_VIDEO_MAX_BYTES, fallbackType: "video/mp4" });
+    bytes = toArrayBuffer(media.bytes);
   } catch (e) {
     return { ok: false, error: "download alibaba-wan-lora video failed: " + (e as Error).message };
   }

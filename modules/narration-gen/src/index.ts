@@ -12,6 +12,7 @@
 // Failures are DATA (ok:false), never thrown across the wire. Muxing onto the film is video-finish's job.
 
 import { withRetryingR2 } from "../../_shared/r2-retry";
+import { PROVIDER_AUDIO_MAX_BYTES, readCappedBytes, toArrayBuffer } from "../../_shared/provider-media";
 import {
   MODULE_API,
   type ModuleManifest,
@@ -268,7 +269,7 @@ async function poll(env: Env, body: PollRequest): Promise<PollResponse<ScoreOutp
     const a = await fetch(url);
     if (!a.ok) return { ok: false, error: "fetch narration audio -> " + a.status };
     headerMime = a.headers.get("content-type")?.split(";")[0]?.trim() || null;
-    bytes = await a.arrayBuffer();
+    bytes = toArrayBuffer(await readCappedBytes(a.headers, a.body, () => a.arrayBuffer(), PROVIDER_AUDIO_MAX_BYTES));
   } catch (e) {
     return { ok: false, error: "download narration audio failed: " + (e as Error).message };
   }

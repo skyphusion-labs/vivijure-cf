@@ -34,6 +34,7 @@ import { normalizePerShotModels } from "@skyphusion-labs/vivijure-core/storyboar
 import type { ClipJob } from "@skyphusion-labs/vivijure-core/render-orchestrator";
 import { readIdempotencyKey } from "./film-idempotency";
 import { songStartRefusal } from "./film-join-gate";
+import { doorFitOffer } from "./door-fit-offer";
 import type { RegisteredModule } from "@skyphusion-labs/vivijure-core";
 import {
   bundleScenesHaveLines,
@@ -94,7 +95,9 @@ function normalizeFilmScenesFromOutput(output: unknown): FilmScene[] {
 function previewRef(k: { shot_id: string; key: string }): FilmKeyframeRef {
   const plate = (k as { plate_count?: unknown }).plate_count;
   const carried = plate && typeof plate === "object" && !Array.isArray(plate) ? { plate_count: plate } : {};
-  return { shot_id: k.shot_id, keyframe_key: k.key, ...carried } as FilmKeyframeRef;
+  // cf#1385: the backend's reuse mark rides the same way, so the animated film can say a still was not redrawn.
+  const reused = (k as { reused?: unknown }).reused === true ? { reused: true } : {};
+  return { shot_id: k.shot_id, keyframe_key: k.key, ...carried, ...reused } as FilmKeyframeRef;
 }
 
 export function selectPreviewKeyframes(parent: RenderRow): FilmKeyframeRef[] {
@@ -239,6 +242,9 @@ export async function animateFromPreview(
 
   let motionBackend: string | undefined;
   let perShotMotion: Record<string, string> | undefined;
+  // vivijure-cf#930: set on the finalized path only. Hybrid and cloud-per-shot fill a door for every
+  // shot, which core reads as each shot's own door, so they are never offered a door fit.
+  let explicitFilmDoor: boolean | undefined;
 
   if (args.hybridBackends !== undefined) {
     const defaultCloud = resolveCloudModel(args.defaultCloudModel, cloudAllowed);
@@ -276,6 +282,7 @@ export async function animateFromPreview(
       return { ok: false, error: picked.error, status: 400 };
     }
     motionBackend = picked.name;
+    explicitFilmDoor = !!rawExplicit;
     if (!rawExplicit) {
       mapped = mapRenderOverridesToModuleConfigs(
         withMotionBackend(args.parent.render_overrides, motionBackend),
@@ -381,6 +388,11 @@ export async function animateFromPreview(
     voice_ref_keys = clip.voiceRefs;
   }
 
+  // vivijure-cf#930: only the one-door finalized path offers a door fit (see explicitFilmDoor above).
+  const doorFit = perShotMotion || explicitFilmDoor === undefined
+    ? {}
+    : doorFitOffer(modules, motionBackend, { spoken: spokenLinesPresent(dialogue_lines), explicit: explicitFilmDoor });
+
   // dialogue_lines is runtime-supported on startFilmFromKeyframes (core >=1.6.0); published
   // .d.ts lag omits it, so widen the arg type here rather than ship silent films (cf#334).
   const job = await startFilmFromKeyframes(
@@ -393,7 +405,8 @@ export async function animateFromPreview(
       motion_backend: motionBackend,
       per_shot_motion: perShotMotion,
       motion_config: motionConfig,
-      motion_configs: motionConfigs,
+      motion_configs: motionConfigs ?? doorFit.motion_configs,
+      door_fit: doorFit.door_fit,
       finish_config: mapped.finish_config,
       // vivijure-cf#1379 (core#339): the caller's dialogue module and its config, resolved from the same
       // overrides bag. Absent when the caller chose none, which keeps the first dialogue module by ui.order.

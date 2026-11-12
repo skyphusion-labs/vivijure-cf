@@ -11,6 +11,7 @@
 // prompt is sent as-is; expose it as an opt-in config bool for one-line enable later.
 
 import { withRetryingR2 } from "../../_shared/r2-retry";
+import { PROVIDER_VIDEO_MAX_BYTES, readProviderMedia, toArrayBuffer } from "../../_shared/provider-media";
 import {
   MODULE_API,
   type ModuleManifest,
@@ -236,7 +237,8 @@ async function poll(env: Env, body: PollRequest): Promise<PollResponse<MotionBac
   try {
     const v = await fetch(url);
     if (!v.ok) return { ok: false, error: "fetch alibaba-wan video -> " + v.status };
-    bytes = await v.arrayBuffer();
+    const media = await readProviderMedia(v, { maxBytes: PROVIDER_VIDEO_MAX_BYTES, fallbackType: "video/mp4" });
+    bytes = toArrayBuffer(media.bytes);
   } catch (e) {
     return { ok: false, error: "download alibaba-wan video failed: " + (e as Error).message };
   }

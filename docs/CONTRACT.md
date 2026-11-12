@@ -716,8 +716,10 @@ the failure table, and limits.
 ### 2.10 Uploads (binary -> staged key)
 
 Three sibling routes accept raw bytes and return a staged R2 key. The body IS the bytes; the
-`Content-Type` header is the mime. All respond `201 { "key": string, "mime": string, "size": number }`
-and `400` on an empty body or over-size.
+`Content-Type` header is the mime. All respond `201 { "key": string, "mime": string, "size": number }`,
+`400` on an empty body, and `413` when `Content-Length` or the streamed body exceeds the cap.
+The length header is checked before the body is read. A body with no length is read from
+the stream and stopped at the cap.
 
 | Route | Accepted mimes | Max size | Key prefix |
 |-------|----------------|----------|------------|
@@ -1119,7 +1121,7 @@ Analyze an audio bed for beat / duration slicing.
 
 | Field | Type | Req | Default | Meaning |
 |-------|------|-----|---------|---------|
-| `audioKey` | string | yes | -- | R2 key of the audio. |
+| `audioKey` | string | yes | -- | R2 key of the audio. Must be in served artifact space (the same prefixes as `/api/artifact`). `quarantine/` is refused. |
 | `clipSeconds` | number | no | 8.0 | Target clip length. |
 | `mode` | `"beat" \| "duration"` | no | `"beat"` | Slicing strategy. |
 | `minSceneS` | number | no | 2.5 | Min scene seconds (beat mode). |
@@ -1128,7 +1130,8 @@ Analyze an audio bed for beat / duration slicing.
 | `module` | string | no | -- | Beat-analyze module selection. |
 
 **Response 200:** `{ ok: true, output: <beat plan>, module: string }`; `502 { ok: false, error }` on
-analysis failure. `400` if `audioKey` missing.
+analysis failure. `400` if `audioKey` is missing or outside served artifact space. The marker
+`<audioKey>.beats.json` is written only for a key in that space.
 
 A successful analyze also writes R2 object `<audioKey>.beats.json`. The key is the trimmed
 `audioKey`. The body is `{ audioKey, beats_read: true }`. If that put throws, the route answers
@@ -1385,6 +1388,8 @@ a full job: keyframe -> clips -> (dialogue/speech) -> finish -> assemble -> (mas
 | `dialogue_lines` | `DialogueLine[]` | no | derived from the bundle | Explicit spoken lines for TTS + captions: `{ shot_id, text, voice_id? }[]`. |
 | `cast_loras` | `{ [slot]: castId }` | no | -- | Binds storyboard character slots (A, B, ...) to cast ids. Drives the keyframe LoRAs AND per-slot voice resolution. A bound cast whose LoRA is not ready is rejected `400` (the untrained-cast message), symmetric with `/api/storyboard/render` (#738) -- never a silent drop to a generic render. |
 | `idempotency_key` | string | no | -- | Alias `idempotencyKey`. Duplicate-submit guard (cf#528): a repeat submit with the SAME non-blank key within the 60s claim window answers with the ORIGINAL film instead of starting a second. Absent or blank, a 60s natural-key backstop over the render-affecting inputs applies. Fails OPEN (no database = unguarded). |
+| `dialogue_backend` | string | no | first dialogue module by `ui.order` | cf#1391. The dialogue module this film speaks with (core#339). `400` at submit, by name, when no installed module of that name serves `dialogue`. |
+| `dialogue_config` | `{ [moduleName]: object }` | no | `{}` | cf#1391. Nested per-dialogue-module knobs. Each key must name a serving dialogue module. Each map is judged against that module's `config_schema` (an unknown key or an out-of-range value is `400`, by name) and then clamped, so omitted keys take their defaults. |
 | `reuse_finished` | boolean | no | `false` | cf#1166. `true` keeps each dialogue line, clip and finish step from an earlier run of the same project whose recorded inputs are proven identical, and buys only the rest. A line, clip or step with no record, or with any changed input, is bought again. Only the exact boolean `true` turns it on. `POST /api/storyboard/renders/:id/retry` always sets it. |
 | `shard_count` | number | no | ignored | Alias `shardCount`. Film scatter is retired. A submit is always one `film-*` job. Keyframe parallelism is a single-film keyframe stage, not a split-motion door. |
 
@@ -1469,8 +1474,13 @@ Advances the job one tick and returns its summary; keeps the history row in sync
 
 Regenerate a single shot's keyframe from a COMPLETED render's bundle (keyframes-only).
 
-**Request body:** `{ shotId (req) }`. **Response 200:** `{ ok: true, jobId, status }`.
-Errors: `400 "shotId required"`; `404 "render"`; `400 "render must be COMPLETED"`;
+**Request body:** `{ shotId (req), seed? }`. **Response 200:** `{ ok: true, jobId, status, seed }`.
+`seed` (cf#1404) is an optional whole number from 0 to 2147483647. It is handed to the keyframe module as its
+`seed` only when that module's `config_schema` declares one; the response's `seed` is the seed applied, or
+`null` when none was (none sent, or the module takes none). Without a seed the regen re-sends the row's stored
+settings, and the backend returns the stored still for an unchanged shot: it has no random seed
+(vivijure-backend#563). The panel's regen sends a fresh seed.
+Errors: `400 "shotId required"`; `400 "seed must be a whole number from 0 to 2147483647"`; `404 "render"`; `400 "render must be COMPLETED"`;
 `400 "render has no bundle_key"`; `400 "shot <id> not in bundle storyboard"`;
 `503 { ok:false, error: "no keyframe module installed ..." }`; `422 { ok:false, error }` on submit failure.
 
@@ -1488,7 +1498,7 @@ A long film is built as ordinary film jobs (parts) under one parent, joined at t
 | `character_refs` | object | yes | As `characterRefs` on the bundle route. |
 | `dialogue_lines` | `[{shot_id,text,voice_id?}]` | no | By the board's scene id. Omitted, they come from each scene's `dialogue.text`. |
 | `part_size` or `breaks` | number or number[] | one of them | `breaks` are shot counts where a part ends. |
-| `shared` | object | yes | `motion_backend`, `style` (`photoreal` or `anime`), `delivery_width`, `delivery_height` are required. Also `keyframe_backend`, `keyframe_config`, `motion_config`, `finish_config`, `film_finish_config`, `cast_loras`, `film_titles`, `qualityTier`. `audio_key` is refused: a bed on the joined film is not built. |
+| `shared` | object | yes | `motion_backend`, `style` (`photoreal` or `anime`), `delivery_width`, `delivery_height` are required. `delivery_fps` (a whole number above 0) is optional: without it the film works out once the rate its shared `finish_config` would ship at (24, or 24 times the interpolation factor), and every part is sent that one rate, because the join refuses parts of different rates (cf#1389). Also `keyframe_backend`, `keyframe_config`, `motion_config`, `finish_config`, `film_finish_config`, `dialogue_backend`, `dialogue_config`, `cast_loras`, `film_titles`, `qualityTier`. `dialogue_backend` and `dialogue_config` go to every part, so the parts speak with one dialogue module (cf#1391); a module this studio does not serve is `400` before the film is stored. `audio_key` is refused: a bed on the joined film is not built. |
 | `part_overrides` | `[{index,cast_loras?,character_refs?,motion_backend?}]` | no | What differs for one part. |
 | `spend_ceiling_usd` | number | yes | No new part is submitted if its estimate would cross this. |
 | `cost_usd_per_shot_est` | number | yes | The caller's estimate per shot. The ceiling works from this, so it is only as good as this number. |
@@ -1537,7 +1547,7 @@ A join that fails for good ends the film in `failed` with every part kept, and `
 
 **`POST /api/film/:id/ceiling`** with `{"spend_ceiling_usd": n}` raises the ceiling and lets a film stopped by it carry on. `n` must be above the current value. `400` otherwise, or if the film is `done` or `failed`. `409` if the film changed during the call.
 
-`POST /api/render/film` also takes `delivery_width` and `delivery_height`: both or neither, whole numbers above 0.
+`POST /api/render/film` also takes `delivery_width` and `delivery_height`: both or neither, whole numbers above 0. It also takes `delivery_fps`, a whole number above 0, which wins over the rate the finish chain produced (core#431, cf#1389); a clip above it loses frames at assemble, with a note.
 
 ### 2.22b POST /api/internal/sweep -- the cron pass, for a deployment with no cron
 
@@ -1609,7 +1619,11 @@ what the clip pixel check measured; absent when it never ran), and `plate_check:
 that may show an extra person; absent when it ran on no still). A keyframes-only `keyframes` entry also
 carries `plate_count: { expected, faces, chosen, clean, retries }` when the guard ran on that still. The
 panel shows both checks on the render and beside the affected still (cf#916, cf#1282), and names the
-shots `keyframes_incomplete` dropped (cf#1283). The poll
+shots `keyframes_incomplete` dropped (cf#1283). `keyframe_reuse: { stills, reused: string[] }` (core
+1.45.0, core#532) names the stills the backend returned from its store instead of drawing them; it is
+absent when no still was reused, so absent cannot tell a door that never reports the mark from one that
+drew every still. A keyframes-only `keyframes` entry also carries `reused: true` on such a still. The
+panel tags each reused still and says on the render how to get a new picture (cf#1385). The poll
 view (not the history row) additionally relays the host's `wan_lora_projection` (2.21) on any
 `output` it carries, done or in flight.
 

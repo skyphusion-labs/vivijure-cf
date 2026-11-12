@@ -411,6 +411,18 @@ function buildHistoryRow(r, childrenByParent) {
 
   li.appendChild(sub);
 
+  // cf#1385: say when stills were returned from the store instead of redrawn, so a regen or re-render
+  // with the same settings does not read as a new take. Empty when no still was reused.
+  const reuseLine = window.finishDegrade && window.finishDegrade.reuseNote
+    ? window.finishDegrade.reuseNote(r.output)
+    : "";
+  if (reuseLine) {
+    const reuse = document.createElement("div");
+    reuse.className = "planner-history-reuse-note";
+    reuse.textContent = reuseLine;
+    li.appendChild(reuse);
+  }
+
   const actions = document.createElement("div");
   actions.className = "planner-history-actions";
 
@@ -540,7 +552,9 @@ function buildHistoryRow(r, childrenByParent) {
     rerun.type = "button";
     rerun.className = "planner-history-action";
     rerun.textContent = "re-render";
-    rerun.title = "render this bundle again (skips plan + bundle stages)";
+    // cf#1385: stills with unchanged settings come back from the store, not redrawn.
+    rerun.title = "render this bundle again (skips plan + bundle stages). Stills with unchanged settings come back "
+      + "reused; set a new keyframe seed for new pictures.";
     rerun.addEventListener("click", () => rerunBundle(r));
     actions.appendChild(rerun);
   }
@@ -771,6 +785,15 @@ function buildHistoryRow(r, childrenByParent) {
         })
         : [];
       for (const w of shotWarns) wrap.appendChild(w);
+      // cf#1385: this still came back from the store. Absent on a still that was drawn.
+      if (window.finishDegrade && window.finishDegrade.keyframeReused
+        && window.finishDegrade.keyframeReused(r.output, kf)) {
+        const reusedTag = document.createElement("span");
+        reusedTag.className = "planner-history-keyframe-reused";
+        reusedTag.textContent = window.finishDegrade.STILL_REUSED_TAG;
+        reusedTag.title = window.finishDegrade.STILL_REUSED_TITLE;
+        wrap.appendChild(reusedTag);
+      }
 
       // v0.145.2: the motion clip rendered FROM this keyframe, shown directly
       // under the still so the keyframe and its animation read as one unit.
@@ -1048,12 +1071,24 @@ function buildHistoryRow(r, childrenByParent) {
 // and img refs are passed in for the immediate UI flip (disabled +
 // "submitting..."); subsequent polls re-query the DOM each tick so
 // they survive a parent row re-render on the 30s auto-refresh.
+// cf#1404: a fresh keyframe seed for a regen, in the range the backend takes (0..2^31-1).
+function freshKeyframeSeed() {
+  // resolve-guard-allow: Uint32Array -- a standard JavaScript typed array, built into every browser
+  const buf = new Uint32Array(1);
+  crypto.getRandomValues(buf);
+  return buf[0] % 2147483648;
+}
+
 async function regenShot(row, kf, btnEl, imgEl) {
   const confirmMsg =
     "regen keyframe for " + kf.shot_id + "?\n\n"
     + "this runs " + keyframeLabel() + " only (no motion, no assembly) and overwrites the "
-    + "thumbnail above. takes about 30 to 60 seconds.";
+    + "thumbnail above. takes about 30 to 60 seconds.\n\n"
+    // cf#1404: regen sends a fresh seed, so it draws a new picture. Without one the backend would return
+    // the stored still for an unchanged shot (it has no random seed, vivijure-backend#563).
+    + "regen draws this shot with a new seed, so you get a different picture.";
   if (!window.confirm(confirmMsg)) return;
+  const seed = freshKeyframeSeed();
 
   const regenKey = String(row.id) + ":" + kf.shot_id;
   btnEl.disabled = true;
@@ -1067,7 +1102,7 @@ async function regenShot(row, kf, btnEl, imgEl) {
       {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ shotId: kf.shot_id }),
+        body: JSON.stringify({ shotId: kf.shot_id, seed: seed }),
       },
     );
     data = await resp.json();
@@ -1089,6 +1124,11 @@ async function regenShot(row, kf, btnEl, imgEl) {
 
   // Submitted. Park the state in regenJobs and start polling.
   btnEl.textContent = "regen...";
+  // cf#1404: `seed: null` means the keyframe module takes no seed (a cloud door that picks its own), so
+  // the new still depends on that door. Say so on the button rather than promise a new picture.
+  btnEl.title = data.seed === null
+    ? "this keyframe module takes no seed; it picks its own, so the new still may match the old one"
+    : "drawing with seed " + data.seed;
   imgEl.classList.add("planner-history-keyframe-img-regen-pending");
   historyState.regenJobs.set(regenKey, {
     jobId: data.jobId,

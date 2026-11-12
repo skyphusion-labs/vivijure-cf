@@ -106,8 +106,22 @@ export type StageKey =
   | "film_finish"
   | "content_validation"
   | "plate_check"
-  | "keyframes_incomplete";
+  | "keyframes_incomplete"
+  | "door_fit";
 export const STAGE_KEYS: StageKey[];
+
+/** vivijure-cf#930: one `door_fit` entry, as the panel reads it. */
+export interface DoorFitShot {
+  shot_id: string;
+  /** `swapped` only: the film door and the door the shot was made on instead. */
+  from?: string;
+  to?: string;
+  /** `tails` only: the door that left the tail. */
+  door?: string;
+  line_seconds: number | null;
+  /** The clip the film door makes for this shot. */
+  clip_seconds: number | null;
+}
 
 export interface StageDegrade {
   stage: StageKey;
@@ -128,6 +142,10 @@ export interface StageDegrade {
   shots?: string[];
   /** cf#1283: `keyframes_incomplete` only. Shots the storyboard asked for. */
   expected?: number;
+  /** vivijure-cf#930: `door_fit` only. Shots moved to another door for their own clip. */
+  swapped?: DoorFitShot[];
+  /** vivijure-cf#930: `door_fit` only. Lined shots still left with a silent-mouthing tail. */
+  tails?: DoorFitShot[];
 }
 
 /** cf#860: `output.film_finish` normalised into the shared `{ degraded, reasons }` form.
@@ -216,6 +234,9 @@ export function parseKeyframesIncomplete(raw: unknown): {
   expected: number;
 } | null;
 
+/** vivijure-cf#930: `output.door_fit` (core door-fit.ts): `{ swapped, tails }`. */
+export function parseDoorFit(raw: unknown): { degraded: number; reasons: string[]; swapped: DoorFitShot[]; tails: DoorFitShot[] } | null;
+
 /** The shot ids `output.plate_check` names as unclean. Empty for clean, absent or junk. */
 export function plateUncleanShots(output: RenderOutput | null | undefined): string[];
 
@@ -227,6 +248,25 @@ export function shotWarnings(output: RenderOutput | null | undefined, shotId: st
 
 /** Plain lines for the one-screen Make a video page: no shot ids. Empty when nothing to say. */
 export function simpleWarnings(output: RenderOutput | null | undefined): string[];
+/** cf#1385: `output.keyframe_reuse` (core#532): stills the backend returned from its store. */
+export interface KeyframeReuse {
+  stills: number;
+  reused: string[];
+}
+/** Null for absent, junk, or an empty list. */
+export function parseKeyframeReuse(raw: unknown): KeyframeReuse | null;
+/** The shot ids `output.keyframe_reuse` names as reused. Empty for none, absent or junk. */
+export function keyframeReusedShots(output: RenderOutput | null | undefined): string[];
+/** True when this still was reused, from its own entry or the render-level list. */
+export function keyframeReused(
+  output: RenderOutput | null | undefined,
+  kf: { shot_id?: unknown; reused?: unknown } | null | undefined,
+): boolean;
+/** One line for a row that reused any still, or "" when none was. */
+export function reuseNote(output: RenderOutput | null | undefined): string;
+export const STILL_REUSED_TAG: string;
+export const STILL_REUSED_TITLE: string;
+export const NEW_PICTURE_HINT: string;
 
 /** The sentence shown beside a still made from a plate that may show an extra person. */
 export const STILL_EXTRA_PERSON: string;

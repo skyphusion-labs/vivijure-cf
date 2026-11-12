@@ -77,7 +77,7 @@ def test_down_deletes_created_runpod(repo, monkeypatch, capsys):
     monkeypatch.setattr(vd, "wrangler_delete_tolerant", lambda *a, **k: None)
 
     vd.cmd_down(repo, delete_data=False, noninteractive=True)
-    assert ("DELETE", "/endpoints/ep-created") in deleted
+    assert ("DELETE", "/serverless/ep-created") in deleted
 
 
 def test_down_include_adopted_deletes_adopted(repo, monkeypatch, capsys):
@@ -96,7 +96,7 @@ def test_down_include_adopted_deletes_adopted(repo, monkeypatch, capsys):
     vd.cmd_down(repo, delete_data=False, noninteractive=True, include_adopted=True)
     out = capsys.readouterr().out
     assert "WARNING: --include-adopted" in out
-    assert ("DELETE", "/endpoints/ep-adopted") in deleted
+    assert ("DELETE", "/serverless/ep-adopted") in deleted
 
 
 def test_create_if_absent_adopt_sets_adopted_flag(monkeypatch, repo):

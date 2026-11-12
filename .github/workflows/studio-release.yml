@@ -61,7 +61,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           # NO ref: (cf#562). workflow_call-only now, so this always checks out the caller's ref --
           # the v* tag whose four gates have just passed. The old inputs.tag || github.ref existed
@@ -93,7 +93,7 @@ jobs:
           fi
           echo "commit ${head} is on origin/main; ancestry guard passed."
 
-      - uses: actions/setup-node@v7
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 22
           cache: npm

@@ -226,7 +226,7 @@ describe("a board as the panel writes it, with id and target_seconds", () => {
   });
   it("sizes from target_seconds", () => {
     let seen = 0;
-    buildParentDoc("f", native(), 0, (_w, _h, s) => { seen = s; return 0; });
+    buildParentDoc("f", native(), 0, (_w, _h, _fps, s) => { seen = s; return 0; });
     expect(seen).toBe(18);
   });
   it("can be retaken by its own id", () => {
@@ -1382,6 +1382,19 @@ describe("cf#1223 a shot with a finish limit reaches the film's report", () => {
     const doc = buildParentDoc("f", body(2, { part_size: 2, dialogue_lines: [] }), 0);
     const rows = partShotRows(doc, doc.parts[0], { finish_shots: [{ shot_id: "shot_02", degraded: ["upscale: gone"] }] }, null);
     expect(rows.map((r) => r.finish_degraded)).toEqual([[], ["upscale: gone"]]);
+  });
+
+  it("cf#1385: a still the backend reused is marked on its shot row, and only on a literal true", () => {
+    const doc = buildParentDoc("f", body(3, { part_size: 3, dialogue_lines: [] }), 0);
+    const kf = (n: number, reused?: unknown) => ({
+      shot_id: `shot_0${n}`,
+      keyframe_key: `k/${n}.png`,
+      ...(reused === undefined ? {} : { reused }),
+    });
+    const rows = partShotRows(doc, doc.parts[0], { keyframes: [kf(1, true), kf(2, "true"), kf(3)] }, null);
+    expect(rows.map((r) => (r as { still_reused?: boolean }).still_reused)).toEqual([true, undefined, undefined]);
+    const js = readFileSync("public/films.js", "utf8");
+    expect(js).toContain("if (shot.still_reused) card.append(");
   });
 
   it("cf#1282: a still the plate count guard could not clean is flagged on its shot row, and only that one", () => {

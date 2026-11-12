@@ -261,8 +261,13 @@
   // cf#1283: `keyframes_incomplete` joins the same way. It is the one signal here with no clean
   // rung: core writes it only when shots were dropped, so absent is both "never happened" and
   // "never measured", and either way it shows nothing.
+  // vivijure-cf#930: `door_fit` (core 1.47.0) joins as an adapter too. It reports lined shots whose film
+  // door would leave the speaker mouthing silence after the line: moved to another door for their own clip
+  // (`swapped`), or left with the tail (`tails`). Both are shown, because both mean the clip is not what
+  // the film door alone would have made. Absent means no lined shot had a tail and shows nothing.
   var STAGE_KEYS = [
     "speech", "master", "dialogue", "film_finish", "content_validation", "plate_check", "keyframes_incomplete",
+    "door_fit",
   ];
 
   // The one sentence a still with an unclean plate gets, wherever a still is shown. Plain words on
@@ -365,6 +370,36 @@
     return { degraded: missing, reasons: [], shots: shots, expected: raw.expected };
   }
 
+  /** vivijure-cf#930: `door_fit` -> the shared form. Core emits `{ swapped: [{ shot_id, from, to,
+   *  line_seconds, planned_seconds, from_clip_seconds }], tails: [{ shot_id, door, line_seconds,
+   *  clip_seconds }] }` (door-fit.ts), absent when no lined shot had a tail. STRICT on the two arrays:
+   *  an unrecognised shape reads as unreadable, never as clean. Entries without a shot id are dropped. */
+  function parseDoorFit(raw) {
+    if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
+    if (!Array.isArray(raw.swapped) || !Array.isArray(raw.tails)) return null;
+    var num = function (v) { return typeof v === "number" && isFinite(v) && v > 0 ? v : null; };
+    var swapped = [];
+    var tails = [];
+    for (var i = 0; i < raw.swapped.length; i++) {
+      var s = raw.swapped[i];
+      if (!s || typeof s !== "object" || !isNonEmptyString(s.shot_id) || !isNonEmptyString(s.from) || !isNonEmptyString(s.to)) continue;
+      swapped.push({ shot_id: String(s.shot_id).trim(), from: String(s.from).trim(), to: String(s.to).trim(),
+        line_seconds: num(s.line_seconds), clip_seconds: num(s.from_clip_seconds) });
+    }
+    for (var j = 0; j < raw.tails.length; j++) {
+      var t = raw.tails[j];
+      if (!t || typeof t !== "object" || !isNonEmptyString(t.shot_id) || !isNonEmptyString(t.door)) continue;
+      tails.push({ shot_id: String(t.shot_id).trim(), door: String(t.door).trim(),
+        line_seconds: num(t.line_seconds), clip_seconds: num(t.clip_seconds) });
+    }
+    return { degraded: swapped.length + tails.length, reasons: [], swapped: swapped, tails: tails };
+  }
+
+  /** "1.4 s", one decimal at most. */
+  function secondsText(v) {
+    return typeof v === "number" ? (Math.round(v * 10) / 10) + " s" : "?";
+  }
+
   /** The shot ids `output.plate_check` names as unclean. Empty for clean, absent, or junk. */
   function plateUncleanShots(output) {
     if (!output || typeof output !== "object" || Array.isArray(output)) return [];
@@ -396,6 +431,57 @@
       if (cv && cv.failedShots.indexOf(id) !== -1) out.push("This clip failed the picture check and may look wrong.");
     }
     return out;
+  }
+
+  /** cf#1385: `output.keyframe_reuse` (core 1.45.0, core#532): `{ stills, reused: [shot_id] }`, the
+   *  stills the backend returned from its store instead of drawing them. The core writes the key only
+   *  when at least one still was reused (the contract's "absent means drawn"), so absent, junk and an
+   *  empty list all read as null and show nothing. Note what absent cannot tell apart: a door that
+   *  never reports the mark looks the same as one that drew every still. */
+  function parseKeyframeReuse(raw) {
+    if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
+    if (typeof raw.stills !== "number" || !isFinite(raw.stills) || raw.stills < 0) return null;
+    if (!Array.isArray(raw.reused)) return null;
+    var reused = [];
+    for (var i = 0; i < raw.reused.length; i++) {
+      var id = raw.reused[i];
+      if (typeof id === "string" && id && reused.indexOf(id) === -1) reused.push(id);
+    }
+    if (!reused.length) return null;
+    return { stills: Math.max(raw.stills, reused.length), reused: reused };
+  }
+
+  /** The shot ids `output.keyframe_reuse` names as reused. Empty for none, absent, or junk. */
+  function keyframeReusedShots(output) {
+    if (!output || typeof output !== "object" || Array.isArray(output)) return [];
+    var parsed = parseKeyframeReuse(output.keyframe_reuse);
+    return parsed ? parsed.reused : [];
+  }
+
+  /** True when this still came back from the store, from its own keyframe entry (`reused: true` on
+   *  the render row) or from the render-level list. Only a literal true counts. */
+  function keyframeReused(output, kf) {
+    if (kf && kf.reused === true) return true;
+    var id = kf && typeof kf.shot_id === "string" ? kf.shot_id : "";
+    return !!id && keyframeReusedShots(output).indexOf(id) !== -1;
+  }
+
+  /** The backend has no random seed: -1 is drawn as 0 every time (vivijure-backend#563), and a still
+   *  with unchanged settings is returned from the store. So a new picture needs a new seed. */
+  var STILL_REUSED_TAG = "reused";
+  var STILL_REUSED_TITLE = "This still came back from an earlier render with the same settings. It was not redrawn.";
+  var NEW_PICTURE_HINT = "To get a different picture, regen that still (it draws with a new seed), or set a new keyframe seed and render again. A seed of -1 draws the same picture every time.";
+
+  /** One line for a render row that reused any still, or "" when none was reused. */
+  function reuseNote(output) {
+    if (!output || typeof output !== "object" || Array.isArray(output)) return "";
+    var parsed = parseKeyframeReuse(output.keyframe_reuse);
+    if (!parsed) return "";
+    var n = parsed.reused.length;
+    var lead = n === parsed.stills
+      ? (n === 1 ? "The still was" : "All " + n + " stills were")
+      : n + " of " + parsed.stills + " stills " + (n === 1 ? "was" : "were");
+    return lead + " reused from an earlier render with the same settings, not redrawn. " + NEW_PICTURE_HINT;
   }
 
   /** The plain lines the one-screen Make a video page shows under a finished video. That page has
@@ -430,6 +516,7 @@
     content_validation: { noun: "picture check", unit: "clip", parse: parseContentValidation, badge: "picture check" },
     plate_check: { noun: "extra person check", unit: "still", parse: parsePlateCheck, badge: "may show an extra person" },
     keyframes_incomplete: { noun: "stills", unit: "shot", parse: parseKeyframesIncomplete, badge: "shots missing" },
+    door_fit: { noun: "motion door", unit: "shot", parse: parseDoorFit, badge: "short lines" },
   };
 
   /** The raw-shape parser for a stage: its own, or the shared `{ degraded, reasons }` one. */
@@ -456,6 +543,8 @@
     if (typeof parsed.unmeasured === "number") info.unmeasured = parsed.unmeasured;
     if (typeof parsed.expected === "number") info.expected = parsed.expected;
     if (parsed.shots) info.shots = parsed.shots;
+    if (parsed.swapped) info.swapped = parsed.swapped;
+    if (parsed.tails) info.tails = parsed.tails;
     return info;
   }
 
@@ -513,6 +602,21 @@
         (shots.length ? " (" + shots.join(", ") + ")" : "") +
         ". Regenerate " + (k === 1 ? "that still" : "those stills") + " to try again."
       );
+    }
+    if (info.stage === "door_fit") {
+      var out = [];
+      var sw = Array.isArray(info.swapped) ? info.swapped : [];
+      var tl = Array.isArray(info.tails) ? info.tails : [];
+      for (var a = 0; a < sw.length; a++) {
+        out.push(sw[a].shot_id + " was made on " + sw[a].to + ", not " + sw[a].from + ": its " +
+          secondsText(sw[a].line_seconds) + " line is shorter than the " + secondsText(sw[a].clip_seconds) +
+          " clip " + sw[a].from + " makes, and the speaker would keep mouthing words after it.");
+      }
+      for (var b = 0; b < tl.length; b++) {
+        out.push(tl[b].shot_id + ": its " + secondsText(tl[b].line_seconds) + " line ends before the " +
+          secondsText(tl[b].clip_seconds) + " clip on " + tl[b].door + ", so the speaker keeps mouthing words after it.");
+      }
+      return out.length ? out.join(" ") : null;
     }
     if (info.stage === "dialogue") {
       // core#317: the post-clips leg has exactly ONE declared degrade, so n is always 1
@@ -717,8 +821,16 @@
     parseContentValidation: parseContentValidation,
     parsePlateCheck: parsePlateCheck,
     parseKeyframesIncomplete: parseKeyframesIncomplete,
+    parseDoorFit: parseDoorFit,
     plateUncleanShots: plateUncleanShots,
     keyframeUnclean: keyframeUnclean,
+    parseKeyframeReuse: parseKeyframeReuse,
+    keyframeReusedShots: keyframeReusedShots,
+    keyframeReused: keyframeReused,
+    reuseNote: reuseNote,
+    STILL_REUSED_TAG: STILL_REUSED_TAG,
+    STILL_REUSED_TITLE: STILL_REUSED_TITLE,
+    NEW_PICTURE_HINT: NEW_PICTURE_HINT,
     shotWarnings: shotWarnings,
     simpleWarnings: simpleWarnings,
     STILL_EXTRA_PERSON: STILL_EXTRA_PERSON,

@@ -25,6 +25,10 @@ export interface Env {
   // dispatch layer is a no-op (registry.discoverDispatchModules short-circuits). Distinct key from the
   // `MODULE_${string}` index signature below: a DispatchNamespace has `.get()`, not `.fetch()`.
   MODULE_DISPATCH?: DispatchNamespace;
+  // The script-name prefix of THIS studio's own modules in that namespace, set by the plane that
+  // provisions a hosted studio (one namespace can hold several studios' modules). When set, install
+  // accepts only a script under it. Unset (self-host, one studio per namespace): any resident script.
+  TENANT_MODULE_PREFIX?: string;
 
   // AI Gateway (LLM storyboard planning + image chat + cloud-animate scoring prompts).
   AI: Ai;

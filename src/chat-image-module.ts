@@ -10,7 +10,8 @@
 // structural rather than patched: the defect was a successful write into a bucket the serve route
 // does not read, which no amount of green gates would have surfaced.
 
-import { invokeModule, resolveFetcher, validateConfig } from "@skyphusion-labs/vivijure-core/modules/registry";
+import { resolveFetcher, validateConfig } from "@skyphusion-labs/vivijure-core/modules/registry";
+import { invokeRegistered } from "@skyphusion-labs/vivijure-core/modules/invoke-registered";
 import type { RegisteredModule } from "@skyphusion-labs/vivijure-core";
 import type { Env } from "./env";
 import { putChatArtifact, type OutputArtifact } from "./chat-artifacts";
@@ -79,7 +80,7 @@ export async function chatImageViaModule(
   }
 
   const start = Date.now();
-  const r = await invokeModule<Record<string, unknown>, ImageGenerateOutput>(fetcher, {
+  const r = await invokeRegistered<Record<string, unknown>, ImageGenerateOutput>(env as unknown as Parameters<typeof invokeRegistered>[0], mod, fetcher, {
     hook: "image.generate",
     input: {
       prompt: args.user_input,

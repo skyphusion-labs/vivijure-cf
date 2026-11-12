@@ -13,6 +13,7 @@
 // Failures are DATA (ok:false), never thrown across the wire.
 
 import { withRetryingR2 } from "../../_shared/r2-retry";
+import { PROVIDER_VIDEO_MAX_BYTES, readProviderMedia, toArrayBuffer } from "../../_shared/provider-media";
 import {
   MODULE_API,
   type ModuleManifest,
@@ -206,8 +207,9 @@ async function storeClip(env: Env, params: WorkflowParams, url: string | null): 
   if (!url) throw new Error("model completed but wrote no object to upload_url and returned no video URL");
   const vresp = await fetch(url);
   if (!vresp.ok) throw new Error("video fetch " + vresp.status);
-  const bytes = await vresp.arrayBuffer();
-  await env.R2_RENDERS.put(key, bytes, { httpMetadata: { contentType: "video/mp4" } });
+  const media = await readProviderMedia(vresp, { maxBytes: PROVIDER_VIDEO_MAX_BYTES, fallbackType: "video/mp4" });
+  const bytes = toArrayBuffer(media.bytes);
+  await env.R2_RENDERS.put(key, bytes, { httpMetadata: { contentType: media.contentType } });
   await writeState(env, params.job_id, {
     status: "done",
     project: params.project,

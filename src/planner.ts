@@ -16,9 +16,9 @@
 // Auth and provider selection are the MODULE's business; this file never reads a provider secret.
 
 import type { Env } from "./env";
+import { invokeRegistered } from "@skyphusion-labs/vivijure-core/modules/invoke-registered";
 import {
   discoverModules,
-  invokeModule,
   resolveFetcher,
   validateConfig,
 } from "@skyphusion-labs/vivijure-core/modules/registry";
@@ -140,7 +140,7 @@ async function invokePlanningModule(
     brief: opts.brief,
   };
 
-  const r = await invokeModule<PlanEnhanceInput, PlanEnhanceOutput>(fetcher, {
+  const r = await invokeRegistered<PlanEnhanceInput, PlanEnhanceOutput>(env as unknown as Parameters<typeof invokeRegistered>[0], mod, fetcher, {
     hook: "plan.enhance",
     input,
     config,

@@ -1,4 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
+import { MANIFEST as RIFE_MANIFEST } from "../modules/finish-rife/src/manifest";
 
 // The wiring: routes, the door calls, the etag write. R2 here enforces onlyIf the way the docs describe,
 // which is my reading of R2 and not R2 itself. A live run is what proves the conditional write.
@@ -905,4 +906,28 @@ describe("POST /api/film/:id/shots/:shot/retake", () => {
     expect(view.parts[0].error).toMatch(/no stills/);
     expect(h.fromKeyframes).toEqual([]);
   });
+});
+
+describe("POST /api/film pins one delivery_fps on every part (cf#1389)", () => {
+  // The real finish-rife manifest, so the rate comes from its declared rate_factor (cf#879).
+  const rifeEnv = () => ({
+    ...env(),
+    MODULE_FINISH_RIFE: { fetch: async () => new Response(JSON.stringify({ ...RIFE_MANIFEST, ui: { order: 10, locality: "cloud" } }), { status: 200, headers: { "content-type": "application/json" } }) },
+  });
+  for (const [label, shared, want] of [
+    ["the shared chain interpolates: 48, worked out once", { finish_config: { "finish-rife": {} } }, 48],
+    ["no finish: 24", {}, 24],
+    ["the caller's rate wins", { delivery_fps: 30, finish_config: { "finish-rife": {} } }, 30],
+  ] as [string, Record<string, unknown>, number][]) {
+    it(label, async () => {
+      h.started = [];
+      const e = rifeEnv();
+      const res = await worker.fetch(post("/api/film", { ...BODY, idempotency_key: `fps-${want}`, shared: { ...BODY.shared, ...shared } }), e as never, ctx);
+      await settle();
+      expect(res.status).toBe(201);
+      await tick(e);
+      expect(h.started).toHaveLength(1);
+      expect(h.started[0].delivery_fps).toBe(want);
+    });
+  }
 });

@@ -5,6 +5,107 @@ for new features). Newest first.
 
 ## Unreleased
 
+## v1.48.0 -- 2026-11-11
+
+### Fix: the installer and `scripts/runpod-provision.py` use RunPod REST v2 (fleet-chezmoi#2085)
+
+RunPod retires REST v1 on 2026-11-15. Both now call `https://api.runpod.io/v2`. On v2 an endpoint carries its own image, env, disk and registry, so neither makes a template any more. GPUs are chosen by v2 pool: `GPU_POOLS` / `--gpu-pools` name pools directly, and `GPU_TYPE_IDS` / `--gpu-types` map through a GPU type table; an unmapped type stops the run before any RunPod call. Every list is read to its last page, so a same-name endpoint on a later page is found rather than duplicated. The create sets `type: QUEUE`, a 60 minute execution timeout (v2 defaults to 5) and FlashBoot on (v2 defaults to off). `down` still deletes a template or volume that a v1-era install recorded.
+
+### Fix: install-scope module config reaches the studio's own hook calls (#879)
+
+The studio invokes some hooks itself: plan.enhance (planner), image.generate (chat images), cast.image (cast references), score (the score bed) and the voice-sample motion call. These called core's raw `invokeModule`, so an install-scope config field set on the settings page never reached them. All five now go through `invokeRegistered` (vivijure-core 1.45, #535), the path the core orchestrators use, so an install-scope field is the operator's stored value on every hook. `tests/host-invoke-registered-879.test.ts` fails on a direct `invokeModule` call in `src/`.
+
+### Fix: a long film's default frame rate reads finish-rife's declaration (#879)
+
+`parentDefaultDeliveryFps` now passes each finish step's `finish_artifacts` to core's `predictDeliveryFps`, so the rate comes from finish-rife's declared `rate_factor`. vivijure-core#543 removes the binding-name fallback; without this, a long film with RIFE in its chain would default to 24 fps on that core. The pinned core (1.45.0) already reads the field. The finish-rife rate test now holds the declaration against a copy of the old binding rule rather than against core's removed fallback.
+
+### Feat: the panel shows the `door_fit` render signal (cf#930)
+
+Core 1.47.0 adds `door_fit` to the render payload. It records lined shots whose film door's clip floor would leave the speaker mouthing words after the line. Each one was either moved to another door for its own clip (Conrad's ruling 2026-11-11: a per-shot door applies to that one clip only), or left with the tail. The panel (`public/finish-degrade.js`, stage `door_fit`, badge "short lines") gives each one a sentence naming the shot, the doors and the lengths. It follows the ladder: absent shows nothing, empty lists are clean, and a malformed record is unreadable and stays quiet. The studio does not send core the doors to move to yet; that follows on core 1.47.0.
+
+### Feat: cf-veo's 1080p limit is refused when the film starts (cf#932, core#507)
+
+cf-veo 0.1.5 declares `requires: [{ when: "1080p", shot_seconds: { min: 7.5 } }]` on `resolution`, so core 1.45+ refuses a 1080p film with a shot that will not be an 8 second clip when the film starts, before keyframes are bought. Before, cf-veo refused it at clip time. The bound is 7.5 planned seconds because cf-veo rounds 7.5 s and up to an 8 s clip. The module keeps its own check at invoke. A test holds the two equal for every length on a grid.
+
+### chore(deps): core 1.46.0 from npm
+
+The studio now pins `@skyphusion-labs/vivijure-core` `^1.46.0` from the registry, replacing 1.45.0. Core 1.46.0 reads finish conventions only from a module's `finish_artifacts`; the binding-name fallbacks are gone (vivijure-cf#879, core#543). Every finish module this studio ships declares `finish_artifacts`, and the long-film default rate already passes them (#1420). Dispatch discovery honours `TENANT_MODULE_PREFIX` (core#542, the core side of #1412); a studio without the prefix set dispatches as before.
+
+## v1.47.0 -- 2026-11-11
+
+### Feat: finish-upscale `/ready?probe=endpoint` says whether its RunPod endpoint exists (#1373)
+
+`GET /ready` stays zero-network, and its body is unchanged unless a prober asks. With `?probe=endpoint` it adds `endpoint: { present, checked_at }` from one `GET /health` on the endpoint, direct or through the control-plane proxy, which passes `/health` through. `present` is `true` on a 2xx, `false` only on RunPod's measured missing-endpoint answer (#757), and `null` with an `error` for anything it cannot tell, for a door-served module, or with no credentials. It never changes `ok`. Shared helper: `probeEndpointPresence` (`modules/_shared/runpod-endpoint-absent.ts`).
+
+### Fix: a running finish job keeps its container awake, and a finished job's answer survives the container (#784)
+
+`/async/finish` returns at once, so nothing renewed the finish container's idle timer while an encode ran. A job that outlived it was put to sleep under itself. The container's job state is also process memory, so a finished job's answer died with a restart or sleep, and core saw `not_found`.
+
+- When the idle timer runs out, the Durable Object asks the container about each job it saw accepted and not yet finish. While one is still pending, or the probe cannot tell, it keeps the instance awake. A hold ends at core's phase deadline (90 minutes).
+- Every terminal status the Durable Object sees, from core's poll or from its own probe, is recorded in Durable Object storage for an hour. A later status read carrying the container's bearer is answered from the record without reaching the container, marked `recorded: true`.
+- No module contract or core input changes. A job still running when the container process dies is still lost, and core re-submits as before.
+
+### Feat: finish-rife declares its frame-rate change (`finish_artifacts.rate_factor`, #879)
+
+finish-rife 0.1.4 declares `rate_factor: { knob: "interpolation_factor", default: 2, off_when: { knob: "interpolate", equals: false } }` (vivijure-core#536). A core that reads it prices delivery from the declaration rather than from the binding name, and the pinned core ignores it. `tests/finish-rife-rate-factor-879.test.ts` checks that it gives the same factor as the legacy binding reading for every schema config, so retiring that fallback changes nothing finish-rife ships. Installed dispatch copies pick it up on their next install or upgrade.
+
+### chore(deps): core 1.45.0 from npm
+
+The studio now pins `@skyphusion-labs/vivijure-core` `^1.45.0` from the registry, replacing 1.44.0. Core 1.45.0 carries the backend keyframe reuse mark to the render row (`keyframe_reuse` on the payload, and `reused` on keyframes-only entries), so the panel's "reused" tag and row line from cf#1385 now show (vivijure-core#532). It also adds `requires` in `config_schema` (a value tied to shot length, refused at start by name, core#507), `finish_artifacts.rate_factor` for a finish step that changes the frame rate, install-scope module config through `invokeRegistered` (vivijure-cf#879), and beat analysis that signs only a served artifact key.
+
+### Upload reads, beat analysis, route parameters, and provider media
+
+Upload routes check `Content-Length` before reading, and stop the stream at the cap. That covers `/api/upload`, `/api/storyboard/character-ref`, `/api/storyboard/audio-upload`, cast raw-byte portrait, ref and source adds, and voice-sample attach. An over-cap body is `413`.
+
+`POST /api/audio/analyze` accepts an `audioKey` only when it is in served artifact space, the same prefixes `/api/artifact` uses. The `<audioKey>.beats.json` marker is written only for such a key.
+
+A route parameter that is not a valid percent-encoding returns `400` with the usual response headers.
+
+A provider media URL is read up to a cap. The stored content type is a sniffed or allowlisted media type. A type outside that list is not stored.
+
+## v1.46.0 -- 2026-11-11
+
+### Panel: say when a still was reused rather than redrawn (cf#1385)
+
+The GPU backend returns a stored still, marked `reused: true`, when a shot is asked for again with unchanged settings. A regen or re-render with the same settings therefore returned the old still with nothing to say so. The panel now reads the mark that core 1.45.0 carries (core#532): the history strip tags each reused still "reused", and the render row says how many stills were reused and how to get a new picture (set a new keyframe seed; the backend has no random seed, so -1 draws the same picture every time, vivijure-backend#563). The regen confirm and the re-render title say the same. A film animated from a preview keeps the mark on each carried still, the films board marks a reused still on its shot card, and the local-gpu keyframe door forwards the backend mark as the keyframe module already does. With core below 1.45.0 the key is absent and the panel shows nothing.
+
+### Feat: a long film pins one frame rate for every part (#1389, core#431)
+
+The join refuses parts of different frame rates. The frame was pinned, but the rate was not, so a part whose interpolation soft-degraded shipped at 24 fps beside siblings at 48 and the join failed.
+
+- `POST /api/render/film` takes `delivery_fps`, a whole number above 0, refused by name otherwise. Core lets it win over the rate the finish chain produced.
+- `POST /api/film` takes `shared.delivery_fps`. Without it, the film works out once the rate its shared `finish_config` would ship at (core's `predictDeliveryFps`: 24, or 24 times the RIFE factor), stores it, and sends that one rate to every part. The upload-size check now predicts at that rate, not at a fixed 24.
+- A film made before this has no stored rate, and its parts are sent none, as before.
+
+### Feat: the agent door and long films can pick the dialogue module (#1391)
+
+`POST /api/render/film` (vivijure-mcp `submit_film`, Slate, and every part of a long film) now takes `dialogue_backend` and `dialogue_config`, as the panel door has since #1379. Before this, a caller there always got the first dialogue module by ui.order.
+
+- The name must be an installed module that serves `dialogue`. Each `dialogue_config` key must name one, and its map is judged against that module's schema and then clamped. A refusal is `400`, by name, before anything is spent.
+- `POST /api/film` takes both in `shared` and sends them to every part, so the parts speak with one dialogue module. A module this studio does not serve is refused before the film is stored.
+- With no choice nothing changes.
+- vivijure-mcp `submit_film` still has to expose the two fields (separate repo).
+
+### Containers: the five media doors stop answering on workers.dev (cf#1401)
+
+`audio-beat-sync`, `audio-master`, `audio-mix`, `image-prep` and `video-finish` set `workers_dev = false` in their `cf-container/wrangler.toml`. Each door already answers on its custom domain (`<door>.skyphusion.org`), and its bearer gate already refused a request without the token on every hostname, so the `*.workers.dev` name was a second hostname nobody used, not a bypass. `preview_urls` stays `false`. Nothing calls a door on workers.dev: measured 2026-11-11 across every Worker's bindings on the account and the repo variables in this repo, vivijure-control-plane and vivijure-blender. The sixth door, blender, makes the same change in skyphusion-labs/vivijure-blender.
+
+### Panel regen draws a new picture: regen-shot takes a keyframe seed (cf#1404)
+
+A per-still regen re-sent the render's stored settings, including its seed. The GPU backend has no random seed (vivijure-backend#563) and returns the stored still when the settings are unchanged, so a regen of an unchanged shot always came back the same (marked reused since cf#1385). `POST /api/storyboard/renders/:id/regen-shot` now takes an optional `seed`, a whole number from 0 to 2147483647, refused with 400 otherwise before anything is read or spent. It is handed to the keyframe module only when that module's `config_schema` declares a seed, and the response says which seed was applied (`seed: null` when none was). The panel's regen sends a fresh random seed, its confirm says it draws a new picture, and the reuse hint names regen as the way to get one. Without a seed the route behaves as before.
+
+### Modules: the keyframe and own-gpu seed label no longer says "random" (cf#1406)
+
+The GPU backend has no random seed (vivijure-backend#563). The keyframe and own-gpu modules do not send a seed of -1, so the backend draws with its own default seed, which is fixed: the same picture, or the same motion, on every run. The label shown next to the seed control said "seed (-1 = random)". It now says "seed (-1 = backend default, same picture each time)" for keyframe and "... same motion each time" for own-gpu, and the module comments say the same. `tests/seed-label-honest.test.ts` keeps both labels from promising random. The cloud-provider modules (cf-seedance, cf-hh1-r2v, alibaba-wan-lora) and the local-gpu door keep their labels: their seed goes to other engines, which this change did not read.
+
+### Fix: module install honours the studio's own script prefix
+
+A studio whose plane sets `TENANT_MODULE_PREFIX` now installs only module scripts under that prefix, and answers any other `script_name` with `403` before the module namespace is read. Unset, as on self-host, any resident script installs as before.
+
+### Containers: the video-finish door chooses an instance only for an authenticated request
+
+The standalone video-finish door Worker routes each film to its own container instance through the `x-vivijure-finish-affinity` header (#1097). `GET /health` stays open, because the studio's readiness read calls it without a token to learn whether the container process is up. That open probe no longer selects an instance: it drops the affinity header and is served by the fixed fallback instance. Every other path still needs the bearer before any instance is addressed. The routing decision moved into `routing.ts` as `routeDoorRequest`, so `tests/video-finish-door-routing.test.ts` drives it directly.
+
 ## v1.45.0 -- 2026-11-10
 
 ### Feat: the caller's dialogue module reaches the film, on vivijure-core 1.42.0 (#1379, #1381)

@@ -3,7 +3,8 @@
 // reference_videos on Seedance 2.5, reference_video on the 2.0 family. Veo cannot honor it.
 
 import { getCastById, updateCast } from "@skyphusion-labs/vivijure-core/cast-db";
-import { discoverModules, invokeModule, pollModule, resolveFetcher, servingForHook } from "@skyphusion-labs/vivijure-core/modules/registry";
+import { discoverModules, pollModule, resolveFetcher, servingForHook } from "@skyphusion-labs/vivijure-core/modules/registry";
+import { invokeRegistered } from "@skyphusion-labs/vivijure-core/modules/invoke-registered";
 import { composeMotionPrompt } from "@skyphusion-labs/vivijure-core/film-orchestrator";
 import { isSafeRelKey } from "@skyphusion-labs/vivijure-core/key-safety";
 import { presignR2Get } from "@skyphusion-labs/vivijure-core/presign";
@@ -153,7 +154,7 @@ export async function startCastVoiceSample(
     spoken_line: line,
     speaker: cast.name || undefined,
   });
-  const r = await invokeModule(fetcher, {
+  const r = await invokeRegistered(env as unknown as Parameters<typeof invokeRegistered>[0], door, fetcher, {
     hook: "motion.backend",
     input: {
       shot_id: voiceSampleShotId(cast.public_id),
@@ -239,7 +240,7 @@ export function voiceRefKeysFromScenes(
   return Object.keys(out).length ? out : undefined;
 }
 
-const VOICE_REF_MAX = 32 * 1024 * 1024;
+export const VOICE_REF_MAX = 32 * 1024 * 1024;
 const VOICE_REF_EXT: Record<string, string> = {
   "video/mp4": "mp4",
   "video/webm": "webm",
@@ -304,11 +305,11 @@ async function persistVoiceRef(
 export async function attachCastVoiceSample(
   env: Env,
   castId: number,
-  opts: { bytes: ArrayBuffer; claimedMime: string },
+  opts: { bytes: Uint8Array; claimedMime: string },
 ): Promise<{ voice_ref_key: string; mime: string }> {
   const cast = await getCastById(env, castId);
   if (!cast) fail(404, "cast member");
-  return persistVoiceRef(env, castId, new Uint8Array(opts.bytes), opts.claimedMime);
+  return persistVoiceRef(env, castId, opts.bytes, opts.claimedMime);
 }
 
 export async function attachCastVoiceSampleFromKey(
