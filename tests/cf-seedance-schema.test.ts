@@ -178,13 +178,10 @@ describe("cf-seedance body matches each model's schema-input.json", () => {
       normalizeConfig({ model, aspect_ratio: "9:16" }),
     );
     expectValid(schema, flf);
-    expect(flf.last_frame_image).toBe("https://r2.example/end.png");
-    const arDesc = schema.properties?.aspect_ratio?.description ?? "";
-    if (arDesc.includes("First/last-frame") && arEnum.includes("adaptive")) {
-      expect(flf.aspect_ratio).toBe("adaptive");
-    } else {
-      expect(flf.aspect_ratio).toBe("9:16");
-    }
+    // cf#954: no end still is sent (flip-control renders did not end on it), so nothing forces
+    // the 2.5 first/last "adaptive" ratio either: the asked ratio goes through.
+    expect(flf.last_frame_image).toBeUndefined();
+    if (arEnum.includes("9:16")) expect(flf.aspect_ratio).toBe("9:16");
   });
 
   it("a long prompt stays inside maxLength and keeps the voice line", () => {
@@ -222,14 +219,14 @@ describe("cf-seedance body matches each model's schema-input.json", () => {
 });
 
 describe("cf-seedance door limits", () => {
-  it("the door limits doc says 2.5 is 4-30s and a vertical first+last clip needs a 9:16 keyframe", () => {
+  it("the door limits doc says 2.5 is 4-30s and the door takes no end still (cf#954)", () => {
     const doc = readFileSync(join(ROOT, "docs/motion-door-limits.md"), "utf8");
     const section = doc.split("## cf-seedance")[1]?.split("## seedance")[0] ?? "";
     expect(section).toMatch(/4-30 seconds on 2\.5/);
     expect(section).toMatch(/4-12 seconds on 2\.0/);
     expect(section).toMatch(/reference_videos/);
-    expect(section).toMatch(/9:16/);
-    expect(section).toMatch(/adaptive/);
+    expect(section).toMatch(/\| First\+last\? \| No\./);
+    expect(section).toMatch(/cf#954/);
     expect(section).not.toMatch(/\| Duration \| 4-12 seconds \|/);
   });
 
@@ -239,7 +236,7 @@ describe("cf-seedance door limits", () => {
     const text = (m.ui?.limits ?? []).join(" ");
     expect(text).toMatch(/30 seconds on 2\.5/);
     expect(text).toMatch(/1080p and 4k are Seedance 2\.0 only/);
-    expect(text).toMatch(/9:16 keyframe/);
+    expect(text).toMatch(/No end still/);
   });
 });
 

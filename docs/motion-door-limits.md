@@ -59,7 +59,7 @@ share one input document.
 | Duration | 4-30 seconds on 2.5. 4-12 seconds on 2.0, 2.0 Fast, and 2.0 Mini. A longer ask is clamped to that model's max. |
 | Talks? | Yes. |
 | Voice lock | The sample you kept. 2.5 sends that clip as one item in `reference_videos`. The 2.0 family sends `reference_video`. 2.5 also publishes `reference_audios`, and Mini publishes `reference_audio`. The sample is a video, so those audio fields are not set. Whether 2.5 keeps the voice from `reference_videos` is unproven until a real render. |
-| First+last? | Yes. The next shot's start still is the end frame when we have one. On 2.5, first and last frames always use aspect ratio `adaptive` (a supplied ratio is overridden), so the ratio knob does not make a vertical clip. The keyframe has to be 9:16. On 2.0, Fast, and Mini, Cloudflare says aspect ratio is ignored when an image is used. |
+| First+last? | No. The model accepts a last frame, but in two flip-control renders on 2.5 the clip did not move to it: one stayed on the start still, one on the end still (cf#954, 2026-11-12). So the door sends no end still. On 2.0, Fast, and Mini, Cloudflare says aspect ratio is ignored when an image is used. |
 | Cannot | 1080p or 4k except on Seedance 2.0. 2.5, Fast, and Mini allow 480p and 720p. An ask outside that set is sent as 720p, the published default. 9:21 is not on 2.5. That ask is sent as `adaptive`. Invent a different speaker. Finish does not add mouths on this door. |
 
 ## cf-vidu-q3-turbo (Vidu Q3 Turbo talking)
@@ -135,7 +135,7 @@ Holds a look from reference stills. Silent.
 | Duration | 3-15 seconds |
 | Talks? | No. |
 | Voice lock | None. No spoken lines on this door. |
-| First+last? | Yes. Start still plus the next shot's start still go in as reference images. |
+| First+last? | No. The model is reference-to-video: its images are looks, not a start and an end. In two flip-control renders the clip ended on neither still (cf#954, 2026-11-12). |
 | Cannot | Native talking audio. |
 
 ## own-gpu (silent look, studio GPU)

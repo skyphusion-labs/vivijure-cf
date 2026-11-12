@@ -48,9 +48,9 @@ export function normalizeConfig(raw: Record<string, unknown>): ModuleConfig {
 export function buildParams(input: MotionBackendInput, config: ModuleConfig): Record<string, unknown> {
   const params: Record<string, unknown> = {
     prompt: input.prompt,
-    images: input.last_keyframe_url
-      ? [input.keyframe_url, input.last_keyframe_url]
-      : [input.keyframe_url],
+    // cf#954: the start still only. The model reads images[] as references, not as an end frame,
+    // and the manifest no longer declares first_last, so core strips the end still before this.
+    images: [input.keyframe_url],
     duration: clampDuration(input.seconds),
     ratio: config.ratio,
     resolution: config.resolution,

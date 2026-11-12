@@ -76,12 +76,12 @@ describe("cf-seedance params", () => {
     const p = seedance.buildParams(shot, seedance.normalizeConfig({}));
     expect(p.last_frame_image).toBeUndefined();
   });
-  it("passes last_frame_image from last_keyframe_url (visual continuity)", () => {
+  it("does not send last_frame_image even when given an end still (cf#954: renders did not end on it)", () => {
     const p = seedance.buildParams(
       { ...shot, last_keyframe_url: "https://r2.example/end.png" },
       seedance.normalizeConfig({}),
     );
-    expect(p.last_frame_image).toBe("https://r2.example/end.png");
+    expect(p.last_frame_image).toBeUndefined();
     expect(p.image).toBe("https://r2.example/k.png");
   });
 });

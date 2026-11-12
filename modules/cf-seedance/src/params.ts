@@ -147,14 +147,6 @@ function pickEnum(schema: InputSchema, field: string, requested: string): string
   return allowed[0];
 }
 
-function firstLastForcesAdaptive(schema: InputSchema): boolean {
-  const prop = schema.properties.aspect_ratio;
-  const desc = prop?.description ?? "";
-  return (prop?.enum ?? []).includes("adaptive")
-    && desc.includes("First/last-frame")
-    && desc.includes('"adaptive"');
-}
-
 function composePrompt(base: string, voice: boolean, maxLength: number | undefined): string {
   const extra = voice ? " " + VOICE_LOCK_LINE : "";
   const cap = typeof maxLength === "number" ? maxLength : base.length + extra.length;
@@ -169,16 +161,14 @@ export function buildParams(input: MotionBackendInput, config: ModuleConfig): Re
   const props = schema.properties;
   const params: Record<string, unknown> = {};
   const voice = Boolean(input.voice_ref_url);
-  const hasLast = Boolean(input.last_keyframe_url);
 
   if (props.prompt) params.prompt = composePrompt(input.prompt, voice, props.prompt.maxLength);
   if (props.image) params.image = input.keyframe_url;
-  if (hasLast && props.last_frame_image) params.last_frame_image = input.last_keyframe_url;
+  // cf#954: no last_frame_image. The schema accepts one, but measured renders did not end on it,
+  // so the manifest does not declare first_last and the end still is not sent.
 
   if (props.aspect_ratio) {
-    params.aspect_ratio = hasLast && firstLastForcesAdaptive(schema)
-      ? "adaptive"
-      : pickEnum(schema, "aspect_ratio", config.aspect_ratio);
+    params.aspect_ratio = pickEnum(schema, "aspect_ratio", config.aspect_ratio);
   }
   if (props.duration) params.duration = clampDuration(input.seconds, config.model);
   if (props.resolution) params.resolution = pickEnum(schema, "resolution", config.resolution);

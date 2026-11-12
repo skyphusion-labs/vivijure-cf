@@ -84,7 +84,7 @@ export interface WorkflowParams {
 
 const MANIFEST: ModuleManifest = {
   name: "cf-seedance",
-  version: "0.1.3",
+  version: "0.1.4",
   api: MODULE_API,
   hooks: ["motion.backend"],
   provides: [{ id: "i2v-cloud", label: "Talking clips (Seedance)" }],
@@ -110,21 +110,23 @@ const MANIFEST: ModuleManifest = {
     limits: [
       "4-12 second clips on 2.0, Fast, and Mini. Up to 30 seconds on 2.5.",
       "Same seed and same voice lock",
-      "Last still is the next start",
+      "No end still: the clip starts on its still and is not steered to the next one",
       "Same description and seed on every shot. The voice can still vary.",
       "1080p and 4k are Seedance 2.0 only. 2.5, Fast, and Mini stay at 480p or 720p.",
-      "9:21 is not on 2.5. With a first and last still, 2.5 uses adaptive ratio: a vertical clip needs a 9:16 keyframe.",
+      "9:21 is not on 2.5.",
       "No price shown: the Cloudflare model page lists none (read 2026-11-05). A price from another provider is not ours.",
     ],
   },
   usage: {
-    face_hold: "two",
+    face_hold: "one",
     native_audio: true,
     voice: "seed_and_prompt",
     scatter_native_audio: false,
     min_seconds: 4,
     max_seconds: 30,
-    first_last: true,
+    // cf#954: false. Seedance 2.5 was sent last_frame_image and did not animate to it in 2 of 2
+    // flip-control renders (2026-11-12): one clip stayed on the start still, one on the end still.
+    first_last: false,
     seed: true,
     voice_ref: true,
   },
