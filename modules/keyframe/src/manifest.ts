@@ -8,7 +8,7 @@ import { MODULE_API, type ModuleManifest } from "./contract";
 // this module's quality_tier enum stays in lockstep with the core QUALITY_TIERS set.
 export const MANIFEST: ModuleManifest = {
   name: "keyframe",
-  version: "0.3.9",
+  version: "0.3.10",
   api: MODULE_API,
   hooks: ["keyframe"],
   provides: [{ id: "gpu-keyframe", label: "GPU Keyframe (SDXL on RunPod)" }],
@@ -108,6 +108,15 @@ export const MANIFEST: ModuleManifest = {
       values: ["auto", "on", "off"],
       default: "auto",
       label: "two-person pose skeleton",
+    },
+    // cf#1281: which figure that skeleton draws. "stand": upright and head-on, as before. "reach": waist-up, the
+    // arm nearer the partner forward and the head turned toward the partner, for two people at a shared surface.
+    // "auto": reach when the shot names a hand-off, a handshake or a surface. Matters only when the skeleton is on.
+    pose_template: {
+      type: "enum",
+      values: ["stand", "reach", "auto"],
+      default: "stand",
+      label: "two-person pose figure",
     },
     // Photoreal is RealVisXL (baked default). Anime is refused at invoke, before any RunPod call (cf#1384):
     // Animagine is not on the GPU image and anime stills run on cloud-keyframe (vivijure-backend#557). It
