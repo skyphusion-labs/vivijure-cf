@@ -5,6 +5,20 @@ for new features). Newest first.
 
 ## Unreleased
 
+## v1.49.0 -- 2026-11-12
+
+### Feat: the studio offers core a door for short-line shots (cf#930)
+
+Conrad's ruling (2026-11-11): a per-shot motion door applies to that one clip only, and the film's door stays the default for every other shot.
+
+Core 1.47.0 does the moving. Take a lined shot whose film door is driven by audio and priced by length, where that door's clip floor would leave the speaker mouthing words after the line: Wan 2.6 makes a 1.4 s line into a 5 s clip (cf#929). Core moves that one shot to the first door the studio offered that takes it without a tail. The panel shows the result as `door_fit`.
+
+This repo builds the offer (`src/door-fit-offer.ts`). It lists the other serving driven motion doors with the film door's locality, in `ui.order`, each prepared as a spoken clip. It is sent from the main render, render-from-keyframes, the finalized animate path, render-retry and the agent film route. A door the caller set on a shot is never moved. A film door the caller named is still the default for every shot, and a short-line shot may move off it for that one clip (Conrad's ruling, 2026-11-11: `DOOR_FIT_FOR_EXPLICIT_FILM_DOOR` is true). Hybrid and cloud-per-shot renders set a door on every shot, so they are not offered one. Core moves to `^1.47.0`.
+
+### CI: all five container doors deploy from Actions on a v* tag (fleet-chezmoi#2620)
+
+Conrad's ruling (2026-11-12): every deployed artifact is built and deployed by GitHub Actions, not on the laptop. Until now only the video-finish door deployed from `ci.yml`; image-prep, audio-mix, audio-beat-sync and audio-master were hand deploys, and the live versions (2026-11-06) carry a `laptop deploy` annotation. The `deploy-video-finish-door` job becomes `deploy-container-doors`, a matrix over all five doors with the same gates as the studio deploy. The runner is linux/amd64, which is what these four configs asked for. `DEPLOYMENT.md`, `containers/README.md` and the door configs now say so.
+
 ## v1.48.0 -- 2026-11-11
 
 ### Fix: the installer and `scripts/runpod-provision.py` use RunPod REST v2 (fleet-chezmoi#2085)
