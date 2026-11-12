@@ -336,7 +336,16 @@ jobs:
         run: |
           set -euo pipefail
           TAG="${{ github.ref_name }}"
-          gh release view "$TAG" >/dev/null 2>&1 || gh release create "$TAG" --title "$TAG" --notes "Studio release artifact."
+          # Notes are the CHANGELOG.md section for this tag; people watch Releases. Only if the
+          # section is missing do we fall back to generated notes, and the notes say so.
+          if ! gh release view "$TAG" >/dev/null 2>&1; then
+            if scripts/changelog-section.sh "$TAG" > release-notes.md; then
+              gh release create "$TAG" --title "$TAG" --notes-file release-notes.md
+            else
+              gh release create "$TAG" --title "$TAG" --generate-notes \
+                --notes "No CHANGELOG.md section was found for $TAG; these notes are generated from merged pull requests."
+            fi
+          fi
           gh release upload "$TAG" "studio-release-$TAG.tar.gz" "dist-release/manifest.json" --clobber
           echo "::notice title=Studio release pin::$(cat dist-release/PIN.txt)"
 
