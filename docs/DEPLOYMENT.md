@@ -767,17 +767,12 @@ npm ci
 npx wrangler deploy --containers-rollout=immediate
 ```
 
-- **video-finish** is deployed by CI: a `v*` tag runs the `deploy-video-finish-door` job in
-  `.github/workflows/ci.yml` on a GitHub-hosted runner, under the same gates as the studio deploy.
-  That job runs plain `npx wrangler deploy` and does not set the secret. Deploy it by hand only to
-  recover.
-- **image-prep, audio-mix, audio-beat-sync, audio-master** have no CI deploy job. Deploy them by
-  hand, as above.
-- **Build host.** wrangler builds these images for `linux/amd64`. The video-finish config says any
-  host with a running Docker works, an arm64 Mac included (`cf-container/wrangler.toml` header,
-  #1097). The other four configs still say to deploy from an amd64 host. Until one of those four is
-  deployed from an arm64 host and proven by its selftest, treat the amd64 rule as the one that holds
-  for them.
+- **All five doors are deployed by CI** (fleet-chezmoi#2620): a `v*` tag runs the
+  `deploy-container-doors` job in `.github/workflows/ci.yml`, one matrix leg per door, on a
+  GitHub-hosted linux/amd64 runner, under the same gates as the studio deploy. The job runs plain
+  `npx wrangler deploy` and does not set the secret. Deploy a door by hand only to recover, and then
+  from an amd64 host: wrangler builds these images for `linux/amd64`, and only video-finish has been
+  proven from an arm64 host (#1097).
 - **Prove it** after each deploy. `GET /health` 200 and `GET /ready` with `"token_configured":true`
   show the Worker is up and has a secret. They do NOT show that the secret matches the studio's
   `MEDIA_FINISH_TOKEN`. Only a bearer-authenticated `POST /selftest` with the deploy's token proves
@@ -788,7 +783,7 @@ environment, which is fixed when the instance starts. `wrangler secret put` upda
 does not restart a running container. After a rotation the Worker accepts and forwards the new
 token to an instance that still holds the old one, and every call is 401 until that instance
 restarts. A redeploy with an unchanged image rolls nothing out (`ci.yml`, the comment above
-`deploy-video-finish-door`), so it does not fix this. A rotation must therefore restart each door's
+`deploy-container-doors`), so it does not fix this. A rotation must therefore restart each door's
 containers, or move the door to a new container instance name in the same deploy so fresh
 instances start with the current secret. Rotate `FINISH_DOOR_TOKEN` and every door's
 `LOCAL_FINISH_TOKEN` together, then run each door's selftest.

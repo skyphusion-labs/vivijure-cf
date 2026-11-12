@@ -883,26 +883,36 @@ jobs:
       - name: Every changelog fragment is consumed or deliberately held (cf#901)
         run: python3 scripts/changelog-fragments-consumed.py .
 
-  # The standalone video-finish door that film-titles and subtitle reach over VIDEO_FINISH_URL. A job
+  # The five standalone Cloudflare Container doors (containers/*/cf-container). video-finish is the one
+  # film-titles and subtitle reach over VIDEO_FINISH_URL; image-prep, audio-mix, audio-beat-sync and
+  # audio-master are the doors the studio reaches over IMAGE_PREP_URL and the AUDIO_*_URL vars. A job
   # here and not a workflow of its own, because cf#562 allows no second way to publish: same tag, same
-  # gates as the studio. The runner ships Docker, which `wrangler deploy` needs to build the image for
-  # linux/amd64. An unchanged image rolls nothing out. LOCAL_FINISH_TOKEN is not set here: a wrangler
-  # secret persists across deploys.
-  deploy-video-finish-door:
+  # gates as the studio. Until fleet-chezmoi#2620 only video-finish deployed here and the other four
+  # were hand deploys from the laptop (live versions of 2026-11-06 carry "laptop deploy"); Conrad's
+  # ruling of 2026-11-12 is that every deployed artifact is built and deployed by Actions. The runner
+  # is linux/amd64 and ships Docker, which `wrangler deploy` needs to build each image. An unchanged
+  # image rolls nothing out. LOCAL_FINISH_TOKEN is not set here: a wrangler secret persists across
+  # deploys. fail-fast is off so one door's failure does not leave the others half-attempted; each
+  # door is its own Worker and its own container app, with no binding between them.
+  deploy-container-doors:
     needs: [ci, container-tests, container-smoke, migrations-gate, assert-on-main, assert-tag-version]
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        door: [video-finish, image-prep, audio-mix, audio-beat-sync, audio-master]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: "22"
       - name: Install
-        working-directory: containers/video-finish/cf-container
+        working-directory: containers/${{ matrix.door }}/cf-container
         run: npm ci --no-audit --no-fund
       - name: Deploy
-        working-directory: containers/video-finish/cf-container
+        working-directory: containers/${{ matrix.door }}/cf-container
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}

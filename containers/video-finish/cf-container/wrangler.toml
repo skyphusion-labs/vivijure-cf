@@ -1,6 +1,6 @@
 # Isolated video-finish Cloudflare Container door. Not the studio Worker.
 #
-# Deployed on a `v*` tag by the deploy-video-finish-door job in ci.yml, on a GitHub-hosted runner. Any host with
+# Deployed on a `v*` tag by the deploy-container-doors job in ci.yml, on a GitHub-hosted runner. Any host with
 # a running Docker works, an arm64 Mac included: wrangler builds this image for linux/amd64 whatever
 # the host is, and refuses any other platform.
 
