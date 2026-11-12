@@ -1,3 +1,0 @@
-### CI: all five container doors deploy from Actions on a v* tag (fleet-chezmoi#2620)
-
-Conrad's ruling (2026-11-12): every deployed artifact is built and deployed by GitHub Actions, not on the laptop. Until now only the video-finish door deployed from `ci.yml`; image-prep, audio-mix, audio-beat-sync and audio-master were hand deploys, and the live versions (2026-11-06) carry a `laptop deploy` annotation. The `deploy-video-finish-door` job becomes `deploy-container-doors`, a matrix over all five doors with the same gates as the studio deploy. The runner is linux/amd64, which is what these four configs asked for. `DEPLOYMENT.md`, `containers/README.md` and the door configs now say so.
