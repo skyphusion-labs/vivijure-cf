@@ -1,5 +1,6 @@
 # Isolated vivijure-audio-master Cloudflare Container door. Not the studio Worker.
-# Deploy from an amd64 host (the Vultr proof box). This Mac is arm64.
+# Deployed on a `v*` tag by the deploy-container-doors job in ci.yml, on a GitHub-hosted linux/amd64
+# runner (fleet-chezmoi#2620). A hand deploy is for recovery only, and from an amd64 host.
 
 name = "vivijure-audio-master"
 main = "src/index.ts"

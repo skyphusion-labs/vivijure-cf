@@ -17,11 +17,11 @@ Each image runs in one of two ways:
 
 | Service | Worker name | DO class / binding | `instance_type` | `max_instances` | Deployed by |
 | --- | --- | --- | --- | --- | --- |
-| `video-finish` | `vivijure-video-finish` | `VideoFinishDoor` / `FINISH` | standard-4 | 20 | `deploy-video-finish-door` job in `ci.yml`, on a `v*` tag |
-| `image-prep` | `vivijure-image-prep` | `ImagePrepDoor` / `PREP` | standard-1 | 2 | hand deploy |
-| `audio-mix` | `vivijure-audio-mix` | `AudioMixDoor` / `MIX` | standard-1 | 2 | hand deploy |
-| `audio-beat-sync` | `vivijure-audio-beat-sync` | `AudioBeatSyncDoor` / `BEATS` | standard-1 | 2 | hand deploy |
-| `audio-master` | `vivijure-audio-master` | `AudioMasterDoor` / `MASTER` | standard-1 | 2 | hand deploy |
+| `video-finish` | `vivijure-video-finish` | `VideoFinishDoor` / `FINISH` | standard-4 | 20 | `deploy-container-doors` job in `ci.yml`, on a `v*` tag |
+| `image-prep` | `vivijure-image-prep` | `ImagePrepDoor` / `PREP` | standard-1 | 2 | `deploy-container-doors` job in `ci.yml`, on a `v*` tag |
+| `audio-mix` | `vivijure-audio-mix` | `AudioMixDoor` / `MIX` | standard-1 | 2 | `deploy-container-doors` job in `ci.yml`, on a `v*` tag |
+| `audio-beat-sync` | `vivijure-audio-beat-sync` | `AudioBeatSyncDoor` / `BEATS` | standard-1 | 2 | `deploy-container-doors` job in `ci.yml`, on a `v*` tag |
+| `audio-master` | `vivijure-audio-master` | `AudioMasterDoor` / `MASTER` | standard-1 | 2 | `deploy-container-doors` job in `ci.yml`, on a `v*` tag |
 
 Each `cf-container/wrangler.toml` sets `image = "../Dockerfile"` and `image_build_context = ".."`
 and requires one wrangler secret, `LOCAL_FINISH_TOKEN`. Its value must equal the studio's store
