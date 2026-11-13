@@ -8,7 +8,7 @@ import { MODULE_API, type ModuleManifest } from "./contract";
 // this module's quality_tier enum stays in lockstep with the core QUALITY_TIERS set.
 export const MANIFEST: ModuleManifest = {
   name: "keyframe",
-  version: "0.3.10",
+  version: "0.3.11",
   api: MODULE_API,
   hooks: ["keyframe"],
   provides: [{ id: "gpu-keyframe", label: "GPU Keyframe (SDXL on RunPod)" }],
@@ -77,10 +77,10 @@ export const MANIFEST: ModuleManifest = {
     },
     // cf#1143 option a: on a two-person shot, each person's description reaches only their own half of the first
     // (scene) pass, while the scene, style, setting and the adult statement stay for the whole frame. Off = one
-    // prompt for the frame, as before. Older backend images ignore it.
+    // prompt for the frame, as before. On by default since the cf#1281 ruling (2026-11-13). Older backends ignore it.
     plate_regional_text: {
       type: "bool",
-      default: false,
+      default: true,
       label: "keep each person's look to themselves",
     },
     // cf#1143 option c: with the setting above on, the space between the two people reads only the look and the
@@ -90,23 +90,24 @@ export const MANIFEST: ModuleManifest = {
       default: false,
       label: "nobody in the gap between two people",
     },
-    // cf#1143 option d: how firmly a two-person still plants exactly two bodies. 0.55 is the value shipped
-    // before. Sent to the backend as multi_char.controlnet_pose_scale, which clamps it to 0..1.5.
+    // cf#1143 option d: how firmly a two-person still plants exactly two bodies. 0.3 since the cf#1281 ruling
+    // (2026-11-13; 0.55 before). Sent to the backend as multi_char.controlnet_pose_scale, which clamps it to 0..1.5.
     pose_scale: {
       type: "float",
-      default: 0.55,
+      default: 0.3,
       min: 0,
       max: 1.5,
       label: "two-person body placement strength",
     },
-    // cf#1281: whether a two-person still draws under the pose skeleton. "auto" sends nothing, so the backend
+    // cf#1281: whether a two-person still draws under the pose skeleton. Default "on" since the ruling of
+    // 2026-11-13 (PRF3: skeleton on at 0.3 with per-region text). "auto" sends nothing, so the backend
     // picks per path (backend#596: a scene-lock plate draws without it while the plate count guard runs; the
     // plain regional path draws with it). "on" or "off" sets both paths. An enum, not a bool, because the core
     // fills every schema default, so a bool could never be left unset.
     pose_conditioning: {
       type: "enum",
       values: ["auto", "on", "off"],
-      default: "auto",
+      default: "on",
       label: "two-person pose skeleton",
     },
     // cf#1281: which figure that skeleton draws. "stand": upright and head-on, as before. "reach": waist-up, the

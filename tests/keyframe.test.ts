@@ -97,6 +97,18 @@ describe("keyframe pure logic", () => {
     }
   });
 
+  it("a job on every schema default sends the PRF3 two-person config to the backend (cf#1281 ruling)", () => {
+    // Core fills every declared default before the module sees the config, so build exactly that.
+    const defaults = Object.fromEntries(
+      Object.entries(MANIFEST.config_schema as Record<string, { default?: unknown }>).map(([k, f]) => [k, f.default]),
+    );
+    const kf = (buildPreviewBody({ project: "p", bundle_key: "b" }, defaults).input.render_overrides as { keyframe: Record<string, unknown> }).keyframe;
+    expect(kf.plate_regional_text).toBe(true);
+    expect(kf.multi_char).toEqual({ controlnet_pose_scale: 0.3, pose_conditioning: true });
+    // stand is the backend default figure, so no pose_template key is sent.
+    expect(JSON.stringify(kf)).not.toContain("pose_template");
+  });
+
   it("buildPreviewBody sends pose_template reach/auto under multi_char and nothing on stand (cf#1281)", () => {
     const reach = buildPreviewBody({ project: "p", bundle_key: "b" }, { pose_template: "reach" });
     expect(reach.input.render_overrides).toEqual({ keyframe: { multi_char: { pose_template: "reach" } } });
@@ -305,13 +317,15 @@ describe("keyframe scene-lock schema", () => {
   const JARGON = /i2v|Unified Billing|endpoint|schema|RunPod|Workers AI|generate_audio/i;
 
   it("declares scene_lock default true and canny_scale default 0.70; no scene_denoise", () => {
-    expect(MANIFEST.version).toBe("0.3.10");
+    expect(MANIFEST.version).toBe("0.3.11");
     expect(MANIFEST.config_schema?.plate_people_free_background).toMatchObject({ type: "bool", default: false });
-    // The pose default is the value the backend shipped with, so nothing changes until it is set.
-    expect(MANIFEST.config_schema?.pose_scale).toMatchObject({ type: "float", default: 0.55, min: 0, max: 1.5 });
-    expect(MANIFEST.config_schema?.plate_regional_text).toMatchObject({ type: "bool", default: false });
-    // cf#1281: tri-state, defaulting to "auto" so the backend default stands unless a job asks.
-    expect(MANIFEST.config_schema?.pose_conditioning).toMatchObject({ type: "enum", values: ["auto", "on", "off"], default: "auto" });
+    // cf#1281, Conrad's ruling 2026-11-13: the two-person default is PRF3 (skeleton on at 0.3, per-region text on,
+    // standing figure), measured best on three of four boards. The skeleton and the region text both apply only to
+    // two-person shots; the values still enter every still's reuse hash (see the CHANGELOG entry).
+    expect(MANIFEST.config_schema?.pose_scale).toMatchObject({ type: "float", default: 0.3, min: 0, max: 1.5 });
+    expect(MANIFEST.config_schema?.plate_regional_text).toMatchObject({ type: "bool", default: true });
+    expect(MANIFEST.config_schema?.pose_conditioning).toMatchObject({ type: "enum", values: ["auto", "on", "off"], default: "on" });
+    expect(MANIFEST.config_schema?.pose_template).toMatchObject({ type: "enum", values: ["stand", "reach", "auto"], default: "stand" });
     expect(MANIFEST.config_schema?.plate_ip_adapter_scale).toMatchObject({ type: "float", default: 0, min: 0, max: 1 });
     // cf#1143: the default is the crop shipped before it was a knob, so nothing changes until it is set.
     expect(MANIFEST.config_schema?.face_crop_pad).toMatchObject({ type: "float", default: 0.35, min: 0, max: 2 });
