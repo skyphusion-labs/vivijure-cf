@@ -39,7 +39,7 @@ const CLOUD_KF: Mod = {
   config_schema: { width: { type: "int", default: 1344, min: 512, max: 1536 }, height: { type: "int", default: 768, min: 512, max: 1536 } },
 };
 const DOORS: Record<string, Mod> = {
-  seedance: motion("cf-seedance", { native_audio: true, first_last: true, voice_ref: true, face_hold: "two" }, {
+  seedance: motion("cf-seedance", { native_audio: true, first_last: false, voice_ref: true, face_hold: "one" }, {
     ui: { order: 70 },
     config_schema: { aspect_ratio: enumOf(["16:9", "4:3", "1:1", "3:4", "9:16", "21:9", "9:21"], "16:9"), resolution: enumOf(["480p", "720p", "1080p", "4k"], "720p") },
   }),
@@ -51,7 +51,7 @@ const DOORS: Record<string, Mod> = {
     ui: { order: 94, cost_usd_per_second: [0.157, 0.235] },
     config_schema: { ratio: enumOf(["21:9", "16:9", "9:16", "1:1"], "16:9"), resolution: enumOf(["720p", "1080p"]) },
   }),
-  hh1: motion("cf-hh1-r2v", { native_audio: false, first_last: true, face_hold: "hold" }, {
+  hh1: motion("cf-hh1-r2v", { native_audio: false, first_last: false, face_hold: "hold" }, {
     ui: { order: 60 },
     config_schema: { ratio: enumOf(["16:9", "9:16", "3:4", "4:3", "1:1", "21:9", "9:21", "5:4", "4:5"], "16:9"), resolution: enumOf(["720P", "1080P"]) },
   }),
@@ -79,7 +79,9 @@ describe("face grade", () => {
   it("a door that holds the face by its own evidence outranks two stills, which outrank one", () => {
     expect(faceGrade(DOORS.hh1)).toBe(GRADE.HOLD);
     expect(faceGrade(DOORS.wanLora)).toBe(GRADE.HOLD);
-    expect(faceGrade(DOORS.seedance)).toBe(GRADE.TWO);
+    expect(faceGrade(DOORS.vidu)).toBe(GRADE.TWO);
+    // cf#954: cf-seedance does not end on the end still, so it holds the face by its start still only.
+    expect(faceGrade(DOORS.seedance)).toBe(GRADE.ONE);
     expect(faceGrade(DOORS.veo)).toBe(GRADE.ONE);
   });
   it("a door documented as drifting is demoted even though it takes two stills", () => {
@@ -101,10 +103,10 @@ describe("chooseStyle: consistency first, not price", () => {
     expect(c?.still?.name).toBe("keyframe");
   });
   it("the trained-face door wins its tie once training is possible, by ui.order", () => {
-    const c = chooseStyle(reg([DOORS.wanLora, DOORS.seedance]), { shape: "vertical", host: { wanTrainable: true } });
+    const c = chooseStyle(reg([DOORS.wanLora, DOORS.vidu]), { shape: "vertical", host: { wanTrainable: true } });
     expect(c?.door.name).toBe("alibaba-wan-lora");
     expect(c?.needs).toBe("wan_lora");
-    expect(chooseStyle(reg([DOORS.wanLora, DOORS.seedance]), { shape: "vertical" })?.door.name).toBe("cf-seedance");
+    expect(chooseStyle(reg([DOORS.wanLora, DOORS.vidu]), { shape: "vertical" })?.door.name).toBe("cf-vidu-q3-turbo");
   });
   it("price never wins: the cheaper door with a stated rate loses to a better face grade", () => {
     const c = chooseStyle(reg([DOORS.vidu, DOORS.hh1]), { shape: "wide" });
@@ -117,9 +119,9 @@ describe("chooseStyle: consistency first, not price", () => {
   });
   it("while talking is unknown, a door that can speak wins a tie in face grade", () => {
     const silent = motion("a-silent", { native_audio: false, first_last: true }, { ui: { order: 1 } });
-    const c = chooseStyle(reg([silent, DOORS.seedance]), { shape: "wide" });
-    expect(c?.door.name).toBe("cf-seedance");
-    expect(chooseStyle(reg([silent, DOORS.seedance]), { shape: "wide", talks: false })?.door.name).toBe("a-silent");
+    const c = chooseStyle(reg([silent, DOORS.vidu]), { shape: "wide" });
+    expect(c?.door.name).toBe("cf-vidu-q3-turbo");
+    expect(chooseStyle(reg([silent, DOORS.vidu]), { shape: "wide", talks: false })?.door.name).toBe("a-silent");
   });
   it("wide plus talking picks InfiniteTalk: the face is our still and the voice is the person's own", () => {
     const c = chooseStyle(ALL, { shape: "wide", talks: true });
@@ -211,7 +213,11 @@ describe("quality and price", () => {
   it("the quality picks the door's resolution", () => {
     expect(chooseStyle(reg([DOORS.vidu]), { shape: "wide", quality: "best" })?.motionConfig).toEqual({ resolution: "1080p" });
     expect(chooseStyle(reg([DOORS.vidu]), { shape: "wide", quality: "draft" })?.motionConfig).toEqual({ resolution: "540p" });
-    expect(chooseStyle(reg([DOORS.seedance]), { shape: "square", quality: "good" })?.motionConfig).toEqual({ aspect_ratio: "1:1", resolution: "720p" });
+    // A two-still door with an aspect and a resolution enum (the shape cf-seedance had before cf#954).
+    const aspectTwo = motion("aspect-two", { native_audio: true, first_last: true, face_hold: "two" }, { config_schema: DOORS.seedance.config_schema });
+    expect(chooseStyle(reg([aspectTwo]), { shape: "square", quality: "good" })?.motionConfig).toEqual({ aspect_ratio: "1:1", resolution: "720p" });
+    // cf-seedance itself is grade ONE now, so it is never the style.
+    expect(chooseStyle(reg([DOORS.seedance]), { shape: "square", quality: "good" })).toBeFalsy();
   });
 });
 

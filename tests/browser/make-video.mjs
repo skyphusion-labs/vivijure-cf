@@ -33,9 +33,11 @@ process.on("uncaughtException", (e) => { console.log("HARNESS", String(e).split(
 const enumOf = (values, d = values[0]) => ({ type: "enum", values, default: d });
 const door = (name, usage, extra = {}) => ({ name, hooks: ["motion.backend"], provides: [{ id: name, label: name }], usage, ...extra });
 const KF = { name: "keyframe", hooks: ["keyframe"], trains_loras: true, config_schema: { width: { type: "int", min: 512, max: 1536 }, height: { type: "int", min: 512, max: 1536 } } };
-const HH1 = door("cf-hh1-r2v", { native_audio: false, first_last: true, face_hold: "hold" }, { ui: { order: 60 }, config_schema: { ratio: enumOf(["16:9", "9:16", "1:1"]), resolution: enumOf(["720P", "1080P"]) } });
+const HH1 = door("cf-hh1-r2v", { native_audio: false, first_last: false, face_hold: "hold" }, { ui: { order: 60 }, config_schema: { ratio: enumOf(["16:9", "9:16", "1:1"]), resolution: enumOf(["720P", "1080P"]) } });
 const VIDU = door("cf-vidu-q3-turbo", { native_audio: true, first_last: true, face_hold: "two" }, { ui: { order: 58, cost_usd_per_second: [0.04, 0.07] }, config_schema: { resolution: enumOf(["540p", "720p", "1080p"], "720p") } });
-const SEED = door("cf-seedance", { native_audio: true, first_last: true, face_hold: "two" }, { ui: { order: 70 }, config_schema: { aspect_ratio: enumOf(["16:9", "9:16", "1:1"]) } });
+const SEED = door("cf-seedance", { native_audio: true, first_last: false, face_hold: "one" }, { ui: { order: 70 }, config_schema: { aspect_ratio: enumOf(["16:9", "9:16", "1:1"]) } });
+// A consistency-grade style with no stated price (cf-seedance was this until cf#954 made it grade ONE).
+const NOPRICE = door("no-price-two", { native_audio: true, first_last: true, face_hold: "two" }, { ui: { order: 70 }, config_schema: { aspect_ratio: enumOf(["16:9", "9:16", "1:1"]) } });
 const ITALK = door("infinitetalk", { native_audio: false, driving_audio: true, face_hold: "hold" }, { ui: { order: 15 }, config_schema: {} });
 const WIDE = door("wide-only", { native_audio: true, first_last: true, face_hold: "two" }, { config_schema: { ratio: enumOf(["16:9"]) } });
 const VEO = door("cf-veo", { native_audio: true, face_hold: "one" }, { config_schema: { aspect_ratio: enumOf(["16:9", "9:16", "1:1"]) } });
@@ -224,7 +226,7 @@ const JARGON = /\b(storyboard|shots?|slots?|seeds?|keyframes?|backends?|doors?|l
 }
 {
   // A style with no stated price: the total says so, and never a number.
-  const { ctx, page } = await open({ doors: [SEED] });
+  const { ctx, page } = await open({ doors: [NOPRICE] });
   await page.click('#make-faces button[aria-label="Add Mara"]');
   await page.fill("#make-idea", "A walk.");
   check("no price before the plan", (await text(page, "#make-qualities")).includes("price unknown"));

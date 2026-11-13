@@ -72,6 +72,9 @@ function keyframeOverrides(cfg: Record<string, unknown>): Record<string, unknown
   // "auto" (or anything else) sends nothing, so the backend per-path default stands (backend#596).
   if (cfg.pose_conditioning === "on") mc.pose_conditioning = true;
   else if (cfg.pose_conditioning === "off") mc.pose_conditioning = false;
+  // cf#1281: the skeleton's figure. "stand" is the backend default, so it sends nothing and a default job's wire
+  // (and its reuse hash) is unchanged. A backend older than vivijure-backend#649 ignores the key.
+  if (cfg.pose_template === "reach" || cfg.pose_template === "auto") mc.pose_template = cfg.pose_template;
   if (Object.keys(mc).length) o.multi_char = mc;
   // Anime stills swap the SDXL checkpoint. Photoreal keeps the backend default.
   if (clampStyle(cfg.style) === "anime") o.base_model = KEYFRAME_BASES.anime;

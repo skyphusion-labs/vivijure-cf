@@ -97,6 +97,26 @@ describe("keyframe pure logic", () => {
     }
   });
 
+  it("buildPreviewBody sends pose_template reach/auto under multi_char and nothing on stand (cf#1281)", () => {
+    const reach = buildPreviewBody({ project: "p", bundle_key: "b" }, { pose_template: "reach" });
+    expect(reach.input.render_overrides).toEqual({ keyframe: { multi_char: { pose_template: "reach" } } });
+    const auto = buildPreviewBody({ project: "p", bundle_key: "b" }, { pose_template: "auto" });
+    expect(auto.input.render_overrides).toEqual({ keyframe: { multi_char: { pose_template: "auto" } } });
+    // stand is the backend default: sending nothing keeps every default job's wire, and its reuse hash, as before.
+    expect(buildPreviewBody({ project: "p", bundle_key: "b" }, { pose_template: "stand" }).input.render_overrides).toBeUndefined();
+    for (const v of ["Reach", "sit", true, 1, null]) {
+      expect(buildPreviewBody({ project: "p", bundle_key: "b" }, { pose_template: v }).input.render_overrides).toBeUndefined();
+    }
+    const all = buildPreviewBody({ project: "p", bundle_key: "b" }, { pose_scale: 0.3, pose_conditioning: "on", pose_template: "reach" });
+    expect(all.input.render_overrides).toEqual({ keyframe: { multi_char: { controlnet_pose_scale: 0.3, pose_conditioning: true, pose_template: "reach" } } });
+  });
+
+  it("the manifest declares pose_template stand/reach/auto with stand the default (cf#1281)", async () => {
+    const { MANIFEST } = await import("../modules/keyframe/src/manifest");
+    const f = (MANIFEST.config_schema as Record<string, { type: string; values?: string[]; default?: unknown }>).pose_template;
+    expect(f).toMatchObject({ type: "enum", values: ["stand", "reach", "auto"], default: "stand" });
+  });
+
   it("buildPreviewBody keeps pose_scale and pose_conditioning together under one multi_char block (cf#1281)", () => {
     const { input } = buildPreviewBody({ project: "p", bundle_key: "b" }, { pose_scale: 0.3, pose_conditioning: "on" });
     expect(input.render_overrides).toEqual({ keyframe: { multi_char: { controlnet_pose_scale: 0.3, pose_conditioning: true } } });
@@ -285,7 +305,7 @@ describe("keyframe scene-lock schema", () => {
   const JARGON = /i2v|Unified Billing|endpoint|schema|RunPod|Workers AI|generate_audio/i;
 
   it("declares scene_lock default true and canny_scale default 0.70; no scene_denoise", () => {
-    expect(MANIFEST.version).toBe("0.3.9");
+    expect(MANIFEST.version).toBe("0.3.10");
     expect(MANIFEST.config_schema?.plate_people_free_background).toMatchObject({ type: "bool", default: false });
     // The pose default is the value the backend shipped with, so nothing changes until it is set.
     expect(MANIFEST.config_schema?.pose_scale).toMatchObject({ type: "float", default: 0.55, min: 0, max: 1.5 });
