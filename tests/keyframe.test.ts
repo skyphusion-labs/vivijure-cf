@@ -123,6 +123,24 @@ describe("keyframe pure logic", () => {
     expect(all.input.render_overrides).toEqual({ keyframe: { multi_char: { controlnet_pose_scale: 0.3, pose_conditioning: true, pose_template: "reach" } } });
   });
 
+  it("buildPreviewBody sends pass_b_gaze auto at the top of the keyframe block and nothing on off (cf#1442)", () => {
+    const auto = buildPreviewBody({ project: "p", bundle_key: "b" }, { pass_b_gaze: "auto" });
+    expect(auto.input.render_overrides).toEqual({ keyframe: { pass_b_gaze: "auto" } });
+    // off is the backend default: sending nothing keeps every default job's wire, and its reuse hash, as before.
+    expect(buildPreviewBody({ project: "p", bundle_key: "b" }, { pass_b_gaze: "off" }).input.render_overrides).toBeUndefined();
+    for (const v of ["Auto", "on", true, 1, null]) {
+      expect(buildPreviewBody({ project: "p", bundle_key: "b" }, { pass_b_gaze: v }).input.render_overrides).toBeUndefined();
+    }
+    const both = buildPreviewBody({ project: "p", bundle_key: "b" }, { pass_b_gaze: "auto", pose_conditioning: "on" });
+    expect(both.input.render_overrides).toEqual({ keyframe: { pass_b_gaze: "auto", multi_char: { pose_conditioning: true } } });
+  });
+
+  it("the manifest declares pass_b_gaze off/auto with off the default (cf#1442)", async () => {
+    const { MANIFEST } = await import("../modules/keyframe/src/manifest");
+    const f = (MANIFEST.config_schema as Record<string, { type: string; values?: string[]; default?: unknown }>).pass_b_gaze;
+    expect(f).toMatchObject({ type: "enum", values: ["off", "auto"], default: "off" });
+  });
+
   it("the manifest declares pose_template stand/reach/auto with stand the default (cf#1281)", async () => {
     const { MANIFEST } = await import("../modules/keyframe/src/manifest");
     const f = (MANIFEST.config_schema as Record<string, { type: string; values?: string[]; default?: unknown }>).pose_template;
@@ -317,7 +335,7 @@ describe("keyframe scene-lock schema", () => {
   const JARGON = /i2v|Unified Billing|endpoint|schema|RunPod|Workers AI|generate_audio/i;
 
   it("declares scene_lock default true and canny_scale default 0.70; no scene_denoise", () => {
-    expect(MANIFEST.version).toBe("0.3.11");
+    expect(MANIFEST.version).toBe("0.3.12");
     expect(MANIFEST.config_schema?.plate_people_free_background).toMatchObject({ type: "bool", default: false });
     // cf#1281, Conrad's ruling 2026-11-13: the two-person default is PRF3 (skeleton on at 0.3, per-region text on,
     // standing figure), measured best on three of four boards. The skeleton and the region text both apply only to

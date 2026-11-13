@@ -66,6 +66,9 @@ function keyframeOverrides(cfg: Record<string, unknown>): Record<string, unknown
   if (typeof cfg.plate_regional_text === "boolean") o.plate_regional_text = cfg.plate_regional_text;
   // cf#1143 option c: a people-free band between the two people (meaningful with plate_regional_text).
   if (typeof cfg.plate_people_free_background === "boolean") o.plate_people_free_background = cfg.plate_people_free_background;
+  // cf#1442: Pass B names what the shot looks at. "off" is the backend default, so it sends nothing and a default
+  // job's wire (and its reuse hash) is unchanged. A backend older than vivijure-backend#651 ignores the key.
+  if (cfg.pass_b_gaze === "auto") o.pass_b_gaze = "auto";
   // cf#1143 option d and cf#1281: the backend reads both under multi_char, not at the top of the keyframe block.
   const mc: Record<string, unknown> = {};
   if (typeof cfg.pose_scale === "number" && Number.isFinite(cfg.pose_scale)) mc.controlnet_pose_scale = cfg.pose_scale;

@@ -8,7 +8,7 @@ import { MODULE_API, type ModuleManifest } from "./contract";
 // this module's quality_tier enum stays in lockstep with the core QUALITY_TIERS set.
 export const MANIFEST: ModuleManifest = {
   name: "keyframe",
-  version: "0.3.11",
+  version: "0.3.12",
   api: MODULE_API,
   hooks: ["keyframe"],
   provides: [{ id: "gpu-keyframe", label: "GPU Keyframe (SDXL on RunPod)" }],
@@ -118,6 +118,15 @@ export const MANIFEST: ModuleManifest = {
       values: ["stand", "reach", "auto"],
       default: "stand",
       label: "two-person pose figure",
+    },
+    // cf#1442: on a two-person still, tell the second pass where the eyes go. "auto" reads what the shot text says
+    // they are looking at ("looking at a laptop") and asks for eyes on it, not on the camera. "off" (default)
+    // sends nothing, so a default job's request and reuse hash are unchanged.
+    pass_b_gaze: {
+      type: "enum",
+      values: ["off", "auto"],
+      default: "off",
+      label: "two-person eyes on what the shot names",
     },
     // Photoreal is RealVisXL (baked default). Anime is refused at invoke, before any RunPod call (cf#1384):
     // Animagine is not on the GPU image and anime stills run on cloud-keyframe (vivijure-backend#557). It
