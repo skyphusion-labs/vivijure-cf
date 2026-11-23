@@ -37,14 +37,14 @@
     "conformance": "vitest run tests/conformance.test.ts tests/conformance.live.test.ts"
   },
   "devDependencies": {
-    "@cloudflare/workers-types": "^5.20261114.1",
+    "@cloudflare/workers-types": "^5.20261120.1",
     "@types/node": "^26.6.6",
     "@vitest/coverage-v8": "^5.1.0",
     "blake3-wasm": "2.1.5",
     "playwright-core": "^1.65.0",
     "typescript": "^7.0.2",
     "vitest": "^5.0.3",
-    "wrangler": "^4.162.0"
+    "wrangler": "^4.165.0"
   },
   "overrides": {
     "sharp": "0.35.5",
