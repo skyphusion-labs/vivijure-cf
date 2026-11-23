@@ -41,7 +41,7 @@
     "@types/node": "^26.6.6",
     "@vitest/coverage-v8": "^5.1.0",
     "blake3-wasm": "2.1.5",
-    "playwright-core": "^1.65.0",
+    "playwright-core": "^1.65.1",
     "typescript": "^7.0.2",
     "vitest": "^5.0.3",
     "wrangler": "^4.162.0"
