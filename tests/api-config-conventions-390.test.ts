@@ -97,8 +97,8 @@ describe("cf#390: config-passing conventions are documented and pinned", () => {
     expect(section).not.toMatch(/\| `force_shots`/);
   });
 
-  it("CLAUDE.md docs map points at the convention page", () => {
-    const claude = src("CLAUDE.md");
-    expect(claude).toMatch(/api-config-conventions\.md/);
+  it("AGENTS.md docs map points at the convention page", () => {
+    const agents = src("AGENTS.md");
+    expect(agents).toMatch(/api-config-conventions\.md/);
   });
 });
